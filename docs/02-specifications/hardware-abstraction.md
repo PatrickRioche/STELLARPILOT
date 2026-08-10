@@ -1,19 +1,30 @@
-# Spécification — abstraction matérielle
-
-Objectif : définir des capacités communes plutôt qu'une liste de marques.
+# Spécification — abstraction matérielle du POC
 
 ## Monture
-Capacités à étudier : type AZ/EQ, slew, stop, sync, park, tracking, coordonnées,
-limites et état.
+
+Le POC doit supporter le concept de monture sans dépendre d'une marque particulière.
+
+Capacités minimales à tester :
+- détection ;
+- type AZ ou EQ si disponible, sinon sélection utilisateur ;
+- état ;
+- coordonnées ;
+- mouvement ou commande simple ;
+- arrêt contrôlé.
 
 ## Caméra
-Capacités à étudier : exposition, gain, binning, ROI, température, format image,
-flux de capture et annulation.
+
+Capacités minimales à tester :
+- détection ;
+- exposition ;
+- gain si disponible ;
+- déclenchement ;
+- récupération d'une image exploitable par le plate solver.
 
 ## Focuser
-Capacités à étudier : position absolue/relative, déplacement, limites,
-température éventuelle et arrêt.
 
-## Critère clé
-Une fonctionnalité StellarPilot ne doit pas dépendre d'une API constructeur
-lorsqu'une capacité INDI équivalente est disponible et suffisamment fiable.
+Le focuser n'est **pas requis** dans le POC ni dans le premier périmètre fonctionnel.
+
+La mise au point initiale est manuelle avec un masque de Bahtinov sur une étoile brillante.
+
+Le support des focusers INDI et de l'autofocus est reporté à une évolution ultérieure.

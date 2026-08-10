@@ -1,15 +1,30 @@
-# Critères Gate G0
+# Gate POC — critères Go / No-Go
 
-Le Gate G0 est franchi uniquement si :
+## Go
 
-- les interfaces critiques sont identifiées ;
-- les POC matériels essentiels sont reproductibles ;
-- autofocus et astrométrie ont une voie techniquement crédible ;
-- le temps de traitement ARM64 est jugé acceptable selon des seuils documentés ;
-- le chemin Android ↔ serveur est validé ;
-- le mode d'intégration Astroberry est identifié ;
-- aucun risque critique sans mitigation n'est ouvert ;
-- la stratégie de test est approuvée ;
-- les ADR structurants sont acceptés.
+Le POC est considéré réussi si, sur matériel réel :
 
-La décision est enregistrée dans `docs/04-sprints/S0.8-architecture-freeze/RESULT.md`.
+- [ ] le serveur StellarPilot démarre sur Raspberry Pi ARM64 ;
+- [ ] une caméra est détectée via INDI ;
+- [ ] une monture est détectée via INDI ;
+- [ ] une image astronomique réelle est capturée ;
+- [ ] le plate solving s'exécute localement ;
+- [ ] une solution RA/DEC/orientation/échelle est obtenue ;
+- [ ] Android se connecte au serveur local ;
+- [ ] Android transmet heure et localisation ;
+- [ ] Android peut lancer Capture & Solve ;
+- [ ] le résultat remonte et s'affiche sur Android ;
+- [ ] les temps de traitement et limites sont documentés ;
+- [ ] aucun blocage technique critique sans contournement réaliste n'est identifié.
+
+## Go avec réserves
+
+Acceptable si la chaîne fonctionne mais exige encore :
+- optimisation ARM64 ;
+- amélioration de robustesse ;
+- adaptation de certains pilotes ;
+- simplification temporaire de l'interface.
+
+## No-Go
+
+À prononcer si une dépendance critique rend impossible ou irréaliste la chaîne de bout en bout dans les contraintes du projet.

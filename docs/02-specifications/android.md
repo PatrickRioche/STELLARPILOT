@@ -1,16 +1,28 @@
 # Spécification — Android
 
-L'application Android doit être un client de contrôle et non une dépendance
-obligatoire de la logique astronomique.
+## Rôle dans le POC
 
-Fonctions initiales envisagées :
-- découverte/connexion ;
-- état des périphériques ;
-- autofocus ;
-- capture ;
-- lancement d'un plate solve ;
-- affichage de la position céleste ;
-- commandes de centrage ;
-- visualisation des erreurs.
+L'application Android est un client minimal permettant de valider le lien utilisateur -> Raspberry Pi -> INDI -> astrométrie.
 
-Les choix de framework et de niveau d'API restent ouverts pendant la Phase 0.
+## Fonctions POC
+
+- se connecter au serveur StellarPilot sur le réseau local ;
+- transmettre date/heure/fuseau ;
+- transmettre la localisation ;
+- afficher les périphériques détectés ;
+- déclencher une opération `Capture & Solve` ;
+- afficher le statut ;
+- afficher la solution astrométrique minimale.
+
+## Non requis pour le POC
+
+- design définitif ;
+- catalogue complet ;
+- live stacking ;
+- workflow Bahtinov complet ;
+- bibliothèque de darks ;
+- écran d'observation final.
+
+## Principe
+
+La logique astronomique centrale reste sur le Raspberry Pi. Android sert de client de contrôle et d'affichage.

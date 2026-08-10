@@ -1,14 +1,13 @@
 # Sprints StellarPilot
 
-## Règle de numérotation
+## Étape actuelle
 
-Le format de sprint est `S<phase>.<numéro>`.
+StellarPilot commence par des mini-sprints de POC afin de vérifier la faisabilité globale avant toute implémentation de production.
 
-Exemples :
-- `S0.1` : premier sprint de spécification/faisabilité.
-- `S1.1` : premier sprint d'implémentation, après Gate G0.
+## Numérotation
 
-**Un numéro de sprint n'est jamais un numéro de version.**
+- `POC-S0.x` : faisabilité globale ;
+- `S0.x` : spécification détaillée après Gate POC ;
+- `S1.x` et suivants : implémentation du MVP et évolutions.
 
-Une release peut regrouper un ou plusieurs sprints. Les artefacts ARM64 et
-Android d'une même release utilisent exactement la même version produit.
+Un numéro de sprint n'est jamais un numéro de release.

@@ -1,18 +1,33 @@
-# Interfaces à spécifier
+# Interfaces à valider
 
-## Matériel
-- INDI server ↔ pilotes de périphériques.
-- StellarPilot ↔ INDI server.
+## POC
 
-## Interne
-- Orchestrateur ↔ monture.
-- Orchestrateur ↔ caméra.
-- Orchestrateur ↔ focuser.
-- Orchestrateur ↔ plate solver.
+### Android <-> Raspberry Pi
+- découverte ou adresse du serveur ;
+- connexion locale ;
+- transmission heure/date/fuseau ;
+- transmission localisation ;
+- commande Capture & Solve ;
+- retour de statut ;
+- retour de la solution astrométrique.
 
-## Externe
-- Android ↔ serveur ARM64.
-- Future interface Web ↔ serveur ARM64.
+### StellarPilot <-> INDI
+- découverte caméra ;
+- capture ;
+- récupération de l'image ;
+- découverte monture ;
+- lecture état/coordonnées ;
+- commande simple de monture.
 
-Pour chaque interface : protocole, erreurs, timeouts, reprise, sécurité,
-versionnement et observabilité devront être précisés.
+### StellarPilot <-> plate solver
+- image en entrée ;
+- succès/échec ;
+- RA ;
+- DEC ;
+- orientation ;
+- échelle angulaire ;
+- temps de résolution.
+
+## Après le POC
+
+Les interfaces de calibration, Bahtinov, recentrage, stacking et catalogue seront définies après validation de la faisabilité globale.

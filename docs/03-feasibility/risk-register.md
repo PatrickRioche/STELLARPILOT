@@ -1,11 +1,12 @@
-# Registre des risques
+# Registre des risques POC
 
-| ID | Risque | Impact | Probabilité | Mitigation / preuve |
+| ID | Risque | Impact | Probabilité initiale | Vérification / mitigation |
 |---|---|---:|---:|---|
-| R-001 | Variations de pilotes INDI | Élevé | Moyen | matrice multi-matériel |
-| R-002 | Plate solving trop lent sur ARM64 | Élevé | Moyen | benchmark |
-| R-003 | Android dépend trop du serveur | Moyen | Moyen | contrat API |
-| R-004 | Réseau local instable | Moyen | Moyen | reprise / reconnexion |
-| R-005 | Sémantique AZ/EQ divergente | Élevé | Moyen | abstraction + POC |
-| R-006 | Autofocus dépend trop du matériel | Élevé | Moyen | datasets/tests |
-| R-007 | Astroberry impose des contraintes de distribution | Moyen | À mesurer | étude d'intégration |
+| R-001 | Variations entre pilotes INDI | Élevé | Moyen | essais sur plusieurs matériels/pilotes |
+| R-002 | Plate solving trop lent sur ARM64 | Élevé | Moyen | benchmark réel |
+| R-003 | Plate solving peu robuste sans estimation initiale | Élevé | Moyen | jeux d'images variés |
+| R-004 | Communication Android/Pi instable | Moyen | Moyen | reconnexion et tests LAN |
+| R-005 | Sémantique AZ/EQ trop différente | Élevé | Moyen | séparer coeur commun et initialisation spécifique |
+| R-006 | Astroberry impose des contraintes inattendues | Moyen | À mesurer | POC d'intégration |
+| R-007 | API constructeur nécessaire pour certains périphériques | Moyen | Moyen | privilégier INDI, documenter exceptions |
+| R-008 | Temps de capture + solve incompatible avec l'UX visée | Élevé | À mesurer | instrumenter tous les temps |

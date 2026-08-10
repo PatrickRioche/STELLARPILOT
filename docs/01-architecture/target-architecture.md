@@ -1,28 +1,35 @@
-# Architecture cible — hypothèse à valider
+# Architecture cible — hypothèse à valider par le POC
 
 ```text
-                 StellarPilot Android
+                  StellarPilot Android
                          |
-                 HTTPS / WebSocket
+                   LAN / Wi-Fi
                          |
                 StellarPilot Server
-                  (Linux ARM64)
+                 Raspberry Pi ARM64
                          |
-        +----------------+----------------+
-        |                |                |
-     Orchestrator     Imaging         Astronomy
-        |                |                |
-   Mount control      Camera I/O      Plate solving
-   Focus control      Capture         Catalog / sky
-        |                |                |
-        +----------------+----------------+
+                +--------+--------+
+                |                 |
+             Camera            Mount
+             control           control
+                |                 |
+                +--------+--------+
                          |
                        INDI
                          |
-        +-----------+----+------------+
-        |           |                 |
-     AZ / EQ      Camera            Focuser
+                 +-------+-------+
+                 |               |
+              Camera         Mount AZ/EQ
+                         
+        Image captured on Raspberry Pi
+                         |
+                   Plate solver
+                         |
+            RA / DEC / orientation
+                         |
+                Return to Android
 ```
 
-Ce schéma est une hypothèse de départ, pas une architecture gelée.
-Chaque frontière doit être testée pendant la Phase 0.
+Cette architecture n'est pas gelée. Le POC doit d'abord démontrer que cette chaîne est viable sur ARM64 avec du matériel réel.
+
+Le support d'un focuser motorisé est explicitement reporté à une phase ultérieure.

@@ -17,9 +17,9 @@ empilement et identification du ciel.
 
 ## Phase actuelle
 
-Le projet démarre volontairement par des sprints de **spécification** et de
-**vérification de faisabilité**. Aucun choix d'architecture irréversible ne doit
-être considéré comme acquis avant validation documentée.
+Le projet est en **phase POC de faisabilité**. La priorité est de démontrer sur matériel réel la chaîne Android -> Raspberry Pi ARM64 -> INDI -> monture/caméra -> capture -> plate solving local -> retour de la solution astrométrique vers Android.
+
+Le focuser motorisé et l'autofocus sont volontairement différés. La séquence fonctionnelle cible utilisera d'abord une mise au point manuelle au masque de Bahtinov, puis des darks réalisés avec le capuchon standard.
 
 ## Organisation
 
