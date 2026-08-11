@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # Build
 /build/
 /out/
@@ -30,3 +31,14 @@ Thumbs.db
 *.log
 *.tmp
 *.swp
+=======
+.venv/
+__pycache__/
+.pytest_cache/
+*.pyc
+.idea/
+.gradle/
+build/
+local.properties
+captures/
+>>>>>>> master
