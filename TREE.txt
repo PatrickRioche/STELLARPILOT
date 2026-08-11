@@ -1,0 +1,133 @@
+StellarPilot-initialization
+├── .github
+│   └── workflows
+│       └── README.md
+├── docs
+│   ├── 00-project
+│   │   ├── glossary.md
+│   │   ├── principles.md
+│   │   ├── scope.md
+│   │   └── vision.md
+│   ├── 01-architecture
+│   │   ├── components.md
+│   │   ├── interfaces.md
+│   │   ├── platforms.md
+│   │   └── target-architecture.md
+│   ├── 02-specifications
+│   │   ├── android.md
+│   │   ├── api-contract.md
+│   │   ├── arm64.md
+│   │   ├── astrometry.md
+│   │   ├── autofocus.md
+│   │   ├── hardware-abstraction.md
+│   │   └── smart-telescope.md
+│   ├── 03-feasibility
+│   │   ├── feasibility-matrix.md
+│   │   ├── go-no-go-criteria.md
+│   │   ├── poc-template.md
+│   │   ├── README.md
+│   │   └── risk-register.md
+│   ├── 04-sprints
+│   │   ├── S0.1-project-foundation
+│   │   │   ├── RESULT.md
+│   │   │   └── SPRINT.md
+│   │   ├── S0.2-indi-astroberry-feasibility
+│   │   │   ├── RESULT.md
+│   │   │   └── SPRINT.md
+│   │   ├── S0.3-device-abstraction
+│   │   │   ├── RESULT.md
+│   │   │   └── SPRINT.md
+│   │   ├── S0.4-autofocus-feasibility
+│   │   │   ├── RESULT.md
+│   │   │   └── SPRINT.md
+│   │   ├── S0.5-astrometry-feasibility
+│   │   │   ├── RESULT.md
+│   │   │   └── SPRINT.md
+│   │   ├── S0.6-arm64-delivery
+│   │   │   ├── RESULT.md
+│   │   │   └── SPRINT.md
+│   │   ├── S0.7-android-feasibility
+│   │   │   ├── RESULT.md
+│   │   │   └── SPRINT.md
+│   │   ├── S0.8-architecture-freeze
+│   │   │   ├── RESULT.md
+│   │   │   └── SPRINT.md
+│   │   └── README.md
+│   ├── 05-releases
+│   │   ├── artifact-naming.md
+│   │   ├── README.md
+│   │   ├── release-checklist.md
+│   │   └── versioning-policy.md
+│   ├── 06-decisions
+│   │   ├── ADR-0000-template.md
+│   │   ├── ADR-0001-sprint-release-separation.md
+│   │   └── README.md
+│   ├── 07-testing
+│   │   ├── test-evidence-template.md
+│   │   └── verification-strategy.md
+│   ├── 08-security
+│   │   └── threats-to-study.md
+│   ├── 09-compatibility
+│   │   ├── hardware-matrix.csv
+│   │   └── platform-matrix.md
+│   └── templates
+│       ├── specification-template.md
+│       └── sprint-template.md
+├── packaging
+│   ├── android
+│   │   └── .gitkeep
+│   ├── arm64
+│   │   └── .gitkeep
+│   └── README.md
+├── platform
+│   ├── android
+│   │   ├── app
+│   │   │   └── .gitkeep
+│   │   └── README.md
+│   └── arm64
+│       ├── .gitkeep
+│       └── README.md
+├── poc
+│   └── README.md
+├── scripts
+│   ├── precheck
+│   │   └── README.md
+│   └── release
+│       └── README.md
+├── src
+│   ├── astronomy
+│   │   └── .gitkeep
+│   ├── core
+│   │   └── .gitkeep
+│   ├── imaging
+│   │   └── .gitkeep
+│   ├── indi
+│   │   └── .gitkeep
+│   ├── network
+│   │   └── .gitkeep
+│   └── README.md
+├── tests
+│   ├── fixtures
+│   │   ├── astrometry
+│   │   │   └── .gitkeep
+│   │   └── autofocus
+│   │       └── .gitkeep
+│   ├── hardware
+│   │   └── .gitkeep
+│   ├── integration
+│   │   └── .gitkeep
+│   └── unit
+│       └── .gitkeep
+├── tools
+│   └── .gitkeep
+├── .gitattributes
+├── .gitignore
+├── CHANGELOG.md
+├── CMakeLists.txt
+├── CONTRIBUTING.md
+├── LICENSE
+├── MANIFEST.txt
+├── README.md
+├── ROADMAP.md
+├── SECURITY.md
+└── VERSION
