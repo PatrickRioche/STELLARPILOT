@@ -16,8 +16,33 @@ android {
         versionName = "0.1-poc"
     }
 
+    flavorDimensions += "backend"
+
+    productFlavors {
+        create("simulation") {
+            dimension = "backend"
+            applicationIdSuffix = ".simulation"
+            versionNameSuffix = "-simulation"
+            buildConfigField("String", "BACKEND_MODE", "\"SIMULATION\"")
+            buildConfigField("String", "SERVER_BASE_URL", "\"http://10.0.2.2:8000/\"")
+        }
+
+        create("device") {
+            dimension = "backend"
+            versionNameSuffix = "-device"
+            buildConfigField("String", "BACKEND_MODE", "\"DEVICE\"")
+            buildConfigField("String", "SERVER_BASE_URL", "\"http://192.168.1.46:8000/\"")
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+    }
+
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 }
 
@@ -26,5 +51,7 @@ dependencies {
     implementation("androidx.compose.material3:material3:1.3.2")
     implementation("androidx.compose.ui:ui:1.8.3")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.9.1")
+    implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.9.1")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
 }
+

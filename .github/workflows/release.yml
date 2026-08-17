@@ -1,0 +1,80 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Test server
+        working-directory: server
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          PYTHONPATH=. pytest -q
+
+      - name: Export OpenAPI
+        working-directory: server
+        run: |
+          PYTHONPATH=. python - <<'PY'
+          import json
+          from app.main import app
+          with open("openapi.json", "w", encoding="utf-8") as f:
+              json.dump(app.openapi(), f, indent=2, ensure_ascii=False)
+          PY
+
+      - name: Package server
+        run: |
+          tar --exclude='server/.venv' --exclude='server/**/__pycache__'             -czf "stellarpilot-server-${GITHUB_REF_NAME}.tar.gz" server/
+
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Setup Gradle 8.13
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.13"
+
+      - name: Build simulation APK
+        working-directory: android
+        run: gradle --no-daemon :app:testSimulationDebugUnitTest :app:assembleSimulationDebug
+
+      - name: Build device APK
+        working-directory: android
+        run: gradle --no-daemon :app:assembleDeviceDebug
+
+      - name: Stage release assets
+        run: |
+          cp android/app/build/outputs/apk/simulation/debug/*.apk StellarPilot-simulation-debug.apk
+          cp android/app/build/outputs/apk/device/debug/*.apk StellarPilot-device-debug.apk
+          cp server/openapi.json openapi.json
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: StellarPilot ${{ github.ref_name }}
+          body_path: docs/05-releases/v0.1.0-poc.md
+          prerelease: true
+          files: |
+            StellarPilot-simulation-debug.apk
+            StellarPilot-device-debug.apk
+            stellarpilot-server-${{ github.ref_name }}.tar.gz
+            openapi.json
