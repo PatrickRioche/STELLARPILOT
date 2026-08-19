@@ -29,8 +29,7 @@ class ConnectionViewModel : ViewModel() {
 
         uiState = uiState.copy(
             isConnecting = true,
-            restStatus = "Connexion…",
-            webSocketStatus = "En attente",
+            restStatus = "Connexion...",
             error = null
         )
 
@@ -44,12 +43,13 @@ class ConnectionViewModel : ViewModel() {
                     restStatus = "OK"
                 )
 
-                connectWebSocket()
+                if (webSocket == null) {
+                    connectWebSocket()
+                }
             } catch (error: Exception) {
                 uiState = uiState.copy(
                     isConnecting = false,
                     restStatus = "Erreur",
-                    webSocketStatus = "Non connecté",
                     error = error.message ?: "Erreur de connexion inconnue"
                 )
             }
@@ -57,23 +57,52 @@ class ConnectionViewModel : ViewModel() {
     }
 
     private fun connectWebSocket() {
-        webSocket?.cancel()
-        uiState = uiState.copy(webSocketStatus = "Connexion…")
+        uiState = uiState.copy(webSocketStatus = "Connexion...")
 
         webSocket = api.openEvents(object : WebSocketListener() {
-            override fun onOpen(webSocket: WebSocket, response: Response) {
+            override fun onOpen(
+                webSocket: WebSocket,
+                response: Response
+            ) {
                 viewModelScope.launch {
-                    uiState = uiState.copy(webSocketStatus = "Ouvert")
+                    uiState = uiState.copy(
+                        webSocketStatus = "Ouvert"
+                    )
                 }
             }
 
-            override fun onMessage(webSocket: WebSocket, text: String) {
+            override fun onMessage(
+                webSocket: WebSocket,
+                text: String
+            ) {
                 viewModelScope.launch {
-                    uiState = uiState.copy(webSocketStatus = text)
+                    uiState = uiState.copy(
+                        webSocketStatus = text
+                    )
                 }
             }
 
-            override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+            override fun onClosed(
+                webSocket: WebSocket,
+                code: Int,
+                reason: String
+            ) {
+                this@ConnectionViewModel.webSocket = null
+
+                viewModelScope.launch {
+                    uiState = uiState.copy(
+                        webSocketStatus = "Fermé"
+                    )
+                }
+            }
+
+            override fun onFailure(
+                webSocket: WebSocket,
+                t: Throwable,
+                response: Response?
+            ) {
+                this@ConnectionViewModel.webSocket = null
+
                 viewModelScope.launch {
                     uiState = uiState.copy(
                         webSocketStatus = "Erreur",
@@ -86,6 +115,7 @@ class ConnectionViewModel : ViewModel() {
 
     override fun onCleared() {
         webSocket?.close(1000, "ViewModel cleared")
+        webSocket = null
         super.onCleared()
     }
 }
