@@ -1,4 +1,4 @@
-﻿package fr.stellarpilot.app.data.remote
+package fr.stellarpilot.app.data.remote
 
 import fr.stellarpilot.app.domain.model.DeviceStatus
 import fr.stellarpilot.app.domain.model.GpsStatus

@@ -1,4 +1,4 @@
-﻿package fr.stellarpilot.app.domain.model
+package fr.stellarpilot.app.domain.model
 
 data class ServerSession(
     val latitude: Double?,

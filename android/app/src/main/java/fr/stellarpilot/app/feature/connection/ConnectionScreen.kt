@@ -1,4 +1,4 @@
-﻿package fr.stellarpilot.app.feature.connection
+package fr.stellarpilot.app.feature.connection
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
