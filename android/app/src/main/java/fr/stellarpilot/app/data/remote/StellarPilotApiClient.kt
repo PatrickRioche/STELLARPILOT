@@ -1,7 +1,10 @@
 package fr.stellarpilot.app.data.remote
 
+import fr.stellarpilot.app.domain.model.DeviceStatus
+import fr.stellarpilot.app.domain.model.GpsStatus
 import fr.stellarpilot.app.domain.model.ServerSession
 import fr.stellarpilot.app.domain.model.ServerStatus
+import fr.stellarpilot.app.domain.model.SystemDevices
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
@@ -45,21 +48,52 @@ class StellarPilotApiClient(
 
     private fun webSocketEndpoint(): String {
         val httpUrl = endpoint("ws")
+
         return when {
-            httpUrl.startsWith("https://") -> "wss://" + httpUrl.removePrefix("https://")
-            httpUrl.startsWith("http://") -> "ws://" + httpUrl.removePrefix("http://")
-            else -> error("Schéma serveur non supporté: $baseUrl")
+            httpUrl.startsWith("https://") ->
+                "wss://" + httpUrl.removePrefix("https://")
+
+            httpUrl.startsWith("http://") ->
+                "ws://" + httpUrl.removePrefix("http://")
+
+            else ->
+                error("Schéma serveur non supporté: $baseUrl")
         }
     }
 
     private fun parseStatus(json: String): ServerStatus {
         val root = JSONObject(json)
         val session = root.optJSONObject("session") ?: JSONObject()
+        val devices = root.optJSONObject("devices") ?: JSONObject()
+
+        val server = devices.optJSONObject("server") ?: JSONObject()
+        val mount = devices.optJSONObject("mount") ?: JSONObject()
+        val camera = devices.optJSONObject("camera") ?: JSONObject()
+        val gps = devices.optJSONObject("gps") ?: JSONObject()
 
         return ServerStatus(
             service = root.optString("service", "unknown"),
             status = root.optString("status", "unknown"),
             poc = root.optBoolean("poc", false),
+            mode = root.optString("mode", "unknown"),
+            devices = SystemDevices(
+                server = DeviceStatus(
+                    status = server.optString("status", "unknown")
+                ),
+                mount = DeviceStatus(
+                    status = mount.optString("status", "unknown"),
+                    name = mount.optNullableString("name")
+                ),
+                camera = DeviceStatus(
+                    status = camera.optString("status", "unknown"),
+                    name = camera.optNullableString("name")
+                ),
+                gps = GpsStatus(
+                    status = gps.optString("status", "unknown"),
+                    latitude = gps.optNullableDouble("latitude"),
+                    longitude = gps.optNullableDouble("longitude")
+                )
+            ),
             session = ServerSession(
                 latitude = session.optNullableDouble("latitude"),
                 longitude = session.optNullableDouble("longitude"),

@@ -1,11 +1,18 @@
 from fastapi import FastAPI, WebSocket
 from pydantic import BaseModel, Field
 
+from app.config import get_mode
+from app.gps.service import gps_service
 from app.indi.service import indi_service
 from app.session.state import state
 from app.solving.service import plate_solver
+from app.system.service import system_service
 
-app = FastAPI(title="StellarPilot POC API", version="0.1-poc")
+
+app = FastAPI(
+    title="StellarPilot POC API",
+    version="0.3-poc",
+)
 
 
 class LocationPayload(BaseModel):
@@ -32,17 +39,69 @@ class SolvePayload(BaseModel):
     image: str
 
 
+@app.get("/health")
+def health():
+    return {
+        "service": "stellarpilot",
+        "status": "ok",
+        "mode": get_mode(),
+        "protocol": "poc-3",
+    }
+
+
 @app.get("/status")
 def status():
+    mode = get_mode()
+    indi = indi_service.device_status()
+    gps = gps_service.status()
+    system = system_service.status()
+
+    if mode == "device":
+        session_latitude = gps["latitude"]
+        session_longitude = gps["longitude"]
+        session_altitude = gps["altitude"]
+        session_timestamp = system["datetime"]
+    else:
+        session_latitude = (
+            state.latitude
+            if state.latitude is not None
+            else gps["latitude"]
+        )
+        session_longitude = (
+            state.longitude
+            if state.longitude is not None
+            else gps["longitude"]
+        )
+        session_altitude = (
+            state.altitude
+            if state.altitude is not None
+            else gps["altitude"]
+        )
+        session_timestamp = (
+            state.timestamp
+            if state.timestamp is not None
+            else system["datetime"]
+        )
+
     return {
         "service": "stellarpilot",
         "status": "ok",
         "poc": True,
+        "mode": mode,
+        "devices": {
+            "server": {
+                "status": "online",
+            },
+            "mount": indi["mount"],
+            "camera": indi["camera"],
+            "gps": gps,
+        },
+        "system": system,
         "session": {
-            "latitude": state.latitude,
-            "longitude": state.longitude,
-            "altitude": state.altitude,
-            "timestamp": state.timestamp,
+            "latitude": session_latitude,
+            "longitude": session_longitude,
+            "altitude": session_altitude,
+            "timestamp": session_timestamp,
             "mount_type": state.mount_type,
         },
     }
@@ -50,7 +109,9 @@ def status():
 
 @app.get("/devices")
 def devices():
-    return {"devices": indi_service.list_devices()}
+    return {
+        "devices": indi_service.list_devices()
+    }
 
 
 @app.post("/system/location")
@@ -59,16 +120,28 @@ def set_location(payload: LocationPayload):
     state.longitude = payload.longitude
     state.altitude = payload.altitude
     state.timestamp = payload.timestamp
-    return {"status": "ok"}
+
+    return {
+        "status": "ok"
+    }
 
 
 @app.post("/system/mount-type")
 def set_mount_type(payload: MountTypePayload):
     value = payload.mount_type.upper()
+
     if value not in {"EQ", "AZ"}:
-        return {"status": "error", "detail": "mount_type must be EQ or AZ"}
+        return {
+            "status": "error",
+            "detail": "mount_type must be EQ or AZ",
+        }
+
     state.mount_type = value
-    return {"status": "ok", "mount_type": value}
+
+    return {
+        "status": "ok",
+        "mount_type": value,
+    }
 
 
 @app.post("/camera/capture")
@@ -89,7 +162,22 @@ def solve(payload: SolvePayload):
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
-    await websocket.send_json({"event": "connected", "service": "stellarpilot"})
+
+    await websocket.send_json(
+        {
+            "event": "connected",
+            "service": "stellarpilot",
+            "mode": get_mode(),
+            "protocol": "poc-3",
+        }
+    )
+
     while True:
         message = await websocket.receive_text()
-        await websocket.send_json({"event": "echo", "message": message})
+
+        await websocket.send_json(
+            {
+                "event": "echo",
+                "message": message,
+            }
+        )
