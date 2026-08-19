@@ -32,12 +32,40 @@ class SolvePayload(BaseModel):
     image: str
 
 
+@app.get("/health")
+def health():
+    return {
+        "service": "stellarpilot",
+        "status": "ok",
+        "mode": "simulation",
+    }
+
+
 @app.get("/status")
 def status():
     return {
         "service": "stellarpilot",
         "status": "ok",
         "poc": True,
+        "mode": "simulation",
+        "devices": {
+            "server": {
+                "status": "online",
+            },
+            "mount": {
+                "status": "ready",
+                "name": "OnStep Simulator",
+            },
+            "camera": {
+                "status": "ready",
+                "name": "Player One Uranus-C Simulator",
+            },
+            "gps": {
+                "status": "fix",
+                "latitude": 47.4784,
+                "longitude": -0.5632,
+            },
+        },
         "session": {
             "latitude": state.latitude,
             "longitude": state.longitude,
