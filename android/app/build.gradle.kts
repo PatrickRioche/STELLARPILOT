@@ -4,6 +4,29 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
+fun gitShortSha(): String {
+    return try {
+        ProcessBuilder(
+            "git",
+            "rev-parse",
+            "--short",
+            "HEAD"
+        )
+            .directory(rootDir)
+            .redirectErrorStream(true)
+            .start()
+            .inputStream
+            .bufferedReader()
+            .readText()
+            .trim()
+            .ifBlank { "unknown" }
+    } catch (_: Exception) {
+        "unknown"
+    }
+}
+
+val gitSha = gitShortSha()
+
 android {
     namespace = "fr.stellarpilot.app"
     compileSdk = 36
@@ -12,8 +35,15 @@ android {
         applicationId = "fr.stellarpilot.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 1
-        versionName = "0.1-poc"
+
+        versionCode = 3
+        versionName = "0.3.0"
+
+        buildConfigField(
+            "String",
+            "GIT_SHA",
+            "\"$gitSha\""
+        )
     }
 
     flavorDimensions += "backend"
@@ -23,15 +53,35 @@ android {
             dimension = "backend"
             applicationIdSuffix = ".simulation"
             versionNameSuffix = "-simulation"
-            buildConfigField("String", "BACKEND_MODE", "\"SIMULATION\"")
-            buildConfigField("String", "SERVER_BASE_URL", "\"http://10.0.2.2:8000/\"")
+
+            buildConfigField(
+                "String",
+                "BACKEND_MODE",
+                "\"SIMULATION\""
+            )
+
+            buildConfigField(
+                "String",
+                "SERVER_BASE_URL",
+                "\"http://10.0.2.2:8000/\""
+            )
         }
 
         create("device") {
             dimension = "backend"
             versionNameSuffix = "-device"
-            buildConfigField("String", "BACKEND_MODE", "\"DEVICE\"")
-            buildConfigField("String", "SERVER_BASE_URL", "\"http://192.168.1.46:8000/\"")
+
+            buildConfigField(
+                "String",
+                "BACKEND_MODE",
+                "\"DEVICE\""
+            )
+
+            buildConfigField(
+                "String",
+                "SERVER_BASE_URL",
+                "\"http://192.168.1.46:8000/\""
+            )
         }
     }
 
@@ -54,4 +104,3 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.9.1")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
 }
-

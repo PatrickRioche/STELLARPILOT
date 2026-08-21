@@ -23,6 +23,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import fr.stellarpilot.app.BuildConfig
 
 @Composable
 fun ConnectionScreen(
@@ -46,8 +47,21 @@ fun ConnectionScreen(
         )
 
         Text(
-            text = "POC SIMULATION",
+            text = "v${BuildConfig.VERSION_NAME} • ${BuildConfig.GIT_SHA}",
             style = MaterialTheme.typography.bodyMedium
+        )
+
+        Text(
+            text = buildString {
+                append("App ")
+                append(state.backendMode)
+
+                state.server?.let { server ->
+                    append(" • Serveur ")
+                    append(server.mode.uppercase())
+                }
+            },
+            style = MaterialTheme.typography.bodySmall
         )
 
         Spacer(Modifier.height(24.dp))
@@ -65,7 +79,7 @@ fun ConnectionScreen(
                         if (state.isConnecting)
                             "Connexion au serveur..."
                         else
-                            "Serveur non connecté"
+                            "Serveur non connectÃ©"
                     )
                 } else {
                     StatusRow(
@@ -142,7 +156,7 @@ fun ConnectionScreen(
         Spacer(Modifier.height(12.dp))
 
         Text(
-            text = "${state.backendMode} • ${state.serverBaseUrl}",
+            text = "${state.backendMode} â€¢ ${state.serverBaseUrl}",
             style = MaterialTheme.typography.bodySmall
         )
     }
