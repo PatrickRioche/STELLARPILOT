@@ -102,7 +102,19 @@ def status():
             "longitude": session_longitude,
             "altitude": session_altitude,
             "timestamp": session_timestamp,
-            "mount_type": state.mount_type,
+            "mount_type": (
+                indi["mount"].get("type")
+                or state.mount_type
+            ),
+            "mount_type_source": (
+                "indi"
+                if indi["mount"].get("type")
+                else (
+                    "manual"
+                    if state.mount_type
+                    else None
+                )
+            ),
         },
     }
 
