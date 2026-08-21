@@ -13,7 +13,7 @@ import okhttp3.WebSocket
 import okhttp3.WebSocketListener
 
 class ConnectionViewModel : ViewModel() {
-    private val api = StellarPilotApiClient(BuildConfig.SERVER_BASE_URL)
+    private var api = StellarPilotApiClient(BuildConfig.SERVER_BASE_URL)
     private var webSocket: WebSocket? = null
 
     var uiState by mutableStateOf(
@@ -23,6 +23,46 @@ class ConnectionViewModel : ViewModel() {
         )
     )
         private set
+
+    fun setServerAddress(address: String) {
+        val value = address
+            .trim()
+            .removePrefix("http://")
+            .removePrefix("https://")
+            .trimEnd('/')
+
+        if (value.isBlank()) {
+            uiState = uiState.copy(
+                error = "Adresse serveur invalide"
+            )
+            return
+        }
+
+        val baseUrl =
+            if (value.substringAfterLast('/').contains(":")) {
+                "http://$value/"
+            } else {
+                "http://$value:8000/"
+            }
+
+        webSocket?.close(
+            1000,
+            "Server address changed"
+        )
+        webSocket = null
+
+        api = StellarPilotApiClient(baseUrl)
+
+        uiState = uiState.copy(
+            serverBaseUrl = baseUrl,
+            server = null,
+            restStatus = "Non connecté",
+            webSocketStatus = "Non connecté",
+            error = null
+        )
+
+        connect()
+    }
 
     fun connect() {
         if (uiState.isConnecting) return

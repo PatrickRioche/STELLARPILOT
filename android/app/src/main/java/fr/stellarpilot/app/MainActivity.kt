@@ -3,7 +3,6 @@ package fr.stellarpilot.app
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
-import fr.stellarpilot.app.feature.connection.ConnectionScreen
 import fr.stellarpilot.app.ui.theme.StellarPilotTheme
 
 class MainActivity : ComponentActivity() {
@@ -13,7 +12,7 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             StellarPilotTheme {
-                ConnectionScreen()
+                StellarPilotApp()
             }
         }
     }

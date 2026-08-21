@@ -1,0 +1,737 @@
+package fr.stellarpilot.app.feature.preparation
+
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import androidx.lifecycle.viewmodel.compose.viewModel
+import fr.stellarpilot.app.feature.connection.ConnectionViewModel
+import fr.stellarpilot.app.ui.theme.StellarBackground
+import fr.stellarpilot.app.ui.theme.StellarBorder
+import fr.stellarpilot.app.ui.theme.StellarGreen
+import fr.stellarpilot.app.ui.theme.StellarMuted
+import fr.stellarpilot.app.ui.theme.StellarOrange
+import fr.stellarpilot.app.ui.theme.StellarRed
+import fr.stellarpilot.app.ui.theme.StellarSurface
+import fr.stellarpilot.app.ui.theme.StellarSurfaceRaised
+import fr.stellarpilot.app.ui.theme.StellarText
+
+private val stepNames = listOf(
+    "Connexion",
+    "Position",
+    "Astrom\u00E9trie",
+    "\u00C9toile",
+    "Centrage",
+    "Bahtinov",
+    "Darks",
+    "Pr\u00EAt"
+)
+
+@Composable
+fun PreparationScreen(
+    onOpenSky: () -> Unit,
+    viewModel: ConnectionViewModel = viewModel()
+) {
+    var currentStep by rememberSaveable {
+        mutableIntStateOf(0)
+    }
+
+    val state = viewModel.uiState
+    val server = state.server
+
+    LaunchedEffect(Unit) {
+        viewModel.connect()
+    }
+
+    val essentialReady = remember(server) {
+        server != null &&
+            goodStatus(server.devices.server.status) &&
+            goodStatus(server.devices.mount.status) &&
+            goodStatus(server.devices.camera.status)
+    }
+
+    Surface(
+        modifier = Modifier.fillMaxSize(),
+        color = StellarBackground
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 24.dp, vertical = 24.dp)
+        ) {
+
+            Text(
+                text = "PR\u00C9PARATION DE L'OBSERVATION",
+                style = MaterialTheme.typography.labelLarge,
+                fontWeight = FontWeight.Bold,
+                color = StellarOrange
+            )
+
+            Spacer(Modifier.height(8.dp))
+
+            Text(
+                text = "Assistant StellarPilot",
+                style = MaterialTheme.typography.headlineMedium,
+                fontWeight = FontWeight.Bold,
+                color = StellarText
+            )
+
+            Spacer(Modifier.height(6.dp))
+
+            Text(
+                text = "\u00C9tape ${currentStep + 1} sur ${stepNames.size} \u2022 ${stepNames[currentStep]}",
+                style = MaterialTheme.typography.bodyMedium,
+                color = StellarMuted
+            )
+
+            Spacer(Modifier.height(16.dp))
+
+            LinearProgressIndicator(
+                progress = (currentStep + 1).toFloat() / stepNames.size.toFloat(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(5.dp),
+                color = StellarOrange,
+                trackColor = StellarSurfaceRaised
+            )
+
+            Spacer(Modifier.height(16.dp))
+
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                stepNames.forEachIndexed { index, name ->
+                    StepBadge(
+                        number = index + 1,
+                        name = name,
+                        active = index == currentStep,
+                        completed = index < currentStep
+                    )
+                }
+            }
+
+            Spacer(Modifier.height(26.dp))
+
+            when (currentStep) {
+
+                0 -> ConnectionStep(
+                    state = state,
+                    ready = essentialReady,
+                    onRefresh = viewModel::connect,
+                    onChangeServer = viewModel::setServerAddress,
+                    onContinue = { currentStep = 1 }
+                )
+
+                1 -> PrototypeStep(
+                    title = "Position initiale",
+                    description =
+                        "StellarPilot identifiera le type de monture. " +
+                        "En \u00E9quatorial, la position de d\u00E9part sera le p\u00F4le " +
+                        "c\u00E9leste Nord. En Alt-Az, la position de d\u00E9part sera le z\u00E9nith.",
+                    action = "Position confirm\u00E9e",
+                    onPrevious = { currentStep = 0 },
+                    onNext = { currentStep = 2 }
+                )
+
+                2 -> PrototypeStep(
+                    title = "Premi\u00E8re astrom\u00E9trie",
+                    description =
+                        if (server?.devices?.gps?.status?.lowercase() == "fix") {
+                            "GPS FIX obtenu. StellarPilot pourra capturer une image " +
+                            "et tenter la premi\u00E8re r\u00E9solution astrom\u00E9trique."
+                        } else {
+                            "Le GPS n'est pas encore en mode FIX. L'assistant devra " +
+                            "signaler cette situation avant la premi\u00E8re astrom\u00E9trie."
+                        },
+                    action = "Voir l'\u00E9tape suivante",
+                    onPrevious = { currentStep = 1 },
+                    onNext = { currentStep = 3 }
+                )
+
+                3 -> PrototypeStep(
+                    title = "\u00C9toile de r\u00E9f\u00E9rence",
+                    description =
+                        "StellarPilot proposera automatiquement une \u00E9toile brillante " +
+                        "visible et bien plac\u00E9e, par exemple Vega, Arcturus, " +
+                        "Altair, Deneb ou Capella.",
+                    action = "Voir le pointage",
+                    onPrevious = { currentStep = 2 },
+                    onNext = { currentStep = 4 }
+                )
+
+                4 -> PrototypeStep(
+                    title = "Pointage et centrage",
+                    description =
+                        "La monture effectuera le GoTo vers l'\u00E9toile choisie. " +
+                        "Une nouvelle astrom\u00E9trie permettra ensuite de corriger " +
+                        "le pointage jusqu'\u00E0 placer l'\u00E9toile au centre du capteur.",
+                    action = "Voir la mise au point",
+                    onPrevious = { currentStep = 3 },
+                    onNext = { currentStep = 5 }
+                )
+
+                5 -> BahtinovStep(
+                    onPrevious = { currentStep = 4 },
+                    onKeepFocus = { currentStep = 6 },
+                    onDoFocus = { currentStep = 6 }
+                )
+
+                6 -> DarksStep(
+                    cameraName = server?.devices?.camera?.name,
+                    onPrevious = { currentStep = 5 },
+                    onContinue = { currentStep = 7 }
+                )
+
+                7 -> ReadyStep(
+                    onPrevious = { currentStep = 6 },
+                    onOpenSky = onOpenSky
+                )
+            }
+
+            Spacer(Modifier.height(24.dp))
+        }
+    }
+}
+
+@Composable
+private fun ConnectionStep(
+    state: fr.stellarpilot.app.feature.connection.ConnectionUiState,
+    ready: Boolean,
+    onRefresh: () -> Unit,
+    onChangeServer: (String) -> Unit,
+    onContinue: () -> Unit
+) {
+    val server = state.server
+
+    var serverAddress by rememberSaveable(state.serverBaseUrl) {
+        mutableStateOf(
+            state.serverBaseUrl
+                .removePrefix("http://")
+                .removePrefix("https://")
+                .removeSuffix("/")
+                .removeSuffix(":8000")
+        )
+    }
+
+    AssistantCard(
+        title = "Connexion & contr\u00F4les",
+        subtitle = "V\u00E9rification du serveur et du mat\u00E9riel essentiel"
+    ) {
+
+        OutlinedTextField(
+            value = serverAddress,
+            onValueChange = {
+                serverAddress = it
+            },
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = true,
+            label = {
+                Text("Adresse du Raspberry Pi")
+            },
+            supportingText = {
+                Text(
+                    "Ex. 192.168.1.46 ou 10.42.0.1"
+                )
+            }
+        )
+
+        Spacer(Modifier.height(10.dp))
+
+        OutlinedButton(
+            onClick = {
+                onChangeServer(serverAddress)
+            },
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text("Se connecter \u00E0 cette adresse")
+        }
+
+        Spacer(Modifier.height(18.dp))
+
+        if (server == null) {
+            Text(
+                text =
+                    if (state.isConnecting)
+                        "Connexion au serveur StellarPilot..."
+                    else
+                        "Serveur non connect\u00E9",
+                color = StellarMuted
+            )
+        } else {
+
+            PrepStatusRow(
+                "Serveur",
+                server.devices.server.status
+            )
+
+            PrepStatusRow(
+                "Monture",
+                server.devices.mount.status
+            )
+
+            PrepStatusRow(
+                "Cam\u00E9ra",
+                server.devices.camera.status
+            )
+
+            PrepStatusRow(
+                "GPS",
+                server.devices.gps.status
+            )
+
+            Spacer(Modifier.height(12.dp))
+
+            Text(
+                text = "Mode serveur : ${server.mode.uppercase()}",
+                color = StellarMuted,
+                style = MaterialTheme.typography.bodySmall
+            )
+        }
+
+        Spacer(Modifier.height(18.dp))
+
+        OutlinedButton(
+            onClick = onRefresh,
+            enabled = !state.isConnecting,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text("Actualiser")
+        }
+
+        Spacer(Modifier.height(10.dp))
+
+        Button(
+            onClick = onContinue,
+            enabled = ready,
+            modifier = Modifier.fillMaxWidth(),
+            colors = ButtonDefaults.buttonColors(
+                containerColor = StellarOrange,
+                contentColor = StellarBackground
+            )
+        ) {
+            Text(
+                text =
+                    if (ready)
+                        "Continuer la pr\u00E9paration"
+                    else
+                        "Mat\u00E9riel essentiel non pr\u00EAt",
+                fontWeight = FontWeight.Bold
+            )
+        }
+
+        if (
+            server != null &&
+            server.devices.gps.status.lowercase() != "fix"
+        ) {
+            Spacer(Modifier.height(12.dp))
+
+            Text(
+                text =
+                    "Le GPS n'est pas FIX. Cela ne bloque pas la connexion, " +
+                    "mais StellarPilot le prendra en compte pour l'astrom\u00E9trie.",
+                color = StellarOrange,
+                style = MaterialTheme.typography.bodySmall
+            )
+        }
+    }
+}
+
+@Composable
+private fun BahtinovStep(
+    onPrevious: () -> Unit,
+    onKeepFocus: () -> Unit,
+    onDoFocus: () -> Unit
+) {
+    AssistantCard(
+        title = "Mise au point",
+        subtitle = "Masque de Bahtinov"
+    ) {
+
+        Text(
+            text =
+                "Si la mise au point a d\u00E9j\u00E0 \u00E9t\u00E9 r\u00E9alis\u00E9e et n'a pas " +
+                "boug\u00E9, cette \u00E9tape peut \u00EAtre saut\u00E9e.",
+            color = StellarText
+        )
+
+        Spacer(Modifier.height(18.dp))
+
+        Button(
+            onClick = onDoFocus,
+            modifier = Modifier.fillMaxWidth(),
+            colors = ButtonDefaults.buttonColors(
+                containerColor = StellarOrange,
+                contentColor = StellarBackground
+            )
+        ) {
+            Text(
+                "Faire la mise au point Bahtinov",
+                fontWeight = FontWeight.Bold
+            )
+        }
+
+        Spacer(Modifier.height(10.dp))
+
+        OutlinedButton(
+            onClick = onKeepFocus,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text("Conserver le r\u00E9glage actuel")
+        }
+
+        Spacer(Modifier.height(14.dp))
+
+        PreviousButton(onPrevious)
+    }
+}
+
+@Composable
+private fun DarksStep(
+    cameraName: String?,
+    onPrevious: () -> Unit,
+    onContinue: () -> Unit
+) {
+    AssistantCard(
+        title = "Darks",
+        subtitle = cameraName ?: "Cam\u00E9ra non identifi\u00E9e"
+    ) {
+
+        Text(
+            text =
+                "R\u00E8gle StellarPilot : un master dark existant pourra \u00EAtre " +
+                "r\u00E9utilis\u00E9 tant que la cam\u00E9ra n'a pas chang\u00E9.",
+            color = StellarText
+        )
+
+        Spacer(Modifier.height(12.dp))
+
+        Text(
+            text =
+                "Si une autre cam\u00E9ra est d\u00E9tect\u00E9e, l'ancien master dark " +
+                "sera invalid\u00E9 et de nouveaux darks seront obligatoires.",
+            color = StellarMuted,
+            style = MaterialTheme.typography.bodySmall
+        )
+
+        Spacer(Modifier.height(18.dp))
+
+        Button(
+            onClick = onContinue,
+            modifier = Modifier.fillMaxWidth(),
+            colors = ButtonDefaults.buttonColors(
+                containerColor = StellarOrange,
+                contentColor = StellarBackground
+            )
+        ) {
+            Text(
+                "Cr\u00E9er / valider les darks",
+                fontWeight = FontWeight.Bold
+            )
+        }
+
+        Spacer(Modifier.height(10.dp))
+
+        OutlinedButton(
+            onClick = onContinue,
+            modifier = Modifier.fillMaxWidth(),
+            enabled = false
+        ) {
+            Text("R\u00E9utiliser le master dark compatible")
+        }
+
+        Spacer(Modifier.height(8.dp))
+
+        Text(
+            text =
+                "La r\u00E9utilisation sera activ\u00E9e d\u00E8s que StellarPilot " +
+                "enregistrera les m\u00E9tadonn\u00E9es du premier master dark.",
+            color = StellarMuted,
+            style = MaterialTheme.typography.bodySmall
+        )
+
+        Spacer(Modifier.height(14.dp))
+
+        PreviousButton(onPrevious)
+    }
+}
+
+@Composable
+private fun ReadyStep(
+    onPrevious: () -> Unit,
+    onOpenSky: () -> Unit
+) {
+    AssistantCard(
+        title = "Pr\u00E9paration termin\u00E9e",
+        subtitle = "Le syst\u00E8me est pr\u00EAt pour l'observation"
+    ) {
+
+        Text(
+            text =
+                "Lorsque toutes les fonctions seront connect\u00E9es au serveur, " +
+                "cet \u00E9cran r\u00E9capitulera les validations de la session.",
+            color = StellarMuted
+        )
+
+        Spacer(Modifier.height(18.dp))
+
+        Button(
+            onClick = onOpenSky,
+            modifier = Modifier.fillMaxWidth(),
+            colors = ButtonDefaults.buttonColors(
+                containerColor = StellarOrange,
+                contentColor = StellarBackground
+            )
+        ) {
+            Text(
+                "Passer \u00E0 Ciel & Cible",
+                fontWeight = FontWeight.Bold
+            )
+        }
+
+        Spacer(Modifier.height(12.dp))
+
+        PreviousButton(onPrevious)
+    }
+}
+
+@Composable
+private fun PrototypeStep(
+    title: String,
+    description: String,
+    action: String,
+    onPrevious: () -> Unit,
+    onNext: () -> Unit
+) {
+    AssistantCard(
+        title = title,
+        subtitle = "Workflow pr\u00E9par\u00E9 \u2022 int\u00E9gration serveur \u00E0 venir"
+    ) {
+
+        Text(
+            text = description,
+            color = StellarText
+        )
+
+        Spacer(Modifier.height(20.dp))
+
+        Button(
+            onClick = onNext,
+            modifier = Modifier.fillMaxWidth(),
+            colors = ButtonDefaults.buttonColors(
+                containerColor = StellarOrange,
+                contentColor = StellarBackground
+            )
+        ) {
+            Text(
+                action,
+                fontWeight = FontWeight.Bold
+            )
+        }
+
+        Spacer(Modifier.height(10.dp))
+
+        PreviousButton(onPrevious)
+    }
+}
+
+@Composable
+private fun AssistantCard(
+    title: String,
+    subtitle: String,
+    content: @Composable () -> Unit
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(22.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = StellarSurface
+        ),
+        border = BorderStroke(
+            1.dp,
+            StellarBorder
+        )
+    ) {
+        Column(
+            modifier = Modifier.padding(20.dp)
+        ) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.Bold,
+                color = StellarText
+            )
+
+            Spacer(Modifier.height(5.dp))
+
+            Text(
+                text = subtitle,
+                style = MaterialTheme.typography.bodySmall,
+                color = StellarMuted
+            )
+
+            Spacer(Modifier.height(20.dp))
+
+            content()
+        }
+    }
+}
+
+@Composable
+private fun StepBadge(
+    number: Int,
+    name: String,
+    active: Boolean,
+    completed: Boolean
+) {
+    Surface(
+        shape = RoundedCornerShape(50),
+        color =
+            if (active)
+                StellarOrange.copy(alpha = 0.15f)
+            else
+                StellarSurfaceRaised,
+        border = BorderStroke(
+            1.dp,
+            if (active || completed)
+                StellarOrange
+            else
+                StellarBorder
+        )
+    ) {
+        Text(
+            text =
+                if (completed)
+                    "\u2713 $name"
+                else
+                    "$number $name",
+            modifier = Modifier.padding(
+                horizontal = 12.dp,
+                vertical = 7.dp
+            ),
+            color =
+                if (active || completed)
+                    StellarOrange
+                else
+                    StellarMuted,
+            style = MaterialTheme.typography.labelMedium,
+            fontWeight = FontWeight.Bold
+        )
+    }
+}
+
+@Composable
+private fun PrepStatusRow(
+    label: String,
+    status: String
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 7.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+
+        Box(
+            modifier = Modifier
+                .background(
+                    statusColor(status),
+                    CircleShape
+                )
+                .padding(5.dp)
+        )
+
+        Text(
+            text = label,
+            modifier = Modifier
+                .padding(start = 12.dp)
+                .weight(1f),
+            color = StellarText
+        )
+
+        Text(
+            text = status.uppercase(),
+            color = statusColor(status),
+            fontWeight = FontWeight.Bold
+        )
+    }
+}
+
+@Composable
+private fun PreviousButton(
+    onPrevious: () -> Unit
+) {
+    OutlinedButton(
+        onClick = onPrevious,
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Text("Retour")
+    }
+}
+
+private fun goodStatus(
+    value: String
+): Boolean =
+    value.lowercase() in setOf(
+        "online",
+        "ready",
+        "ok",
+        "fix",
+        "connected"
+    )
+
+private fun statusColor(
+    value: String
+): Color =
+    when (value.lowercase()) {
+        "online",
+        "ready",
+        "ok",
+        "fix",
+        "connected" -> StellarGreen
+
+        "error",
+        "offline",
+        "failed",
+        "disconnected" -> StellarRed
+
+        else -> StellarOrange
+    }

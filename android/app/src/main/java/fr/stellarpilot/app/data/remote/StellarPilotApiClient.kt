@@ -1,7 +1,11 @@
 package fr.stellarpilot.app.data.remote
 
+import fr.stellarpilot.app.domain.model.CameraCapture
+import fr.stellarpilot.app.domain.model.CameraSensor
+import fr.stellarpilot.app.domain.model.CameraStatus
 import fr.stellarpilot.app.domain.model.DeviceStatus
 import fr.stellarpilot.app.domain.model.GpsStatus
+import fr.stellarpilot.app.domain.model.MountStatus
 import fr.stellarpilot.app.domain.model.ServerSession
 import fr.stellarpilot.app.domain.model.ServerStatus
 import fr.stellarpilot.app.domain.model.SystemDevices
@@ -29,7 +33,7 @@ class StellarPilotApiClient(
             }
 
             val body = response.body?.string()
-                ?: error("Réponse /status vide")
+                ?: error("R\u00E9ponse /status vide")
 
             parseStatus(body)
         }
@@ -57,56 +61,257 @@ class StellarPilotApiClient(
                 "ws://" + httpUrl.removePrefix("http://")
 
             else ->
-                error("Schéma serveur non supporté: $baseUrl")
+                error("Sch\u00E9ma serveur non support\u00E9: $baseUrl")
         }
     }
 
     private fun parseStatus(json: String): ServerStatus {
         val root = JSONObject(json)
-        val session = root.optJSONObject("session") ?: JSONObject()
-        val devices = root.optJSONObject("devices") ?: JSONObject()
 
-        val server = devices.optJSONObject("server") ?: JSONObject()
-        val mount = devices.optJSONObject("mount") ?: JSONObject()
-        val camera = devices.optJSONObject("camera") ?: JSONObject()
-        val gps = devices.optJSONObject("gps") ?: JSONObject()
+        val session =
+            root.optJSONObject("session")
+                ?: JSONObject()
+
+        val devices =
+            root.optJSONObject("devices")
+                ?: JSONObject()
+
+        val server =
+            devices.optJSONObject("server")
+                ?: JSONObject()
+
+        val mount =
+            devices.optJSONObject("mount")
+                ?: JSONObject()
+
+        val camera =
+            devices.optJSONObject("camera")
+                ?: JSONObject()
+
+        val gps =
+            devices.optJSONObject("gps")
+                ?: JSONObject()
+
+        val cameraSensor =
+            camera.optJSONObject("sensor")
+                ?: JSONObject()
+
+        val cameraCapture =
+            camera.optJSONObject("capture")
+                ?: JSONObject()
 
         return ServerStatus(
-            service = root.optString("service", "unknown"),
-            status = root.optString("status", "unknown"),
-            poc = root.optBoolean("poc", false),
-            mode = root.optString("mode", "unknown"),
+            service = root.optString(
+                "service",
+                "unknown"
+            ),
+
+            status = root.optString(
+                "status",
+                "unknown"
+            ),
+
+            poc = root.optBoolean(
+                "poc",
+                false
+            ),
+
+            mode = root.optString(
+                "mode",
+                "unknown"
+            ),
+
             devices = SystemDevices(
                 server = DeviceStatus(
-                    status = server.optString("status", "unknown")
+                    status = server.optString(
+                        "status",
+                        "unknown"
+                    )
                 ),
-                mount = DeviceStatus(
-                    status = mount.optString("status", "unknown"),
-                    name = mount.optNullableString("name")
+
+                mount = MountStatus(
+                    status = mount.optString(
+                        "status",
+                        "unknown"
+                    ),
+
+                    name = mount.optNullableString(
+                        "name"
+                    ),
+
+                    type = mount.optNullableString(
+                        "type"
+                    ),
+
+                    typeLabel = mount.optNullableString(
+                        "type_label"
+                    )
                 ),
-                camera = DeviceStatus(
-                    status = camera.optString("status", "unknown"),
-                    name = camera.optNullableString("name")
+
+                camera = CameraStatus(
+                    status = camera.optString(
+                        "status",
+                        "unknown"
+                    ),
+
+                    name = camera.optNullableString(
+                        "name"
+                    ),
+
+                    sensor = CameraSensor(
+                        width = cameraSensor.optNullableInt(
+                            "width"
+                        ),
+
+                        height = cameraSensor.optNullableInt(
+                            "height"
+                        ),
+
+                        pixelSizeUm =
+                            cameraSensor.optNullableDouble(
+                                "pixel_size_um"
+                            ),
+
+                        pixelSizeXUm =
+                            cameraSensor.optNullableDouble(
+                                "pixel_size_x_um"
+                            ),
+
+                        pixelSizeYUm =
+                            cameraSensor.optNullableDouble(
+                                "pixel_size_y_um"
+                            ),
+
+                        bitsPerPixel =
+                            cameraSensor.optNullableInt(
+                                "bits_per_pixel"
+                            )
+                    ),
+
+                    capture = CameraCapture(
+                        exposureS =
+                            cameraCapture.optNullableDouble(
+                                "exposure_s"
+                            ),
+
+                        gain =
+                            cameraCapture.optNullableDouble(
+                                "gain"
+                            ),
+
+                        offset =
+                            cameraCapture.optNullableDouble(
+                                "offset"
+                            ),
+
+                        binX =
+                            cameraCapture.optNullableInt(
+                                "bin_x"
+                            ),
+
+                        binY =
+                            cameraCapture.optNullableInt(
+                                "bin_y"
+                            ),
+
+                        frameWidth =
+                            cameraCapture.optNullableInt(
+                                "frame_width"
+                            ),
+
+                        frameHeight =
+                            cameraCapture.optNullableInt(
+                                "frame_height"
+                            ),
+
+                        frameType =
+                            cameraCapture.optNullableString(
+                                "frame_type"
+                            )
+                    ),
+
+                    temperatureC =
+                        camera.optNullableDouble(
+                            "temperature_c"
+                        )
                 ),
+
                 gps = GpsStatus(
-                    status = gps.optString("status", "unknown"),
-                    latitude = gps.optNullableDouble("latitude"),
-                    longitude = gps.optNullableDouble("longitude")
+                    status = gps.optString(
+                        "status",
+                        "unknown"
+                    ),
+
+                    latitude =
+                        gps.optNullableDouble(
+                            "latitude"
+                        ),
+
+                    longitude =
+                        gps.optNullableDouble(
+                            "longitude"
+                        )
                 )
             ),
+
             session = ServerSession(
-                latitude = session.optNullableDouble("latitude"),
-                longitude = session.optNullableDouble("longitude"),
-                altitude = session.optNullableDouble("altitude"),
-                timestamp = session.optNullableString("timestamp"),
-                mountType = session.optNullableString("mount_type")
+                latitude =
+                    session.optNullableDouble(
+                        "latitude"
+                    ),
+
+                longitude =
+                    session.optNullableDouble(
+                        "longitude"
+                    ),
+
+                altitude =
+                    session.optNullableDouble(
+                        "altitude"
+                    ),
+
+                timestamp =
+                    session.optNullableString(
+                        "timestamp"
+                    ),
+
+                mountType =
+                    session.optNullableString(
+                        "mount_type"
+                    ),
+
+                mountTypeSource =
+                    session.optNullableString(
+                        "mount_type_source"
+                    )
             )
         )
     }
 }
 
-private fun JSONObject.optNullableDouble(name: String): Double? =
-    if (!has(name) || isNull(name)) null else optDouble(name)
+private fun JSONObject.optNullableDouble(
+    name: String
+): Double? =
+    if (!has(name) || isNull(name)) {
+        null
+    } else {
+        optDouble(name)
+    }
 
-private fun JSONObject.optNullableString(name: String): String? =
-    if (!has(name) || isNull(name)) null else optString(name)
+private fun JSONObject.optNullableInt(
+    name: String
+): Int? =
+    if (!has(name) || isNull(name)) {
+        null
+    } else {
+        optInt(name)
+    }
+
+private fun JSONObject.optNullableString(
+    name: String
+): String? =
+    if (!has(name) || isNull(name)) {
+        null
+    } else {
+        optString(name)
+    }
