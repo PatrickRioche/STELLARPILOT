@@ -47,7 +47,7 @@ fun ConnectionScreen(
         )
 
         Text(
-            text = "v${BuildConfig.VERSION_NAME} • ${BuildConfig.GIT_SHA}",
+            text = "v${BuildConfig.VERSION_NAME} \u2022 ${BuildConfig.GIT_SHA}",
             style = MaterialTheme.typography.bodyMedium
         )
 
@@ -57,7 +57,7 @@ fun ConnectionScreen(
                 append(state.backendMode)
 
                 state.server?.let { server ->
-                    append(" • Serveur ")
+                    append(" \u2022 Serveur ")
                     append(server.mode.uppercase())
                 }
             },
@@ -79,7 +79,7 @@ fun ConnectionScreen(
                         if (state.isConnecting)
                             "Connexion au serveur..."
                         else
-                            "Serveur non connectÃ©"
+                            "Serveur non connect\u00E9"
                     )
                 } else {
                     StatusRow(
@@ -93,7 +93,7 @@ fun ConnectionScreen(
                     )
 
                     StatusRow(
-                        label = "Caméra",
+                        label = "Cam\u00E9ra",
                         value = server.devices.camera.status
                     )
 
@@ -156,7 +156,7 @@ fun ConnectionScreen(
         Spacer(Modifier.height(12.dp))
 
         Text(
-            text = "${state.backendMode} â€¢ ${state.serverBaseUrl}",
+            text = "${state.backendMode} \u2022 ${state.serverBaseUrl}",
             style = MaterialTheme.typography.bodySmall
         )
     }
