@@ -145,6 +145,18 @@ class StellarPilotApiClient(
 
                     typeLabel = mount.optNullableString(
                         "type_label"
+                    ),
+
+                    family = mount.optNullableString(
+                        "family"
+                    ),
+
+                    familyLabel = mount.optNullableString(
+                        "family_label"
+                    ),
+
+                    startupTarget = mount.optNullableString(
+                        "startup_target"
                     )
                 ),
 
@@ -283,6 +295,21 @@ class StellarPilotApiClient(
                 mountTypeSource =
                     session.optNullableString(
                         "mount_type_source"
+                    ),
+
+                mountFamily =
+                    session.optNullableString(
+                        "mount_family"
+                    ),
+
+                mountFamilyLabel =
+                    session.optNullableString(
+                        "mount_family_label"
+                    ),
+
+                startupTarget =
+                    session.optNullableString(
+                        "startup_target"
                     )
             )
         )

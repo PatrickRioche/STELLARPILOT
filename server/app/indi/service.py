@@ -26,6 +26,79 @@ class IndiService:
         except (OSError, subprocess.SubprocessError):
             return ""
 
+    @staticmethod
+    def mount_guidance(mount_type: str | None) -> dict:
+        """
+        Convertit les types INDI / OnStep en deux familles
+        StellarPilot :
+
+        AZ -> zénith
+        EQ -> pôle céleste
+        """
+
+        value = (mount_type or "").upper()
+
+        # --------------------------------------------------------
+        # ALT-AZ
+        # OnStep :
+        #   ALTAZM
+        #   ALTAZM_UNL
+        #
+        # INDI :
+        #   ALTAZ
+        # --------------------------------------------------------
+
+        if value in {
+            "AZ",
+            "ALTAZ",
+            "ALTAZM",
+            "ALTAZM_UNL",
+        }:
+            return {
+                "family": "az",
+                "family_label": "Alt-Az",
+                "startup_target": "zenith",
+            }
+
+        # --------------------------------------------------------
+        # EQUATORIAL
+        # OnStep :
+        #   GEM
+        #   GEM_TA
+        #   GEM_TAC
+        #   FORK
+        #   FORK_TA
+        #   FORK_TAC
+        #
+        # INDI :
+        #   EQ_GEM
+        #   EQ_FORK
+        # --------------------------------------------------------
+
+        if value in {
+            "EQ",
+            "EQUATORIAL",
+            "EQ_GEM",
+            "EQ_FORK",
+            "GEM",
+            "GEM_TA",
+            "GEM_TAC",
+            "FORK",
+            "FORK_TA",
+            "FORK_TAC",
+        }:
+            return {
+                "family": "eq",
+                "family_label": "Equatorial",
+                "startup_target": "celestial_pole",
+            }
+
+        return {
+            "family": None,
+            "family_label": None,
+            "startup_target": None,
+        }
+
     def _mount_type(self, name: str) -> dict:
         try:
             result = subprocess.run(
@@ -50,27 +123,25 @@ class IndiService:
         except (OSError, subprocess.SubprocessError):
             output = ""
 
+        mount_type = None
+        type_label = None
+
         if ".ALTAZ=On" in output:
-            return {
-                "type": "altaz",
-                "type_label": "Alt-Az",
-            }
+            mount_type = "altaz"
+            type_label = "Alt-Az"
 
-        if ".EQ_FORK=On" in output:
-            return {
-                "type": "eq_fork",
-                "type_label": "Equatorial Fork",
-            }
+        elif ".EQ_FORK=On" in output:
+            mount_type = "eq_fork"
+            type_label = "Equatorial Fork"
 
-        if ".EQ_GEM=On" in output:
-            return {
-                "type": "eq_gem",
-                "type_label": "German Equatorial Mount",
-            }
+        elif ".EQ_GEM=On" in output:
+            mount_type = "eq_gem"
+            type_label = "German Equatorial Mount"
 
         return {
-            "type": None,
-            "type_label": None,
+            "type": mount_type,
+            "type_label": type_label,
+            **self.mount_guidance(mount_type),
         }
 
     def _camera_info(self, name: str) -> dict:

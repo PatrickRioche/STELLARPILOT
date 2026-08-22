@@ -1,6 +1,7 @@
 package fr.stellarpilot.app.feature.preparation
 
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -37,9 +38,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import fr.stellarpilot.app.R
 import fr.stellarpilot.app.feature.connection.ConnectionViewModel
 import fr.stellarpilot.app.ui.theme.StellarBackground
 import fr.stellarpilot.app.ui.theme.StellarBorder
@@ -161,15 +165,33 @@ fun PreparationScreen(
                     onContinue = { currentStep = 1 }
                 )
 
-                1 -> PrototypeStep(
-                    title = "Position initiale",
-                    description =
-                        "StellarPilot identifiera le type de monture. " +
-                        "En \u00E9quatorial, la position de d\u00E9part sera le p\u00F4le " +
-                        "c\u00E9leste Nord. En Alt-Az, la position de d\u00E9part sera le z\u00E9nith.",
-                    action = "Position confirm\u00E9e",
-                    onPrevious = { currentStep = 0 },
-                    onNext = { currentStep = 2 }
+                1 -> PositionStep(
+                    mountFamily =
+                        server?.session?.mountFamily
+                            ?: server?.devices?.mount?.family,
+
+                    startupTarget =
+                        server?.session?.startupTarget
+                            ?: server?.devices?.mount?.startupTarget,
+
+                    mountTypeLabel =
+                        server?.devices?.mount?.typeLabel,
+
+                    mountType =
+                        server?.session?.mountType
+                            ?: server?.devices?.mount?.type,
+
+                    latitude =
+                        server?.session?.latitude
+                            ?: server?.devices?.gps?.latitude,
+
+                    onPrevious = {
+                        currentStep = 0
+                    },
+
+                    onNext = {
+                        currentStep = 2
+                    }
                 )
 
                 2 -> PrototypeStep(
@@ -372,6 +394,254 @@ private fun ConnectionStep(
                 style = MaterialTheme.typography.bodySmall
             )
         }
+    }
+}
+
+@Composable
+private fun PositionStep(
+    mountFamily: String?,
+    startupTarget: String?,
+    mountTypeLabel: String?,
+    mountType: String?,
+    latitude: Double?,
+    onPrevious: () -> Unit,
+    onNext: () -> Unit
+) {
+    val family = mountFamily?.lowercase()
+
+    val isEq = family == "eq"
+    val isAz = family == "az"
+
+    val detected = isEq || isAz
+
+    val familyTitle =
+        when {
+            isEq ->
+                "Monture \u00E9quatoriale d\u00E9tect\u00E9e"
+
+            isAz ->
+                "Monture Alt-Az d\u00E9tect\u00E9e"
+
+            else ->
+                "Type de monture non d\u00E9tect\u00E9"
+        }
+
+    val familyLabel =
+        when {
+            isEq ->
+                "\u00C9quatoriale (EQ)"
+
+            isAz ->
+                "Alt-Az (AZ)"
+
+            else ->
+                "Inconnu"
+        }
+
+    val target =
+        when {
+            startupTarget == "zenith" || isAz ->
+                "Z\u00E9nith"
+
+            startupTarget == "celestial_pole" || isEq ->
+                when {
+                    latitude == null ->
+                        "P\u00F4le c\u00E9leste"
+
+                    latitude >= 0.0 ->
+                        "P\u00F4le c\u00E9leste Nord"
+
+                    else ->
+                        "P\u00F4le c\u00E9leste Sud"
+                }
+
+            else ->
+                "Non disponible"
+        }
+
+    val instruction =
+        when {
+            isEq && latitude == null ->
+                "Oriente la monture vers le p\u00F4le c\u00E9leste. " +
+                    "StellarPilot d\u00E9terminera automatiquement Nord ou Sud " +
+                    "d\u00E8s que la latitude sera disponible."
+
+            isEq ->
+                "Oriente la monture vers le $target avant de poursuivre."
+
+            isAz ->
+                "Oriente le tube vers le z\u00E9nith avant de poursuivre."
+
+            else ->
+                "StellarPilot n'a pas encore pu d\u00E9terminer automatiquement " +
+                    "la famille de la monture."
+        }
+
+    AssistantCard(
+        title = "Position initiale",
+        subtitle = "D\u00E9tection automatique via INDI / OnStep"
+    ) {
+
+        Text(
+            text = familyTitle,
+            color =
+                if (detected)
+                    StellarGreen
+                else
+                    StellarOrange,
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.Bold
+        )
+
+        Spacer(Modifier.height(12.dp))
+
+        InfoBlock(
+            label = "Famille",
+            value = familyLabel
+        )
+
+        InfoBlock(
+            label = "Type d\u00E9tect\u00E9",
+            value =
+                mountTypeLabel
+                    ?: mountType
+                    ?: "Non disponible"
+        )
+
+        InfoBlock(
+            label = "Position de d\u00E9part",
+            value = target
+        )
+
+        if (detected) {
+
+            Spacer(Modifier.height(18.dp))
+
+            Image(
+                painter = painterResource(
+                    id =
+                        if (isEq)
+                            R.drawable.ic_mount_eq
+                        else
+                            R.drawable.ic_mount_az
+                ),
+                contentDescription =
+                    if (isEq)
+                        "Monture \u00E9quatoriale point\u00E9e vers le p\u00F4le c\u00E9leste"
+                    else
+                        "Monture Alt-Az point\u00E9e vers le z\u00E9nith",
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(260.dp),
+                contentScale = ContentScale.Fit
+            )
+
+            Spacer(Modifier.height(18.dp))
+        }
+
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(18.dp),
+            colors = CardDefaults.cardColors(
+                containerColor =
+                    StellarSurfaceRaised
+            ),
+            border = BorderStroke(
+                1.dp,
+                if (detected)
+                    StellarGreen.copy(alpha = 0.45f)
+                else
+                    StellarOrange.copy(alpha = 0.45f)
+            )
+        ) {
+            Column(
+                modifier = Modifier.padding(16.dp)
+            ) {
+
+                Text(
+                    text = "Consigne",
+                    color = StellarOrange,
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.Bold
+                )
+
+                Spacer(Modifier.height(6.dp))
+
+                Text(
+                    text = instruction,
+                    color = StellarText
+                )
+            }
+        }
+
+        if (
+            isEq &&
+            latitude == null
+        ) {
+            Spacer(Modifier.height(10.dp))
+
+            Text(
+                text =
+                    "Latitude GPS indisponible : l'h\u00E9misph\u00E8re " +
+                    "n'est pas encore d\u00E9termin\u00E9 automatiquement.",
+                color = StellarMuted,
+                style = MaterialTheme.typography.bodySmall
+            )
+        }
+
+        Spacer(Modifier.height(20.dp))
+
+        Button(
+            onClick = onNext,
+            enabled = detected,
+            modifier = Modifier.fillMaxWidth(),
+            colors = ButtonDefaults.buttonColors(
+                containerColor = StellarOrange,
+                contentColor = StellarBackground
+            )
+        ) {
+            Text(
+                text =
+                    if (detected)
+                        "J'ai positionn\u00E9 la monture"
+                    else
+                        "Type de monture requis",
+                fontWeight = FontWeight.Bold
+            )
+        }
+
+        Spacer(Modifier.height(12.dp))
+
+        PreviousButton(onPrevious)
+    }
+}
+
+@Composable
+private fun InfoBlock(
+    label: String,
+    value: String
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+
+        Text(
+            text = label,
+            modifier = Modifier.weight(1f),
+            color = StellarMuted,
+            style = MaterialTheme.typography.bodyMedium
+        )
+
+        Text(
+            text = value,
+            modifier = Modifier.weight(1f),
+            color = StellarText,
+            style = MaterialTheme.typography.bodyMedium,
+            fontWeight = FontWeight.SemiBold
+        )
     }
 }
 

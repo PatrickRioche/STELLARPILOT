@@ -11,7 +11,7 @@ from app.system.service import system_service
 
 app = FastAPI(
     title="StellarPilot POC API",
-    version="0.3-poc",
+    version="0.4-poc",
 )
 
 
@@ -83,6 +83,25 @@ def status():
             else system["datetime"]
         )
 
+    detected_mount_type = (
+        indi["mount"].get("type")
+        or state.mount_type
+    )
+
+    mount_type_source = (
+        "indi"
+        if indi["mount"].get("type")
+        else (
+            "manual"
+            if state.mount_type
+            else None
+        )
+    )
+
+    mount_guidance = indi_service.mount_guidance(
+        detected_mount_type
+    )
+
     return {
         "service": "stellarpilot",
         "status": "ok",
@@ -102,19 +121,15 @@ def status():
             "longitude": session_longitude,
             "altitude": session_altitude,
             "timestamp": session_timestamp,
-            "mount_type": (
-                indi["mount"].get("type")
-                or state.mount_type
-            ),
-            "mount_type_source": (
-                "indi"
-                if indi["mount"].get("type")
-                else (
-                    "manual"
-                    if state.mount_type
-                    else None
-                )
-            ),
+            "mount_type": detected_mount_type,
+            "mount_type_source": mount_type_source,
+            "mount_family": mount_guidance["family"],
+            "mount_family_label": mount_guidance[
+                "family_label"
+            ],
+            "startup_target": mount_guidance[
+                "startup_target"
+            ],
         },
     }
 

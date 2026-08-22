@@ -6,7 +6,10 @@ data class ServerSession(
     val altitude: Double?,
     val timestamp: String?,
     val mountType: String?,
-    val mountTypeSource: String?
+    val mountTypeSource: String?,
+    val mountFamily: String?,
+    val mountFamilyLabel: String?,
+    val startupTarget: String?
 )
 
 data class DeviceStatus(
@@ -18,7 +21,10 @@ data class MountStatus(
     val status: String,
     val name: String? = null,
     val type: String? = null,
-    val typeLabel: String? = null
+    val typeLabel: String? = null,
+    val family: String? = null,
+    val familyLabel: String? = null,
+    val startupTarget: String? = null
 )
 
 data class CameraSensor(
