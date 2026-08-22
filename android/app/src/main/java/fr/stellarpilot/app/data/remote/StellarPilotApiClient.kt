@@ -8,11 +8,16 @@ import fr.stellarpilot.app.domain.model.GpsStatus
 import fr.stellarpilot.app.domain.model.MountStatus
 import fr.stellarpilot.app.domain.model.ServerSession
 import fr.stellarpilot.app.domain.model.ServerStatus
+import fr.stellarpilot.app.domain.model.SkyObserver
+import fr.stellarpilot.app.domain.model.SkyStar
+import fr.stellarpilot.app.domain.model.SkyStatus
 import fr.stellarpilot.app.domain.model.SystemDevices
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
+import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
 import org.json.JSONObject
@@ -39,6 +44,56 @@ class StellarPilotApiClient(
         }
     }
 
+    suspend fun getBrightStars(): SkyStatus = withContext(Dispatchers.IO) {
+        val request = Request.Builder()
+            .url(endpoint("sky/bright-stars"))
+            .get()
+            .build()
+
+        client.newCall(request).execute().use { response ->
+            check(response.isSuccessful) {
+                "HTTP ${response.code} sur /sky/bright-stars"
+            }
+
+            val body = response.body?.string()
+                ?: error("R\u00E9ponse /sky/bright-stars vide")
+
+            parseSkyStatus(body)
+        }
+    }
+
+    suspend fun setManualLocation(
+        latitude: Double,
+        longitude: Double
+    ) = withContext(Dispatchers.IO) {
+
+        val payload = JSONObject()
+            .put("latitude", latitude)
+            .put("longitude", longitude)
+            .put("altitude", JSONObject.NULL)
+            .put(
+                "timestamp",
+                System.currentTimeMillis().toString()
+            )
+
+        val body = payload
+            .toString()
+            .toRequestBody(
+                "application/json; charset=utf-8"
+                    .toMediaType()
+            )
+
+        val request = Request.Builder()
+            .url(endpoint("system/location"))
+            .post(body)
+            .build()
+
+        client.newCall(request).execute().use { response ->
+            check(response.isSuccessful) {
+                "HTTP ${response.code} sur /system/location"
+            }
+        }
+    }
     fun openEvents(listener: WebSocketListener): WebSocket {
         val request = Request.Builder()
             .url(webSocketEndpoint())
@@ -63,6 +118,153 @@ class StellarPilotApiClient(
             else ->
                 error("Sch\u00E9ma serveur non support\u00E9: $baseUrl")
         }
+    }
+
+    private fun parseSkyStatus(json: String): SkyStatus {
+        val root = JSONObject(json)
+
+        val status = root.optString(
+            "status",
+            "ok"
+        )
+
+        if (status == "location_required") {
+            return SkyStatus(
+                status = "location_required",
+                observer = null,
+                catalogCount = 0,
+                aboveHorizonCount = 0,
+                alignmentCandidateCount = 0,
+                recommended = null,
+                stars = emptyList()
+            )
+        }
+
+        val observerJson =
+            root.optJSONObject("observer")
+
+        val recommendedJson =
+            root.optJSONObject("recommended")
+
+        val starsJson =
+            root.optJSONArray("stars")
+
+        fun parseStar(star: JSONObject): SkyStar =
+            SkyStar(
+                id = star.optString("id", ""),
+                name = star.optString("name", ""),
+                constellation = star.optString(
+                    "constellation",
+                    ""
+                ),
+                objectType = star.optString(
+                    "object_type",
+                    "star"
+                ),
+                magnitude = star.optDouble(
+                    "magnitude",
+                    0.0
+                ),
+                raHours = star.optDouble(
+                    "ra_hours",
+                    0.0
+                ),
+                decDeg = star.optDouble(
+                    "dec_deg",
+                    0.0
+                ),
+                altitudeDeg = star.optDouble(
+                    "altitude_deg",
+                    0.0
+                ),
+                azimuthDeg = star.optDouble(
+                    "azimuth_deg",
+                    0.0
+                ),
+                azimuthDirection = star.optString(
+                    "azimuth_direction",
+                    ""
+                ),
+                aboveHorizon = star.optBoolean(
+                    "above_horizon",
+                    false
+                ),
+                alignmentCandidate = star.optBoolean(
+                    "alignment_candidate",
+                    false
+                ),
+                alignmentScore =
+                    star.optNullableDouble(
+                        "alignment_score"
+                    )
+            )
+
+        val stars = buildList {
+            if (starsJson != null) {
+                for (index in 0 until starsJson.length()) {
+                    val star =
+                        starsJson.optJSONObject(index)
+
+                    if (star != null) {
+                        add(parseStar(star))
+                    }
+                }
+            }
+        }
+
+        return SkyStatus(
+            status = root.optString(
+                "status",
+                "unknown"
+            ),
+
+            observer =
+                observerJson?.let {
+                    SkyObserver(
+                        latitude =
+                            it.optNullableDouble(
+                                "latitude"
+                            ),
+
+                        longitude =
+                            it.optNullableDouble(
+                                "longitude"
+                            ),
+
+                        timestampUtc =
+                            it.optNullableString(
+                                "timestamp_utc"
+                            ),
+
+                        locationSource =
+                            it.optNullableString(
+                                "location_source"
+                            )
+                    )
+                },
+
+            catalogCount = root.optInt(
+                "catalog_count",
+                0
+            ),
+
+            aboveHorizonCount = root.optInt(
+                "above_horizon_count",
+                0
+            ),
+
+            alignmentCandidateCount = root.optInt(
+                "alignment_candidate_count",
+                0
+            ),
+
+            recommended =
+                recommendedJson?.let {
+                    parseStar(it)
+                },
+
+            stars = stars
+        )
     }
 
     private fun parseStatus(json: String): ServerStatus {

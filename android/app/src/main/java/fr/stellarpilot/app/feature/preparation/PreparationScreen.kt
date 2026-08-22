@@ -45,6 +45,9 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import fr.stellarpilot.app.R
 import fr.stellarpilot.app.feature.connection.ConnectionViewModel
+import fr.stellarpilot.app.feature.sky.SkyUiState
+import fr.stellarpilot.app.feature.sky.SkyViewModel
+import fr.stellarpilot.app.ui.format.statusDisplay
 import fr.stellarpilot.app.ui.theme.StellarBackground
 import fr.stellarpilot.app.ui.theme.StellarBorder
 import fr.stellarpilot.app.ui.theme.StellarGreen
@@ -78,8 +81,25 @@ fun PreparationScreen(
     val state = viewModel.uiState
     val server = state.server
 
+    val skyViewModel: SkyViewModel =
+        viewModel()
+
+    val skyState =
+        skyViewModel.uiState
+
     LaunchedEffect(Unit) {
         viewModel.connect()
+    }
+
+    LaunchedEffect(
+        currentStep,
+        state.serverBaseUrl
+    ) {
+        if (currentStep == 3) {
+            skyViewModel.load(
+                state.serverBaseUrl
+            )
+        }
     }
 
     val essentialReady = remember(server) {
@@ -198,10 +218,10 @@ fun PreparationScreen(
                     title = "Premi\u00E8re astrom\u00E9trie",
                     description =
                         if (server?.devices?.gps?.status?.lowercase() == "fix") {
-                            "GPS FIX obtenu. StellarPilot pourra capturer une image " +
+                            "Position GPS fix\u00E9e. StellarPilot pourra capturer une image " +
                             "et tenter la premi\u00E8re r\u00E9solution astrom\u00E9trique."
                         } else {
-                            "Le GPS n'est pas encore en mode FIX. L'assistant devra " +
+                            "La position GPS n'est pas encore fix\u00E9e. L'assistant devra " +
                             "signaler cette situation avant la premi\u00E8re astrom\u00E9trie."
                         },
                     action = "Voir l'\u00E9tape suivante",
@@ -209,15 +229,24 @@ fun PreparationScreen(
                     onNext = { currentStep = 3 }
                 )
 
-                3 -> PrototypeStep(
-                    title = "\u00C9toile de r\u00E9f\u00E9rence",
-                    description =
-                        "StellarPilot proposera automatiquement une \u00E9toile brillante " +
-                        "visible et bien plac\u00E9e, par exemple Vega, Arcturus, " +
-                        "Altair, Deneb ou Capella.",
-                    action = "Voir le pointage",
-                    onPrevious = { currentStep = 2 },
-                    onNext = { currentStep = 4 }
+                3 -> ReferenceStarStep(
+                    skyState = skyState,
+
+                    onRefresh = {
+                        skyViewModel.load(
+                            state.serverBaseUrl
+                        )
+                    },
+
+                    onOpenSky = onOpenSky,
+
+                    onPrevious = {
+                        currentStep = 2
+                    },
+
+                    onNext = {
+                        currentStep = 4
+                    }
                 )
 
                 4 -> PrototypeStep(
@@ -287,7 +316,7 @@ private fun ConnectionStep(
             modifier = Modifier.fillMaxWidth(),
             singleLine = true,
             label = {
-                Text("Adresse du Raspberry Pi")
+                Text("Adresse du Raspberry Pi sous Astroberry")
             },
             supportingText = {
                 Text(
@@ -388,7 +417,7 @@ private fun ConnectionStep(
 
             Text(
                 text =
-                    "Le GPS n'est pas FIX. Cela ne bloque pas la connexion, " +
+                    "La position GPS n'est pas fix\u00E9e. Cela ne bloque pas la connexion, " +
                     "mais StellarPilot le prendra en compte pour l'astrom\u00E9trie.",
                 color = StellarOrange,
                 style = MaterialTheme.typography.bodySmall
@@ -396,6 +425,261 @@ private fun ConnectionStep(
         }
     }
 }
+
+@Composable
+private fun ReferenceStarStep(
+    skyState: SkyUiState,
+    onRefresh: () -> Unit,
+    onOpenSky: () -> Unit,
+    onPrevious: () -> Unit,
+    onNext: () -> Unit
+) {
+    val sky = skyState.sky
+    val star = sky?.recommended
+
+    AssistantCard(
+        title = "\u00C9toile de r\u00E9f\u00E9rence",
+        subtitle =
+            "S\u00E9lection automatique par le moteur Ciel"
+    ) {
+
+        when {
+
+            skyState.isLoading &&
+                sky == null -> {
+
+                Text(
+                    text =
+                        "Calcul de la meilleure \u00E9toile...",
+                    color = StellarMuted
+                )
+            }
+
+            star != null -> {
+
+                Text(
+                    text =
+                        "\u2605 ${star.name}",
+                    color = StellarGreen,
+                    style =
+                        MaterialTheme.typography.headlineSmall,
+                    fontWeight =
+                        FontWeight.Bold
+                )
+
+                Spacer(
+                    Modifier.height(4.dp)
+                )
+
+                Text(
+                    text =
+                        star.constellation,
+                    color = StellarMuted
+                )
+
+                Spacer(
+                    Modifier.height(16.dp)
+                )
+
+                InfoBlock(
+                    label = "Magnitude",
+                    value =
+                        String.format(
+                            java.util.Locale.US,
+                            "%.2f",
+                            star.magnitude
+                        )
+                )
+
+                InfoBlock(
+                    label = "Altitude",
+                    value =
+                        String.format(
+                            java.util.Locale.US,
+                            "%.1f\u00B0",
+                            star.altitudeDeg
+                        )
+                )
+
+                InfoBlock(
+                    label = "Azimut",
+                    value =
+                        String.format(
+                            java.util.Locale.US,
+                            "%.1f\u00B0 %s",
+                            star.azimuthDeg,
+                            star.azimuthDirection
+                        )
+                )
+
+                InfoBlock(
+                    label = "Ascension droite",
+                    value =
+                        String.format(
+                            java.util.Locale.US,
+                            "%.4f h",
+                            star.raHours
+                        )
+                )
+
+                InfoBlock(
+                    label = "D\u00E9clinaison",
+                    value =
+                        String.format(
+                            java.util.Locale.US,
+                            "%.4f\u00B0",
+                            star.decDeg
+                        )
+                )
+
+                InfoBlock(
+                    label = "Score",
+                    value =
+                        star.alignmentScore
+                            ?.let {
+                                String.format(
+                                    java.util.Locale.US,
+                                    "%.0f %%",
+                                    it * 100.0
+                                )
+                            }
+                            ?: "Non disponible"
+                )
+
+                Spacer(
+                    Modifier.height(14.dp)
+                )
+
+                Text(
+                    text =
+                        "StellarPilot recommande cette \u00E9toile car elle est " +
+                        "brillante et bien plac\u00E9e dans le ciel.",
+                    color = StellarMuted,
+                    style =
+                        MaterialTheme.typography.bodySmall
+                )
+            }
+
+            sky?.status ==
+                "location_required" -> {
+
+                Text(
+                    text =
+                        "Une position est n\u00E9cessaire avant de choisir " +
+                        "l'\u00E9toile de r\u00E9f\u00E9rence.",
+                    color = StellarOrange
+                )
+
+                Spacer(
+                    Modifier.height(12.dp)
+                )
+
+                Button(
+                    onClick = onOpenSky,
+                    modifier =
+                        Modifier.fillMaxWidth(),
+                    colors =
+                        ButtonDefaults.buttonColors(
+                            containerColor =
+                                StellarOrange,
+                            contentColor =
+                                StellarBackground
+                        )
+                ) {
+                    Text(
+                        "Renseigner la position dans Ciel"
+                    )
+                }
+            }
+
+            else -> {
+
+                Text(
+                    text =
+                        skyState.error
+                            ?: "Aucune \u00E9toile recommand\u00E9e actuellement.",
+                    color = StellarOrange
+                )
+            }
+        }
+
+        Spacer(
+            Modifier.height(18.dp)
+        )
+
+        OutlinedButton(
+            onClick = onRefresh,
+            enabled =
+                !skyState.isLoading,
+            modifier =
+                Modifier.fillMaxWidth()
+        ) {
+            Text(
+                "Actualiser la recommandation"
+            )
+        }
+
+        Spacer(
+            Modifier.height(8.dp)
+        )
+
+        OutlinedButton(
+            onClick = onOpenSky,
+            modifier =
+                Modifier.fillMaxWidth()
+        ) {
+            Text(
+                "Voir toutes les \u00E9toiles dans Ciel"
+            )
+        }
+
+        Spacer(
+            Modifier.height(16.dp)
+        )
+
+        Row(
+            modifier =
+                Modifier.fillMaxWidth(),
+            horizontalArrangement =
+                Arrangement.spacedBy(10.dp)
+        ) {
+
+            OutlinedButton(
+                onClick = onPrevious,
+                modifier =
+                    Modifier.weight(1f)
+            ) {
+                Text("Pr\u00E9c\u00E9dent")
+            }
+
+            Button(
+                onClick = onNext,
+                enabled =
+                    star != null,
+                modifier =
+                    Modifier.weight(1f),
+                colors =
+                    ButtonDefaults.buttonColors(
+                        containerColor =
+                            StellarOrange,
+                        contentColor =
+                            StellarBackground
+                    )
+            ) {
+                Text(
+                    text =
+                        star?.let {
+                            "Utiliser ${it.name}"
+                        }
+                            ?: "Choisir une \u00E9toile",
+                    fontWeight =
+                        FontWeight.Bold
+                )
+            }
+        }
+    }
+}
+
 
 @Composable
 private fun PositionStep(
@@ -958,7 +1242,7 @@ private fun PrepStatusRow(
         )
 
         Text(
-            text = status.uppercase(),
+            text = statusDisplay(status),
             color = statusColor(status),
             fontWeight = FontWeight.Bold
         )

@@ -31,6 +31,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import fr.stellarpilot.app.BuildConfig
 import fr.stellarpilot.app.feature.connection.ConnectionViewModel
+import fr.stellarpilot.app.ui.format.statusDisplay
 import fr.stellarpilot.app.ui.theme.StellarBackground
 import fr.stellarpilot.app.ui.theme.StellarBorder
 import fr.stellarpilot.app.ui.theme.StellarGreen
@@ -120,7 +121,7 @@ fun StatusScreen(
 
                     StatusLine(
                         label = "\u00C9tat",
-                        value = server.devices.server.status.uppercase(),
+                        value = statusDisplay(server.devices.server.status),
                         status = server.devices.server.status
                     )
 
@@ -164,7 +165,7 @@ fun StatusScreen(
 
                     StatusLine(
                         label = "\u00C9tat",
-                        value = mount.status.uppercase(),
+                        value = statusDisplay(mount.status),
                         status = mount.status
                     )
 
@@ -232,7 +233,7 @@ fun StatusScreen(
 
                     StatusLine(
                         label = "\u00C9tat",
-                        value = camera.status.uppercase(),
+                        value = statusDisplay(camera.status),
                         status = camera.status
                     )
 
@@ -340,7 +341,7 @@ fun StatusScreen(
 
                     StatusLine(
                         label = "\u00C9tat",
-                        value = server.devices.gps.status.uppercase(),
+                        value = statusDisplay(server.devices.gps.status),
                         status = server.devices.gps.status
                     )
 
@@ -372,7 +373,7 @@ fun StatusScreen(
                         )
                     } else {
                         Text(
-                            text = "Position GPS en attente de FIX",
+                            text = "Position GPS non fix\u00E9e",
                             color = StellarOrange,
                             style = MaterialTheme.typography.bodySmall
                         )

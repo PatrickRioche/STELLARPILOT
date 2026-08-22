@@ -16,6 +16,9 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.painterResource
+import fr.stellarpilot.app.feature.sky.SkyScreen
+import fr.stellarpilot.app.feature.connection.ConnectionViewModel
+import androidx.lifecycle.viewmodel.compose.viewModel
 import fr.stellarpilot.app.feature.placeholder.PlaceholderScreen
 import fr.stellarpilot.app.feature.preparation.PreparationScreen
 import fr.stellarpilot.app.feature.status.StatusScreen
@@ -68,6 +71,9 @@ private val tabs = listOf(
 @Composable
 fun StellarPilotApp() {
 
+    val connectionViewModel:
+        ConnectionViewModel = viewModel()
+
     var selectedTab by rememberSaveable {
         mutableIntStateOf(0)
     }
@@ -116,10 +122,19 @@ fun StellarPilotApp() {
                 0 -> PreparationScreen(
                     onOpenSky = {
                         selectedTab = 2
-                    }
+                    },
+                    viewModel =
+                        connectionViewModel
                 )
 
                 1 -> StatusScreen()
+
+                2 -> SkyScreen(
+                    serverBaseUrl =
+                        connectionViewModel
+                            .uiState
+                            .serverBaseUrl
+                )
 
                 else -> {
                     val tab = tabs[selectedTab]
