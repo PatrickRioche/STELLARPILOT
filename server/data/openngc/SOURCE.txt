@@ -1,0 +1,12 @@
+OpenNGC
+https://github.com/mattiaverga/OpenNGC
+
+Pinned StellarPilot source:
+release: v20260501
+commit: 36cb178
+
+License:
+CC-BY-SA-4.0
+
+Original author / maintainer:
+Mattia Verga

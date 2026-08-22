@@ -38,3 +38,10 @@ Thumbs.db
 *.log
 *.tmp
 *.swp
+
+# StellarPilot astronomical catalog - generated data
+server/data/catalog.sqlite3
+server/data/openngc/*.csv
+
+# Local release staging
+release-v0.4.0/

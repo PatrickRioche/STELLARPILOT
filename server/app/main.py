@@ -1,17 +1,19 @@
-from fastapi import FastAPI, WebSocket
+from fastapi import FastAPI, HTTPException, WebSocket
 from pydantic import BaseModel, Field
 
+from app.catalog.service import catalog_service
 from app.config import get_mode
 from app.gps.service import gps_service
 from app.indi.service import indi_service
 from app.session.state import state
+from app.sky.service import sky_service
 from app.solving.service import plate_solver
 from app.system.service import system_service
 
 
 app = FastAPI(
     title="StellarPilot POC API",
-    version="0.4-poc",
+    version="0.3-poc",
 )
 
 
@@ -57,10 +59,24 @@ def status():
     system = system_service.status()
 
     if mode == "device":
-        session_latitude = gps["latitude"]
-        session_longitude = gps["longitude"]
-        session_altitude = gps["altitude"]
-        session_timestamp = system["datetime"]
+        if (
+            gps.get("status") == "fix"
+            and gps.get("latitude") is not None
+            and gps.get("longitude") is not None
+        ):
+            session_latitude = gps["latitude"]
+            session_longitude = gps["longitude"]
+            session_altitude = gps["altitude"]
+            session_timestamp = system["datetime"]
+        else:
+            session_latitude = state.latitude
+            session_longitude = state.longitude
+            session_altitude = state.altitude
+            session_timestamp = (
+                state.timestamp
+                if state.timestamp is not None
+                else system["datetime"]
+            )
     else:
         session_latitude = (
             state.latitude
@@ -134,6 +150,67 @@ def status():
     }
 
 
+@app.get("/sky/bright-stars")
+def bright_stars(
+    latitude: float | None = None,
+    longitude: float | None = None,
+    at: str | None = None,
+):
+    gps = gps_service.status()
+
+    if (
+        (latitude is None)
+        != (longitude is None)
+    ):
+        return {
+            "status": "error",
+            "detail": (
+                "latitude and longitude "
+                "must be provided together"
+            ),
+        }
+
+    if (
+        latitude is not None
+        and longitude is not None
+    ):
+        observer_latitude = latitude
+        observer_longitude = longitude
+        location_source = "query"
+
+    elif (
+        gps.get("latitude") is not None
+        and gps.get("longitude") is not None
+    ):
+        observer_latitude = gps["latitude"]
+        observer_longitude = gps["longitude"]
+        location_source = "gps"
+
+    elif (
+        state.latitude is not None
+        and state.longitude is not None
+    ):
+        observer_latitude = state.latitude
+        observer_longitude = state.longitude
+        location_source = "manual"
+
+    else:
+        return {
+            "status": "location_required",
+            "detail": (
+                "No GPS fix or manual location "
+                "is currently available"
+            ),
+        }
+
+    return sky_service.bright_stars(
+        latitude=observer_latitude,
+        longitude=observer_longitude,
+        at=at,
+        location_source=location_source,
+    )
+
+
 @app.get("/devices")
 def devices():
     return {
@@ -184,6 +261,40 @@ def mount_goto(payload: GotoPayload):
 @app.post("/solve")
 def solve(payload: SolvePayload):
     return plate_solver.solve(payload.image)
+
+
+
+@app.get("/catalog/status")
+def catalog_status():
+    return catalog_service.status()
+
+
+@app.get("/catalog/search")
+def catalog_search(
+    q: str,
+    limit: int = 20,
+    object_type: str | None = None,
+):
+    return catalog_service.search(
+        query=q,
+        limit=limit,
+        object_type=object_type,
+    )
+
+
+@app.get("/catalog/{object_id}")
+def catalog_object(
+    object_id: int,
+):
+    result = catalog_service.get(object_id)
+
+    if result is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Catalog object not found",
+        )
+
+    return result
 
 
 @app.websocket("/ws")
