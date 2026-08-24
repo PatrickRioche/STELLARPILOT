@@ -1,3 +1,5 @@
+IAU_CONSTELLATION_COUNT = 88
+
 CONSTELLATIONS_FR = {
     "And": "Andromède",
     "Ant": "Machine pneumatique",

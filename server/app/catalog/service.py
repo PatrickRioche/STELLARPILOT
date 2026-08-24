@@ -4,6 +4,8 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
+from app.catalog.types import object_type_label_fr
+
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -46,21 +48,53 @@ class CatalogService:
         if not self.database.exists():
             return {
                 "status": "unavailable",
-                "database": str(
-                    self.database
-                ),
+                "database": str(self.database),
+                "database_name": self.database.name,
+                "source": None,
+                "source_version": None,
+                "language": "fr",
+                "offline": True,
                 "object_count": 0,
+                "constellation_count": 88,
+                "constellation_codes_in_catalog": 0,
+                "french_name_count": 0,
+                "french_alias_count": 0,
                 "types": {},
+                "type_details": [],
             }
 
         with self._connect() as connection:
 
-            object_count = connection.execute(
+            summary = connection.execute(
                 """
-                SELECT COUNT(*)
+                SELECT
+                    COUNT(*) AS object_count,
+
+                    COUNT(
+                        DISTINCT constellation_code
+                    ) AS constellation_codes,
+
+                    SUM(
+                        CASE
+                            WHEN common_name_fr IS NOT NULL
+                            AND TRIM(common_name_fr) <> ''
+                            THEN 1
+                            ELSE 0
+                        END
+                    ) AS french_name_count,
+
+                    SUM(
+                        CASE
+                            WHEN aliases_fr IS NOT NULL
+                            AND TRIM(aliases_fr) <> ''
+                            THEN 1
+                            ELSE 0
+                        END
+                    ) AS french_alias_count
+
                 FROM objects
                 """
-            ).fetchone()[0]
+            ).fetchone()
 
             type_rows = connection.execute(
                 """
@@ -73,18 +107,70 @@ class CatalogService:
                 """
             ).fetchall()
 
+            source_row = connection.execute(
+                """
+                SELECT
+                    source,
+                    source_version
+                FROM objects
+                LIMIT 1
+                """
+            ).fetchone()
+
+        types = {
+            row["object_type"]: row["count"]
+            for row in type_rows
+        }
+
+        type_details = [
+            {
+                "type": row["object_type"],
+                "label_fr": object_type_label_fr(
+                    row["object_type"]
+                ),
+                "count": row["count"],
+            }
+            for row in type_rows
+        ]
+
         return {
             "status": "ready",
-            "database": str(
-                self.database
+            "database": str(self.database),
+            "database_name": self.database.name,
+
+            "source": (
+                source_row["source"]
+                if source_row
+                else None
             ),
-            "object_count": object_count,
-            "types": {
-                row["object_type"]:
-                    row["count"]
-                for row in type_rows
-            },
+
+            "source_version": (
+                source_row["source_version"]
+                if source_row
+                else None
+            ),
+
+            "language": "fr",
+            "offline": True,
+
+            "object_count":
+                summary["object_count"],
+
+            "constellation_count": 88,
+
+            "constellation_codes_in_catalog":
+                summary["constellation_codes"],
+
+            "french_name_count":
+                summary["french_name_count"] or 0,
+
+            "french_alias_count":
+                summary["french_alias_count"] or 0,
+
+            "types": types,
+            "type_details": type_details,
         }
+
 
     def search(
         self,

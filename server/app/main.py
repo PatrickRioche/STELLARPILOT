@@ -7,6 +7,7 @@ from app.gps.service import gps_service
 from app.indi.service import indi_service
 from app.session.state import state
 from app.sky.service import sky_service
+from app.sky.objects import sky_objects_service
 from app.solving.service import plate_solver
 from app.system.service import system_service
 
@@ -132,6 +133,7 @@ def status():
             "gps": gps,
         },
         "system": system,
+        "catalog": catalog_service.status(),
         "session": {
             "latitude": session_latitude,
             "longitude": session_longitude,
@@ -209,6 +211,87 @@ def bright_stars(
         at=at,
         location_source=location_source,
     )
+
+
+
+@app.get("/sky/objects")
+def sky_objects(
+    latitude: float | None = None,
+    longitude: float | None = None,
+    at: str | None = None,
+    category: str = "all",
+    q: str | None = None,
+    min_altitude: float = 15.0,
+    direction: str | None = None,
+    constellation: str | None = None,
+    limit: int = 100,
+):
+    gps = gps_service.status()
+
+    if (
+        (latitude is None)
+        != (longitude is None)
+    ):
+        return {
+            "status": "error",
+            "detail": (
+                "latitude and longitude "
+                "must be provided together"
+            ),
+        }
+
+    if (
+        latitude is not None
+        and longitude is not None
+    ):
+        observer_latitude = latitude
+        observer_longitude = longitude
+        location_source = "query"
+
+    elif (
+        gps.get("latitude") is not None
+        and gps.get("longitude") is not None
+    ):
+        observer_latitude = gps["latitude"]
+        observer_longitude = gps["longitude"]
+        location_source = "gps"
+
+    elif (
+        state.latitude is not None
+        and state.longitude is not None
+    ):
+        observer_latitude = state.latitude
+        observer_longitude = state.longitude
+        location_source = "manual"
+
+    else:
+        return {
+            "status": "location_required",
+            "detail": (
+                "No GPS fix or manual location "
+                "is currently available"
+            ),
+        }
+
+    try:
+        return sky_objects_service.objects(
+            latitude=observer_latitude,
+            longitude=observer_longitude,
+            at=at,
+            category=category,
+            query=q,
+            min_altitude=min_altitude,
+            direction=direction,
+            constellation=constellation,
+            limit=limit,
+            location_source=location_source,
+        )
+
+    except ValueError as error:
+        raise HTTPException(
+            status_code=400,
+            detail=str(error),
+        )
 
 
 @app.get("/devices")

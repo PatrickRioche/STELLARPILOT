@@ -13,6 +13,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.painterResource
@@ -78,6 +79,9 @@ fun StellarPilotApp() {
         mutableIntStateOf(0)
     }
 
+    val tabStateHolder =
+        rememberSaveableStateHolder()
+
     Scaffold(
         containerColor = StellarBackground,
         bottomBar = {
@@ -117,33 +121,43 @@ fun StellarPilotApp() {
             modifier = Modifier.padding(innerPadding)
         ) {
 
-            when (selectedTab) {
+            tabStateHolder.SaveableStateProvider(
+                key = selectedTab
+            ) {
 
-                0 -> PreparationScreen(
-                    onOpenSky = {
-                        selectedTab = 2
-                    },
-                    viewModel =
-                        connectionViewModel
-                )
+                when (selectedTab) {
 
-                1 -> StatusScreen()
-
-                2 -> SkyScreen(
-                    serverBaseUrl =
-                        connectionViewModel
-                            .uiState
-                            .serverBaseUrl
-                )
-
-                else -> {
-                    val tab = tabs[selectedTab]
-
-                    PlaceholderScreen(
-                        title = tab.title,
-                        subtitle = tab.subtitle,
-                        sectionNumber = selectedTab + 1
+                    0 -> PreparationScreen(
+                        onOpenSky = {
+                            selectedTab = 2
+                        },
+                        viewModel =
+                            connectionViewModel
                     )
+
+                    1 -> StatusScreen(
+                        viewModel =
+                            connectionViewModel
+                    )
+
+                    2 -> SkyScreen(
+                        serverBaseUrl =
+                            connectionViewModel
+                                .uiState
+                                .serverBaseUrl
+                    )
+
+                    else -> {
+                        val tab =
+                            tabs[selectedTab]
+
+                        PlaceholderScreen(
+                            title = tab.title,
+                            subtitle = tab.subtitle,
+                            sectionNumber =
+                                selectedTab + 1
+                        )
+                    }
                 }
             }
         }

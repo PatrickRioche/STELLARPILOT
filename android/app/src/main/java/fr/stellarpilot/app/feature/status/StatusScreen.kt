@@ -432,6 +432,129 @@ fun StatusScreen(
             Spacer(Modifier.height(16.dp))
 
             // =========================================================
+            // CATALOGUE ASTRONOMIQUE
+            // =========================================================
+
+            state.catalog?.let { catalog ->
+
+                StatusCard(
+                    title = "Catalogue astronomique"
+                ) {
+
+                    StatusLine(
+                        label = "État",
+                        value =
+                            if (catalog.status == "ready")
+                                "Prêt"
+                            else
+                                "Indisponible",
+                        status =
+                            if (catalog.status == "ready")
+                                "ready"
+                            else
+                                catalog.status
+                    )
+
+                    InfoLine(
+                        label = "Source",
+                        value = catalog.source
+                            ?: "Non disponible"
+                    )
+
+                    InfoLine(
+                        label = "Version",
+                        value = catalog.sourceVersion
+                            ?: "Non disponible"
+                    )
+
+                    InfoLine(
+                        label = "Objets",
+                        value = String.format(
+                            Locale.FRANCE,
+                            "%,d",
+                            catalog.objectCount
+                        )
+                    )
+
+                    InfoLine(
+                        label = "Constellations",
+                        value =
+                            catalog.constellationCount
+                                .toString()
+                    )
+
+                    InfoLine(
+                        label = "Noms français",
+                        value =
+                            catalog.frenchNameCount
+                                .toString()
+                    )
+
+                    InfoLine(
+                        label = "Groupes d'alias français",
+                        value =
+                            catalog.frenchAliasCount
+                                .toString()
+                    )
+
+                    InfoLine(
+                        label = "Langue",
+                        value =
+                            if (catalog.language == "fr")
+                                "Français"
+                            else
+                                catalog.language
+                                    ?: "Non disponible"
+                    )
+
+                    InfoLine(
+                        label = "Mode",
+                        value =
+                            if (catalog.offline)
+                                "Local · hors ligne"
+                            else
+                                "En ligne"
+                    )
+
+                    InfoLine(
+                        label = "Base",
+                        value = catalog.databaseName
+                            ?: "Non disponible"
+                    )
+
+                    if (catalog.typeDetails.isNotEmpty()) {
+
+                        Spacer(Modifier.height(14.dp))
+
+                        Text(
+                            text = "CONTENU",
+                            style =
+                                MaterialTheme.typography.labelLarge,
+                            fontWeight = FontWeight.Bold,
+                            color = StellarOrange
+                        )
+
+                        Spacer(Modifier.height(6.dp))
+
+                        catalog.typeDetails.forEach {
+                            detail ->
+
+                            InfoLine(
+                                label = detail.labelFr,
+                                value = String.format(
+                                    Locale.FRANCE,
+                                    "%,d",
+                                    detail.count
+                                )
+                            )
+                        }
+                    }
+                }
+
+                Spacer(Modifier.height(16.dp))
+            }
+
+            // =========================================================
             // APPLICATION
             // =========================================================
 

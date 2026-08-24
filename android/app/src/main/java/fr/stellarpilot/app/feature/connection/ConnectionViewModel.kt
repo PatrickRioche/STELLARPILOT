@@ -5,6 +5,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import android.util.Log
 import fr.stellarpilot.app.BuildConfig
 import fr.stellarpilot.app.data.remote.StellarPilotApiClient
 import kotlinx.coroutines.launch
@@ -25,25 +26,14 @@ class ConnectionViewModel : ViewModel() {
         private set
 
     fun setServerAddress(address: String) {
-        val value = address
-            .trim()
-            .removePrefix("http://")
-            .removePrefix("https://")
-            .trimEnd('/')
+        val baseUrl = normalizeServerUrl(address)
 
-        if (value.isBlank()) {
+        if (baseUrl == null) {
             uiState = uiState.copy(
                 error = "Adresse serveur invalide"
             )
             return
         }
-
-        val baseUrl =
-            if (value.substringAfterLast('/').contains(":")) {
-                "http://$value/"
-            } else {
-                "http://$value:8000/"
-            }
 
         webSocket?.close(
             1000,
@@ -56,12 +46,45 @@ class ConnectionViewModel : ViewModel() {
         uiState = uiState.copy(
             serverBaseUrl = baseUrl,
             server = null,
-            restStatus = "Non connecté",
-            webSocketStatus = "Non connecté",
+            restStatus = "Non connectÃ©",
+            webSocketStatus = "Non connectÃ©",
             error = null
         )
 
         connect()
+    }
+
+    private fun normalizeServerUrl(address: String): String? {
+        var value = address.trim()
+
+        if (value.isBlank()) {
+            return null
+        }
+
+        value = value.trimEnd('/')
+
+        if (!value.startsWith("http://", ignoreCase = true) &&
+            !value.startsWith("https://", ignoreCase = true)
+        ) {
+            value = "http://$value"
+        }
+
+        return try {
+            val uri = java.net.URI(value)
+
+            val scheme = uri.scheme?.lowercase() ?: "http"
+            val host = uri.host ?: return null
+
+            if (scheme != "http" && scheme != "https") {
+                return null
+            }
+
+            val port = if (uri.port == -1) 8000 else uri.port
+
+            "$scheme://$host:$port/"
+        } catch (_: Exception) {
+            null
+        }
     }
 
     fun connect() {
@@ -74,23 +97,64 @@ class ConnectionViewModel : ViewModel() {
         )
 
         viewModelScope.launch {
+
+            // ------------------------------------------------
+            // 1. Présence du serveur
+            // ------------------------------------------------
+
+            try {
+                api.checkHealth()
+
+                uiState = uiState.copy(
+                    restStatus = "OK",
+                    error = null
+                )
+            } catch (error: Exception) {
+                uiState = uiState.copy(
+                    isConnecting = false,
+                    server = null,
+                    restStatus = "Erreur",
+                    error =
+                        error.message
+                            ?: "Serveur StellarPilot inaccessible"
+                )
+
+                return@launch
+            }
+
+            // ------------------------------------------------
+            // 2. État détaillé du matériel
+            // ------------------------------------------------
+
             try {
                 val status = api.getStatus()
 
                 uiState = uiState.copy(
                     isConnecting = false,
                     server = status,
-                    restStatus = "OK"
+                    restStatus = "OK",
+                    error = null
                 )
 
                 if (webSocket == null) {
                     connectWebSocket()
                 }
             } catch (error: Exception) {
+                Log.e(
+                    "StellarPilotStatus",
+                    "Erreur pendant getStatus()/parseStatus()",
+                    error
+                )
+
                 uiState = uiState.copy(
                     isConnecting = false,
-                    restStatus = "Erreur",
-                    error = error.message ?: "Erreur de connexion inconnue"
+                    restStatus = "OK",
+                    error =
+                        "Serveur connecté, mais lecture du matériel impossible : " +
+                            (
+                                error.message
+                                    ?: "erreur inconnue"
+                            )
                 )
             }
         }
@@ -131,7 +195,7 @@ class ConnectionViewModel : ViewModel() {
 
                 viewModelScope.launch {
                     uiState = uiState.copy(
-                        webSocketStatus = "Fermé"
+                        webSocketStatus = "FermÃƒÂ©"
                     )
                 }
             }

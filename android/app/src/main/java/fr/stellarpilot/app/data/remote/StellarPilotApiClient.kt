@@ -3,6 +3,8 @@ package fr.stellarpilot.app.data.remote
 import fr.stellarpilot.app.domain.model.CameraCapture
 import fr.stellarpilot.app.domain.model.CameraSensor
 import fr.stellarpilot.app.domain.model.CameraStatus
+import fr.stellarpilot.app.domain.model.CatalogStatus
+import fr.stellarpilot.app.domain.model.CatalogTypeDetail
 import fr.stellarpilot.app.domain.model.DeviceStatus
 import fr.stellarpilot.app.domain.model.GpsStatus
 import fr.stellarpilot.app.domain.model.MountStatus
@@ -26,6 +28,19 @@ class StellarPilotApiClient(
     private val baseUrl: String,
     private val client: OkHttpClient = OkHttpClient()
 ) {
+    suspend fun checkHealth() = withContext(Dispatchers.IO) {
+        val request = Request.Builder()
+            .url(endpoint("health"))
+            .get()
+            .build()
+
+        client.newCall(request).execute().use { response ->
+            check(response.isSuccessful) {
+                "HTTP ${response.code} sur /health"
+            }
+        }
+    }
+
     suspend fun getStatus(): ServerStatus = withContext(Dispatchers.IO) {
         val request = Request.Builder()
             .url(endpoint("status"))
@@ -44,9 +59,43 @@ class StellarPilotApiClient(
         }
     }
 
-    suspend fun getBrightStars(): SkyStatus = withContext(Dispatchers.IO) {
+    suspend fun getCatalogStatus(): CatalogStatus =
+        withContext(Dispatchers.IO) {
+
+            val request = Request.Builder()
+                .url(endpoint("catalog/status"))
+                .get()
+                .build()
+
+            client.newCall(request).execute().use { response ->
+                check(response.isSuccessful) {
+                    "HTTP ${response.code} sur /catalog/status"
+                }
+
+                val body = response.body?.string()
+                    ?: error("Réponse /catalog/status vide")
+
+                parseCatalogStatus(body)
+            }
+        }
+
+    suspend fun getBrightStars(
+        latitude: Double? = null,
+        longitude: Double? = null
+    ): SkyStatus = withContext(Dispatchers.IO) {
+
+        val url =
+            if (
+                latitude != null &&
+                longitude != null
+            ) {
+                endpoint("sky/bright-stars") +
+                    "?latitude=$latitude&longitude=$longitude"
+            } else {
+                endpoint("sky/bright-stars")
+            }
         val request = Request.Builder()
-            .url(endpoint("sky/bright-stars"))
+            .url(url)
             .get()
             .build()
 
@@ -118,6 +167,92 @@ class StellarPilotApiClient(
             else ->
                 error("Sch\u00E9ma serveur non support\u00E9: $baseUrl")
         }
+    }
+
+    private fun parseCatalogStatus(
+        json: String
+    ): CatalogStatus {
+
+        val root = JSONObject(json)
+
+        val detailsJson =
+            root.optJSONArray("type_details")
+
+        val details = buildList {
+
+            if (detailsJson != null) {
+
+                for (
+                    index in 0 until detailsJson.length()
+                ) {
+                    val item =
+                        detailsJson.optJSONObject(index)
+
+                    if (item != null) {
+                        add(
+                            CatalogTypeDetail(
+                                type = item.optString(
+                                    "type",
+                                    "unknown"
+                                ),
+                                labelFr = item.optString(
+                                    "label_fr",
+                                    "Autres objets"
+                                ),
+                                count = item.optInt(
+                                    "count",
+                                    0
+                                )
+                            )
+                        )
+                    }
+                }
+            }
+        }
+
+        return CatalogStatus(
+            status = root.optString(
+                "status",
+                "unknown"
+            ),
+            databaseName =
+                root.optNullableString(
+                    "database_name"
+                ),
+            source =
+                root.optNullableString(
+                    "source"
+                ),
+            sourceVersion =
+                root.optNullableString(
+                    "source_version"
+                ),
+            language =
+                root.optNullableString(
+                    "language"
+                ),
+            offline = root.optBoolean(
+                "offline",
+                true
+            ),
+            objectCount = root.optInt(
+                "object_count",
+                0
+            ),
+            constellationCount = root.optInt(
+                "constellation_count",
+                0
+            ),
+            frenchNameCount = root.optInt(
+                "french_name_count",
+                0
+            ),
+            frenchAliasCount = root.optInt(
+                "french_alias_count",
+                0
+            ),
+            typeDetails = details
+        )
     }
 
     private fun parseSkyStatus(json: String): SkyStatus {

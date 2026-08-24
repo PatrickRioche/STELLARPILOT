@@ -45,3 +45,5 @@ server/data/openngc/*.csv
 
 # Local release staging
 release-v0.4.0/
+# Sauvegardes locales
+*.bak.*

@@ -17,6 +17,12 @@ data class SkyUiState(
 
 class SkyViewModel : ViewModel() {
 
+    private var overrideLatitude: Double? =
+        null
+
+    private var overrideLongitude: Double? =
+        null
+
     var uiState by mutableStateOf(
         SkyUiState()
     )
@@ -27,6 +33,12 @@ class SkyViewModel : ViewModel() {
         latitude: Double,
         longitude: Double
     ) {
+        overrideLatitude =
+            latitude
+
+        overrideLongitude =
+            longitude
+
         if (uiState.isLoading) return
 
         uiState = uiState.copy(
@@ -47,7 +59,12 @@ class SkyViewModel : ViewModel() {
                 )
 
                 val sky =
-                    api.getBrightStars()
+                    api.getBrightStars(
+                        latitude =
+                            latitude,
+                        longitude =
+                            longitude
+                    )
 
                 uiState = uiState.copy(
                     isLoading = false,
@@ -81,7 +98,12 @@ class SkyViewModel : ViewModel() {
                     )
 
                 val sky =
-                    api.getBrightStars()
+                    api.getBrightStars(
+                        latitude =
+                            overrideLatitude,
+                        longitude =
+                            overrideLongitude
+                    )
 
                 uiState = uiState.copy(
                     isLoading = false,

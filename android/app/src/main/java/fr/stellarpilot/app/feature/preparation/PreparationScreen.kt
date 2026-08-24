@@ -1,5 +1,7 @@
 package fr.stellarpilot.app.feature.preparation
 
+import android.graphics.BitmapFactory
+
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -38,6 +40,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
@@ -78,6 +81,10 @@ fun PreparationScreen(
         mutableIntStateOf(0)
     }
 
+    var selectedReferenceStarId by rememberSaveable {
+        mutableStateOf<String?>(null)
+    }
+
     val state = viewModel.uiState
     val server = state.server
 
@@ -86,6 +93,12 @@ fun PreparationScreen(
 
     val skyState =
         skyViewModel.uiState
+
+    val cameraPreviewViewModel: CameraPreviewViewModel =
+        viewModel()
+
+    val cameraPreviewState =
+        cameraPreviewViewModel.uiState
 
     LaunchedEffect(Unit) {
         viewModel.connect()
@@ -97,6 +110,18 @@ fun PreparationScreen(
     ) {
         if (currentStep == 3) {
             skyViewModel.load(
+                state.serverBaseUrl
+            )
+        }
+    }
+
+    // CAMERA_PREVIEW_AUTOLOAD
+    LaunchedEffect(
+        currentStep,
+        state.serverBaseUrl
+    ) {
+        if (currentStep == 2) {
+            cameraPreviewViewModel.load(
                 state.serverBaseUrl
             )
         }
@@ -214,23 +239,36 @@ fun PreparationScreen(
                     }
                 )
 
-                2 -> PrototypeStep(
-                    title = "Premi\u00E8re astrom\u00E9trie",
-                    description =
-                        if (server?.devices?.gps?.status?.lowercase() == "fix") {
-                            "Position GPS fix\u00E9e. StellarPilot pourra capturer une image " +
-                            "et tenter la premi\u00E8re r\u00E9solution astrom\u00E9trique."
-                        } else {
-                            "La position GPS n'est pas encore fix\u00E9e. L'assistant devra " +
-                            "signaler cette situation avant la premi\u00E8re astrom\u00E9trie."
-                        },
-                    action = "Voir l'\u00E9tape suivante",
-                    onPrevious = { currentStep = 1 },
-                    onNext = { currentStep = 3 }
-                )
+                2 -> AstrometryStep(
+                    previewState =
+                        cameraPreviewState,
 
+                    cameraName =
+                        server?.devices?.camera?.name,
+
+                    onRefresh = {
+                        cameraPreviewViewModel.load(
+                            state.serverBaseUrl
+                        )
+                    },
+
+                    onPrevious = {
+                        currentStep = 1
+                    },
+
+                    onNext = {
+                        currentStep = 3
+                    }
+                )
                 3 -> ReferenceStarStep(
                     skyState = skyState,
+
+                    selectedStarId =
+                        selectedReferenceStarId,
+
+                    onSelectStar = {
+                        selectedReferenceStarId = it
+                    },
 
                     onRefresh = {
                         skyViewModel.load(
@@ -240,11 +278,25 @@ fun PreparationScreen(
 
                     onOpenSky = onOpenSky,
 
+                    onSetLocation = { latitude, longitude ->
+                        skyViewModel.setManualLocation(
+                            serverBaseUrl =
+                                state.serverBaseUrl,
+                            latitude =
+                                latitude,
+                            longitude =
+                                longitude
+                        )
+                    },
+
                     onPrevious = {
                         currentStep = 2
                     },
 
-                    onNext = {
+                    onNext = { starId ->
+                        selectedReferenceStarId =
+                            starId
+
                         currentStep = 4
                     }
                 )
@@ -339,13 +391,30 @@ private fun ConnectionStep(
         Spacer(Modifier.height(18.dp))
 
         if (server == null) {
+            val serverReachable =
+                state.restStatus == "OK"
+
             Text(
                 text =
-                    if (state.isConnecting)
-                        "Connexion au serveur StellarPilot..."
+                    when {
+                        serverReachable &&
+                            state.isConnecting ->
+                            "Serveur connecté • lecture du matériel..."
+
+                        serverReachable ->
+                            "Serveur connecté • détails matériel indisponibles"
+
+                        state.isConnecting ->
+                            "Connexion au serveur StellarPilot..."
+
+                        else ->
+                            "Serveur non connecté"
+                    },
+                color =
+                    if (serverReachable)
+                        StellarGreen
                     else
-                        "Serveur non connect\u00E9",
-                color = StellarMuted
+                        StellarMuted
             )
         } else {
 
@@ -429,20 +498,248 @@ private fun ConnectionStep(
 @Composable
 private fun ReferenceStarStep(
     skyState: SkyUiState,
+    selectedStarId: String?,
+    onSelectStar: (String) -> Unit,
     onRefresh: () -> Unit,
     onOpenSky: () -> Unit,
+    onSetLocation: (Double, Double) -> Unit,
     onPrevious: () -> Unit,
-    onNext: () -> Unit
+    onNext: (String) -> Unit
 ) {
     val sky = skyState.sky
-    val star = sky?.recommended
 
+    val recommendations =
+        sky?.stars
+            .orEmpty()
+            .filter {
+                it.alignmentCandidate &&
+                    it.alignmentScore != null
+            }
+            .sortedByDescending {
+                it.alignmentScore
+            }
+            .take(4)
+
+    val star =
+        recommendations.firstOrNull {
+            it.id == selectedStarId
+        }
+            ?: sky?.recommended
+            ?: recommendations.firstOrNull()
+
+
+    var latitudeText by rememberSaveable {
+        mutableStateOf("")
+    }
+
+    var longitudeText by rememberSaveable {
+        mutableStateOf("")
+    }
+
+    LaunchedEffect(
+        skyState.sky?.observer?.latitude,
+        skyState.sky?.observer?.longitude
+    ) {
+        skyState.sky
+            ?.observer
+            ?.latitude
+            ?.let { latitude ->
+
+                latitudeText =
+                    String.format(
+                        java.util.Locale.US,
+                        "%.5f",
+                        latitude
+                    )
+            }
+
+        skyState.sky
+            ?.observer
+            ?.longitude
+            ?.let { longitude ->
+
+                longitudeText =
+                    String.format(
+                        java.util.Locale.US,
+                        "%.5f",
+                        longitude
+                    )
+            }
+    }
+
+    val locationSourceLabel =
+        when (
+            skyState.sky
+                ?.observer
+                ?.locationSource
+                ?.lowercase()
+        ) {
+
+            "gps" ->
+                "GPS"
+
+            "query" ->
+                "Personnalisée"
+
+            "manual" ->
+                "Manuelle"
+
+            else ->
+                "En attente"
+        }
+    val selectedLatitude =
+        latitudeText
+            .replace(',', '.')
+            .toDoubleOrNull()
+
+    val selectedLongitude =
+        longitudeText
+            .replace(',', '.')
+            .toDoubleOrNull()
+
+    val locationValid =
+        selectedLatitude != null &&
+        selectedLongitude != null &&
+        selectedLatitude in -90.0..90.0 &&
+        selectedLongitude in -180.0..180.0
     AssistantCard(
-        title = "\u00C9toile de r\u00E9f\u00E9rence",
+        title = "Étoile de référence",
         subtitle =
-            "S\u00E9lection automatique par le moteur Ciel"
+            "Choisis une des meilleures étoiles calculées par StellarPilot"
     ) {
 
+        Text(
+            text =
+                "LOCALISATION UTILIS\u00C9E",
+            color =
+                StellarOrange,
+            style =
+                MaterialTheme
+                    .typography
+                    .labelLarge,
+            fontWeight =
+                FontWeight.Bold
+        )
+
+        Spacer(
+            Modifier.height(
+                6.dp
+            )
+        )
+
+        Text(
+            text =
+                "Source : $locationSourceLabel",
+            color =
+                StellarMuted,
+            style =
+                MaterialTheme
+                    .typography
+                    .bodySmall
+        )
+
+        Spacer(
+            Modifier.height(
+                10.dp
+            )
+        )
+
+        Row(
+            modifier =
+                Modifier.fillMaxWidth(),
+            horizontalArrangement =
+                Arrangement.spacedBy(
+                    12.dp
+                )
+        ) {
+
+            OutlinedTextField(
+                value =
+                    latitudeText,
+                onValueChange = {
+                    latitudeText = it
+                },
+                modifier =
+                    Modifier.weight(
+                        1f
+                    ),
+                singleLine =
+                    true,
+                label = {
+                    Text(
+                        "Latitude"
+                    )
+                }
+            )
+
+            OutlinedTextField(
+                value =
+                    longitudeText,
+                onValueChange = {
+                    longitudeText = it
+                },
+                modifier =
+                    Modifier.weight(
+                        1f
+                    ),
+                singleLine =
+                    true,
+                label = {
+                    Text(
+                        "Longitude"
+                    )
+                }
+            )
+        }
+
+        Spacer(
+            Modifier.height(
+                10.dp
+            )
+        )
+
+        Button(
+            onClick = {
+
+                if (
+                    selectedLatitude != null &&
+                    selectedLongitude != null
+                ) {
+
+                    onSetLocation(
+                        selectedLatitude,
+                        selectedLongitude
+                    )
+                }
+            },
+            enabled =
+                locationValid &&
+                !skyState.isLoading,
+            modifier =
+                Modifier.fillMaxWidth(),
+            colors =
+                ButtonDefaults
+                    .buttonColors(
+                        containerColor =
+                            StellarOrange,
+                        contentColor =
+                            StellarBackground
+                    )
+        ) {
+
+            Text(
+                text =
+                    "Utiliser cette localisation",
+                fontWeight =
+                    FontWeight.Bold
+            )
+        }
+
+        Spacer(
+            Modifier.height(
+                20.dp
+            )
+        )
         when {
 
             skyState.isLoading &&
@@ -450,114 +747,228 @@ private fun ReferenceStarStep(
 
                 Text(
                     text =
-                        "Calcul de la meilleure \u00E9toile...",
+                        "Calcul des meilleures étoiles...",
                     color = StellarMuted
                 )
             }
 
-            star != null -> {
+            recommendations.isNotEmpty() -> {
 
                 Text(
                     text =
-                        "\u2605 ${star.name}",
-                    color = StellarGreen,
+                        "4 meilleures étoiles de référence",
+                    color = StellarText,
                     style =
-                        MaterialTheme.typography.headlineSmall,
+                        MaterialTheme.typography.titleMedium,
                     fontWeight =
                         FontWeight.Bold
                 )
 
                 Spacer(
-                    Modifier.height(4.dp)
+                    Modifier.height(12.dp)
                 )
 
-                Text(
-                    text =
-                        star.constellation,
-                    color = StellarMuted
-                )
+                recommendations.forEachIndexed {
+                        index,
+                        candidate ->
 
-                Spacer(
-                    Modifier.height(16.dp)
-                )
+                    val selected =
+                        candidate.id == star?.id
 
-                InfoBlock(
-                    label = "Magnitude",
-                    value =
-                        String.format(
-                            java.util.Locale.US,
-                            "%.2f",
-                            star.magnitude
-                        )
-                )
-
-                InfoBlock(
-                    label = "Altitude",
-                    value =
-                        String.format(
-                            java.util.Locale.US,
-                            "%.1f\u00B0",
-                            star.altitudeDeg
-                        )
-                )
-
-                InfoBlock(
-                    label = "Azimut",
-                    value =
-                        String.format(
-                            java.util.Locale.US,
-                            "%.1f\u00B0 %s",
-                            star.azimuthDeg,
-                            star.azimuthDirection
-                        )
-                )
-
-                InfoBlock(
-                    label = "Ascension droite",
-                    value =
-                        String.format(
-                            java.util.Locale.US,
-                            "%.4f h",
-                            star.raHours
-                        )
-                )
-
-                InfoBlock(
-                    label = "D\u00E9clinaison",
-                    value =
-                        String.format(
-                            java.util.Locale.US,
-                            "%.4f\u00B0",
-                            star.decDeg
-                        )
-                )
-
-                InfoBlock(
-                    label = "Score",
-                    value =
-                        star.alignmentScore
+                    val score =
+                        candidate.alignmentScore
                             ?.let {
                                 String.format(
-                                    java.util.Locale.US,
+                                    java.util.Locale.FRANCE,
                                     "%.0f %%",
                                     it * 100.0
                                 )
                             }
-                            ?: "Non disponible"
-                )
+                            ?: "—"
 
-                Spacer(
-                    Modifier.height(14.dp)
-                )
+                    val label =
+                        buildString {
 
-                Text(
-                    text =
-                        "StellarPilot recommande cette \u00E9toile car elle est " +
-                        "brillante et bien plac\u00E9e dans le ciel.",
-                    color = StellarMuted,
-                    style =
-                        MaterialTheme.typography.bodySmall
-                )
+                            append(
+                                if (selected)
+                                    "★ "
+                                else
+                                    "☆ "
+                            )
+
+                            append(candidate.name)
+
+                            if (index == 0) {
+                                append(
+                                    " · recommandée"
+                                )
+                            }
+
+                            append("\n")
+                            append(
+                                candidate.constellation
+                            )
+
+                            append(" · Alt. ")
+
+                            append(
+                                String.format(
+                                    java.util.Locale.FRANCE,
+                                    "%.1f°",
+                                    candidate.altitudeDeg
+                                )
+                            )
+
+                            append(" · mag ")
+
+                            append(
+                                String.format(
+                                    java.util.Locale.FRANCE,
+                                    "%.2f",
+                                    candidate.magnitude
+                                )
+                            )
+
+                            append(" · score ")
+                            append(score)
+                        }
+
+                    if (selected) {
+
+                        Button(
+                            onClick = {
+                                onSelectStar(
+                                    candidate.id
+                                )
+                            },
+                            modifier =
+                                Modifier.fillMaxWidth(),
+                            colors =
+                                ButtonDefaults.buttonColors(
+                                    containerColor =
+                                        StellarOrange,
+                                    contentColor =
+                                        StellarBackground
+                                )
+                        ) {
+                            Text(
+                                text = label,
+                                fontWeight =
+                                    FontWeight.Bold
+                            )
+                        }
+
+                    } else {
+
+                        OutlinedButton(
+                            onClick = {
+                                onSelectStar(
+                                    candidate.id
+                                )
+                            },
+                            modifier =
+                                Modifier.fillMaxWidth()
+                        ) {
+                            Text(
+                                text = label
+                            )
+                        }
+                    }
+
+                    Spacer(
+                        Modifier.height(8.dp)
+                    )
+                }
+
+                star?.let { selectedStar ->
+
+                    Spacer(
+                        Modifier.height(12.dp)
+                    )
+
+                    Text(
+                        text =
+                            "ÉTOILE SÉLECTIONNÉE",
+                        color = StellarOrange,
+                        style =
+                            MaterialTheme.typography.labelLarge,
+                        fontWeight =
+                            FontWeight.Bold
+                    )
+
+                    Spacer(
+                        Modifier.height(8.dp)
+                    )
+
+                    Text(
+                        text =
+                            "★ ${selectedStar.name}",
+                        color = StellarGreen,
+                        style =
+                            MaterialTheme.typography.headlineSmall,
+                        fontWeight =
+                            FontWeight.Bold
+                    )
+
+                    Spacer(
+                        Modifier.height(4.dp)
+                    )
+
+                    Text(
+                        text =
+                            "Constellation : ${selectedStar.constellation}",
+                        color = StellarMuted
+                    )
+
+                    Spacer(
+                        Modifier.height(14.dp)
+                    )
+
+                    InfoBlock(
+                        label = "Magnitude",
+                        value =
+                            String.format(
+                                java.util.Locale.FRANCE,
+                                "%.2f",
+                                selectedStar.magnitude
+                            )
+                    )
+
+                    InfoBlock(
+                        label = "Altitude",
+                        value =
+                            String.format(
+                                java.util.Locale.FRANCE,
+                                "%.1f°",
+                                selectedStar.altitudeDeg
+                            )
+                    )
+
+                    InfoBlock(
+                        label = "Azimut",
+                        value =
+                            String.format(
+                                java.util.Locale.FRANCE,
+                                "%.1f° %s",
+                                selectedStar.azimuthDeg,
+                                selectedStar.azimuthDirection
+                            )
+                    )
+
+                    InfoBlock(
+                        label = "Score",
+                        value =
+                            selectedStar.alignmentScore
+                                ?.let {
+                                    String.format(
+                                        java.util.Locale.FRANCE,
+                                        "%.0f %%",
+                                        it * 100.0
+                                    )
+                                }
+                                ?: "Non disponible"
+                    )
+                }
             }
 
             sky?.status ==
@@ -565,8 +976,8 @@ private fun ReferenceStarStep(
 
                 Text(
                     text =
-                        "Une position est n\u00E9cessaire avant de choisir " +
-                        "l'\u00E9toile de r\u00E9f\u00E9rence.",
+                        "Une position est nécessaire avant de choisir " +
+                        "l'étoile de référence.",
                     color = StellarOrange
                 )
 
@@ -597,7 +1008,7 @@ private fun ReferenceStarStep(
                 Text(
                     text =
                         skyState.error
-                            ?: "Aucune \u00E9toile recommand\u00E9e actuellement.",
+                            ?: "Aucune étoile de référence disponible actuellement.",
                     color = StellarOrange
                 )
             }
@@ -615,7 +1026,7 @@ private fun ReferenceStarStep(
                 Modifier.fillMaxWidth()
         ) {
             Text(
-                "Actualiser la recommandation"
+                "Recalculer les étoiles"
             )
         }
 
@@ -623,15 +1034,6 @@ private fun ReferenceStarStep(
             Modifier.height(8.dp)
         )
 
-        OutlinedButton(
-            onClick = onOpenSky,
-            modifier =
-                Modifier.fillMaxWidth()
-        ) {
-            Text(
-                "Voir toutes les \u00E9toiles dans Ciel"
-            )
-        }
 
         Spacer(
             Modifier.height(16.dp)
@@ -649,11 +1051,15 @@ private fun ReferenceStarStep(
                 modifier =
                     Modifier.weight(1f)
             ) {
-                Text("Pr\u00E9c\u00E9dent")
+                Text("Précédent")
             }
 
             Button(
-                onClick = onNext,
+                onClick = {
+                    star?.let {
+                        onNext(it.id)
+                    }
+                },
                 enabled =
                     star != null,
                 modifier =
@@ -671,7 +1077,7 @@ private fun ReferenceStarStep(
                         star?.let {
                             "Utiliser ${it.name}"
                         }
-                            ?: "Choisir une \u00E9toile",
+                            ?: "Choisir",
                     fontWeight =
                         FontWeight.Bold
                 )
@@ -679,7 +1085,6 @@ private fun ReferenceStarStep(
         }
     }
 }
-
 
 @Composable
 private fun PositionStep(

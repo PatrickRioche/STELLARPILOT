@@ -10,6 +10,7 @@ from math import (
     tan,
 )
 
+from app.catalog.constellations import constellation_fr
 from app.sky.catalog import BRIGHT_STARS
 
 
@@ -226,6 +227,16 @@ class SkyService:
             stars.append(
                 {
                     **star,
+                    "constellation_latin":
+                        star["constellation"],
+                    "constellation": (
+                        constellation_fr(
+                            star.get(
+                                "constellation_code"
+                            )
+                        )
+                        or star["constellation"]
+                    ),
                     "altitude_deg": round(
                         altitude_deg,
                         2,
@@ -306,6 +317,8 @@ class SkyService:
             "alignment_candidate_count": len(
                 candidates
             ),
+            "alignment_recommendations":
+                candidates[:4],
             "recommended": recommended,
             "stars": visible,
         }

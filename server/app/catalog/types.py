@@ -91,3 +91,34 @@ def normalize_object_type(
             value or "Objet céleste",
         ),
     )
+
+
+STELLARPILOT_TYPE_LABELS_FR = {
+    "star": "Étoiles",
+    "star_double": "Étoiles doubles",
+    "cluster_open": "Amas ouverts",
+    "cluster_globular": "Amas globulaires",
+    "nebula_diffuse": "Nébuleuses diffuses",
+    "nebula_planetary": "Nébuleuses planétaires",
+    "nebula_dark": "Nébuleuses obscures",
+    "supernova_remnant": "Rémanents de supernova",
+    "galaxy": "Galaxies",
+    "galaxy_pair": "Paires de galaxies",
+    "galaxy_group": "Groupes de galaxies",
+    "planet": "Planètes",
+    "moon": "Lunes",
+    "comet": "Comètes",
+    "asterism": "Astérismes",
+    "unknown": "Autres objets",
+}
+
+
+def object_type_label_fr(
+    object_type: str | None,
+) -> str:
+    value = (object_type or "unknown").strip()
+
+    return STELLARPILOT_TYPE_LABELS_FR.get(
+        value,
+        value or "Autres objets",
+    )

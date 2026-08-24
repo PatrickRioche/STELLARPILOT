@@ -80,7 +80,7 @@ android {
             buildConfigField(
                 "String",
                 "SERVER_BASE_URL",
-                "\"http://192.168.1.46:8000/\""
+                "\"http://10.42.0.1:8000/\""
             )
         }
     }
