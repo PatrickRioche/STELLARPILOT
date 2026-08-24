@@ -1,7 +1,13 @@
 import json
 import logging
 from concurrent.futures import ThreadPoolExecutor
+from io import BytesIO
+from pathlib import Path
 from time import perf_counter
+
+import numpy as np
+from astropy.io import fits
+from PIL import Image
 
 from fastapi import (
     FastAPI,
@@ -9,6 +15,7 @@ from fastapi import (
     WebSocket,
     WebSocketDisconnect,
 )
+from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
 from app.catalog.service import catalog_service
@@ -27,7 +34,7 @@ logger = logging.getLogger("stellarpilot.websocket")
 
 app = FastAPI(
     title="StellarPilot Prototype API",
-    version="0.4-proto",
+    version="0.5.0-poc",
 )
 
 
@@ -385,6 +392,393 @@ def set_mount_type(payload: MountTypePayload):
 @app.post("/camera/capture")
 def capture(payload: CapturePayload):
     return indi_service.capture(payload.exposure_s)
+
+
+@app.get("/camera/preview.jpg")
+def camera_preview():
+    """
+    Build a color JPEG preview from the latest RAW FITS.
+
+    The original FITS is never modified and remains the source
+    used by astrometry.net.
+    """
+
+    capture_dir = Path("/tmp/stellarpilot-captures")
+
+    if not capture_dir.exists():
+        raise HTTPException(
+            status_code=404,
+            detail="No FITS capture available",
+        )
+
+    candidates = [
+        item
+        for item in capture_dir.iterdir()
+        if item.is_file()
+        and item.suffix.lower() in {".fits", ".fit", ".fts"}
+    ]
+
+    if not candidates:
+        raise HTTPException(
+            status_code=404,
+            detail="No FITS capture available",
+        )
+
+    latest = max(
+        candidates,
+        key=lambda item: item.stat().st_mtime,
+    )
+
+    try:
+        with fits.open(
+            latest,
+            memmap=False,
+        ) as hdul:
+
+            image_data = np.asarray(
+                hdul[0].data
+            )
+
+            header = hdul[0].header
+
+        while image_data.ndim > 2:
+            image_data = image_data[0]
+
+        if image_data.ndim != 2:
+            raise ValueError(
+                "FITS does not contain a usable 2D image"
+            )
+
+        image_data = image_data.astype(
+            np.float32,
+            copy=False,
+        )
+
+        finite = np.isfinite(image_data)
+
+        if not finite.any():
+            raise ValueError(
+                "Image contains no finite pixels"
+            )
+
+        # Keep even dimensions for the Bayer matrix.
+        height = (
+            image_data.shape[0]
+            - image_data.shape[0] % 2
+        )
+
+        width = (
+            image_data.shape[1]
+            - image_data.shape[1] % 2
+        )
+
+        image_data = image_data[
+            :height,
+            :width,
+        ]
+
+        bayer_pattern = (
+            str(
+                header.get(
+                    "BAYERPAT",
+                    "",
+                )
+            )
+            .strip()
+            .upper()
+        )
+
+        x_offset = int(
+            header.get(
+                "XBAYROFF",
+                0,
+            )
+            or 0
+        )
+
+        y_offset = int(
+            header.get(
+                "YBAYROFF",
+                0,
+            )
+            or 0
+        )
+
+        # Determine the effective Bayer pattern after offsets.
+        patterns = {
+            "RGGB": [
+                ["R", "G"],
+                ["G", "B"],
+            ],
+            "BGGR": [
+                ["B", "G"],
+                ["G", "R"],
+            ],
+            "GRBG": [
+                ["G", "R"],
+                ["B", "G"],
+            ],
+            "GBRG": [
+                ["G", "B"],
+                ["R", "G"],
+            ],
+        }
+
+        matrix = patterns.get(
+            bayer_pattern
+        )
+
+        if matrix is not None:
+            matrix = [
+                [
+                    matrix[
+                        (row + y_offset) % 2
+                    ][
+                        (col + x_offset) % 2
+                    ]
+                    for col in range(2)
+                ]
+                for row in range(2)
+            ]
+
+            channels = {
+                "R": [],
+                "G": [],
+                "B": [],
+            }
+
+            for row in range(2):
+                for col in range(2):
+
+                    channel_name = matrix[
+                        row
+                    ][
+                        col
+                    ]
+
+                    channels[
+                        channel_name
+                    ].append(
+                        image_data[
+                            row::2,
+                            col::2,
+                        ]
+                    )
+
+            red = channels["R"][0]
+
+            green = sum(
+                channels["G"]
+            ) / len(
+                channels["G"]
+            )
+
+            blue = channels["B"][0]
+
+            #
+            # IMPORTANT:
+            #
+            # One global black/white level is used for all
+            # three channels. This preserves the real color
+            # relationships between R, G and B.
+            #
+            source_values = image_data[
+                np.isfinite(image_data)
+            ]
+
+            black, white = np.percentile(
+                source_values,
+                [0.5, 99.7],
+            )
+
+            black = float(black)
+            white = float(white)
+
+            if white <= black:
+                black = float(
+                    source_values.min()
+                )
+                white = float(
+                    source_values.max()
+                )
+
+            if white <= black:
+                white = black + 1.0
+
+            def stretch(channel):
+                value = (
+                    channel - black
+                ) / (
+                    white - black
+                )
+
+                value = np.clip(
+                    value,
+                    0.0,
+                    1.0,
+                )
+
+                # Gamma-like stretch for screen preview.
+                value = np.sqrt(
+                    value
+                )
+
+                return value
+
+            red = stretch(red)
+            green = stretch(green)
+            blue = stretch(blue)
+
+            rgb = np.stack(
+                [
+                    red,
+                    green,
+                    blue,
+                ],
+                axis=-1,
+            )
+
+            #
+            # Small saturation boost for the tablet preview.
+            # This does not affect the FITS file.
+            #
+            luminance = (
+                0.2126 * rgb[..., 0]
+                + 0.7152 * rgb[..., 1]
+                + 0.0722 * rgb[..., 2]
+            )
+
+            saturation = 1.20
+
+            rgb = (
+                luminance[..., None]
+                + saturation
+                * (
+                    rgb
+                    - luminance[..., None]
+                )
+            )
+
+            rgb = np.clip(
+                rgb,
+                0.0,
+                1.0,
+            )
+
+        else:
+            #
+            # Monochrome fallback when no Bayer pattern
+            # is declared by the FITS header.
+            #
+            source_values = image_data[
+                np.isfinite(image_data)
+            ]
+
+            black, white = np.percentile(
+                source_values,
+                [0.5, 99.7],
+            )
+
+            if white <= black:
+                black = float(
+                    source_values.min()
+                )
+                white = float(
+                    source_values.max()
+                )
+
+            if white <= black:
+                white = black + 1.0
+
+            mono = (
+                image_data - black
+            ) / (
+                white - black
+            )
+
+            mono = np.clip(
+                mono,
+                0.0,
+                1.0,
+            )
+
+            mono = np.sqrt(
+                mono
+            )
+
+            rgb = np.stack(
+                [
+                    mono,
+                    mono,
+                    mono,
+                ],
+                axis=-1,
+            )
+
+        jpeg_data = (
+            rgb * 255.0
+        ).astype(
+            np.uint8
+        )
+
+        preview = Image.fromarray(
+            jpeg_data
+        )
+
+        max_width = 1600
+
+        if preview.width > max_width:
+
+            new_height = round(
+                preview.height
+                * max_width
+                / preview.width
+            )
+
+            preview = preview.resize(
+                (
+                    max_width,
+                    new_height,
+                ),
+                Image.Resampling.LANCZOS,
+            )
+
+        buffer = BytesIO()
+
+        preview.save(
+            buffer,
+            format="JPEG",
+            quality=92,
+            optimize=True,
+        )
+
+        return Response(
+            content=buffer.getvalue(),
+            media_type="image/jpeg",
+            headers={
+                "Cache-Control": "no-store",
+                "X-StellarPilot-Source":
+                    latest.name,
+                "X-StellarPilot-Bayer":
+                    bayer_pattern or "NONE",
+                "X-StellarPilot-Preview":
+                    "color-global-stretch",
+            },
+        )
+
+    except Exception as exc:
+
+        logger.exception(
+            "Unable to generate camera preview"
+        )
+
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "Camera preview generation error: "
+                f"{exc}"
+            ),
+        ) from exc
 
 
 @app.post("/mount/goto")

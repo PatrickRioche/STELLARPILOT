@@ -1,5 +1,7 @@
 import subprocess
+import time
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 
 from app.config import get_mode
 
@@ -405,17 +407,180 @@ class IndiService:
         ]
 
     def capture(self, exposure_s: float) -> dict:
-        if get_mode() == "device":
+        """
+        R?alise une acquisition avec la cam?ra INDI.
+
+        En mode device, le fichier FITS est enregistr? localement
+        sur le Raspberry Pi dans /tmp/stellarpilot-captures.
+        """
+
+        if get_mode() != "device":
             return {
-                "status": "not_implemented",
-                "mode": "device",
-                "detail": "Real camera capture is not enabled in POC v0.3",
+                "status": "simulated",
+                "exposure_s": exposure_s,
+                "image": "captures/poc_capture_0001.fits",
             }
 
+        camera_name = None
+
+        for line in self._connection_properties().splitlines():
+            line = line.strip()
+
+            if ".CONNECTION.CONNECT=" not in line:
+                continue
+
+            if not line.endswith("=On"):
+                continue
+
+            name = line.split(".CONNECTION.", 1)[0]
+            lower = name.lower()
+
+            if (
+                "playerone" in lower
+                or "ccd" in lower
+                or "camera" in lower
+            ):
+                camera_name = name
+                break
+
+        if camera_name is None:
+            return {
+                "status": "error",
+                "mode": "device",
+                "detail": "Aucune cam?ra INDI connect?e",
+            }
+
+        capture_dir = Path("/tmp/stellarpilot-captures")
+        capture_dir.mkdir(
+            parents=True,
+            exist_ok=True,
+        )
+
+        timestamp = time.strftime("%Y%m%d_%H%M%S")
+        prefix = f"stellarpilot_{timestamp}"
+
+        def set_property(property_name: str) -> None:
+            result = subprocess.run(
+                [
+                    "indi_setprop",
+                    "-h",
+                    "127.0.0.1",
+                    "-p",
+                    "7624",
+                    "-t",
+                    "5",
+                    property_name,
+                ],
+                capture_output=True,
+                text=True,
+                timeout=7,
+                check=False,
+            )
+
+            if result.returncode != 0:
+                detail = (
+                    result.stderr.strip()
+                    or result.stdout.strip()
+                    or "Erreur INDI inconnue"
+                )
+
+                raise RuntimeError(detail)
+
+        try:
+            # Le fichier doit ?tre enregistr? sur le Raspberry Pi.
+            set_property(
+                f"{camera_name}."
+                "UPLOAD_MODE.UPLOAD_LOCAL=On"
+            )
+
+            # Image astronomique standard.
+            set_property(
+                f"{camera_name}."
+                "CCD_FRAME_TYPE.FRAME_LIGHT=On"
+            )
+
+            # Premi?re astrom?trie en binning natif 1x1.
+            set_property(
+                f"{camera_name}."
+                "CCD_BINNING.HOR_BIN=1"
+            )
+
+            set_property(
+                f"{camera_name}."
+                "CCD_BINNING.VER_BIN=1"
+            )
+
+            # R?pertoire et pr?fixe du FITS.
+            set_property(
+                f"{camera_name}."
+                f"UPLOAD_SETTINGS.UPLOAD_DIR={capture_dir}"
+            )
+
+            set_property(
+                f"{camera_name}."
+                f"UPLOAD_SETTINGS.UPLOAD_PREFIX={prefix}"
+            )
+
+            # D?clenchement de l'exposition.
+            set_property(
+                f"{camera_name}."
+                "CCD_EXPOSURE.CCD_EXPOSURE_VALUE="
+                f"{exposure_s}"
+            )
+
+        except (
+            OSError,
+            subprocess.SubprocessError,
+            RuntimeError,
+        ) as exc:
+            return {
+                "status": "error",
+                "mode": "device",
+                "camera": camera_name,
+                "detail": str(exc),
+            }
+
+        # L'exposition elle-m?me peut ?tre longue.
+        deadline = (
+            time.monotonic()
+            + float(exposure_s)
+            + 20.0
+        )
+
+        while time.monotonic() < deadline:
+            candidates = sorted(
+                (
+                    item
+                    for item in capture_dir.iterdir()
+                    if item.is_file()
+                    and item.name.startswith(prefix)
+                    and item.suffix.lower()
+                    in {".fits", ".fit", ".fts"}
+                ),
+                key=lambda item: item.stat().st_mtime,
+                reverse=True,
+            )
+
+            if candidates:
+                image = candidates[0]
+
+                return {
+                    "status": "captured",
+                    "mode": "device",
+                    "camera": camera_name,
+                    "exposure_s": exposure_s,
+                    "image": str(image),
+                    "size_bytes": image.stat().st_size,
+                }
+
+            time.sleep(0.25)
+
         return {
-            "status": "simulated",
+            "status": "error",
+            "mode": "device",
+            "camera": camera_name,
             "exposure_s": exposure_s,
-            "image": "captures/poc_capture_0001.fits",
+            "detail": "Timeout en attente du fichier FITS",
         }
 
     def goto(self, ra: float, dec: float) -> dict:

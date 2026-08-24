@@ -460,7 +460,7 @@ class ConnectionViewModel : ViewModel() {
                         uiState = uiState.copy(
                             connectionState =
                                 ConnectionState.DISCONNECTED,
-                            webSocketStatus = "Ferm?"
+                            webSocketStatus = "Ferm\u00E9"
                         )
 
                         scheduleReconnect(

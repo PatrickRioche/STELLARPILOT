@@ -36,8 +36,8 @@ android {
         minSdk = 26
         targetSdk = 36
 
-        versionCode = 4
-        versionName = "0.4.0"
+        versionCode = 5
+        versionName = "0.5.0"
 
         buildConfigField(
             "String",
@@ -63,7 +63,7 @@ android {
             buildConfigField(
                 "String",
                 "SERVER_BASE_URL",
-                "\"http://10.0.2.2:8000/\""
+                "\"http://10.42.0.1:8008/\""
             )
         }
 

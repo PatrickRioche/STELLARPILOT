@@ -1,4 +1,4 @@
-package fr.stellarpilot.app.feature.preparation
+﻿package fr.stellarpilot.app.feature.preparation
 
 import fr.stellarpilot.app.feature.connection.ConnectionState
 
@@ -87,6 +87,18 @@ fun PreparationScreen(
         mutableStateOf<String?>(null)
     }
 
+    /*
+     * Temps d'exposition de la première astrométrie.
+     *
+     * Valeur initiale volontairement basse pour les tests
+     * de jour avec la caméra réelle.
+     *
+     * 1 ms = 0.001 seconde.
+     */
+    var astrometryExposureMs by rememberSaveable {
+        mutableIntStateOf(1)
+    }
+
     val state = viewModel.uiState
     val server = state.server
 
@@ -124,8 +136,9 @@ fun PreparationScreen(
     ) {
         if (currentStep == 2) {
             cameraPreviewViewModel.load(
-                state.serverBaseUrl
-            )
+                    state.serverBaseUrl,
+                    astrometryExposureMs / 1000.0
+                )
         }
     }
 
@@ -248,10 +261,18 @@ fun PreparationScreen(
                     cameraName =
                         server?.devices?.camera?.name,
 
+                    exposureMs =
+                        astrometryExposureMs,
+
+                    onExposureChange = {
+                        astrometryExposureMs = it
+                    },
+
                     onRefresh = {
                         cameraPreviewViewModel.load(
-                            state.serverBaseUrl
-                        )
+                    state.serverBaseUrl,
+                    astrometryExposureMs / 1000.0
+                )
                     },
 
                     onPrevious = {
@@ -401,7 +422,7 @@ private fun ConnectionStep(
                     when {
                         serverReachable &&
                             state.isConnecting ->
-                            "Serveur connecté • lecture du matériel..."
+                            "Serveur connect\u00E9 - lecture du mat\u00E9riel..."
 
                         serverReachable ->
                             "Serveur connecté • détails matériel indisponibles"
@@ -413,7 +434,7 @@ private fun ConnectionStep(
                             "Connexion au serveur StellarPilot..."
 
                         else ->
-                            "Serveur non connecté"
+                            "Serveur non connect\u00E9"
                     },
                 color =
                     if (serverReachable)
@@ -796,16 +817,16 @@ private fun ReferenceStarStep(
 
                             append(
                                 if (selected)
-                                    "★ "
+                                    "â˜… "
                                 else
-                                    "☆ "
+                                    "â˜† "
                             )
 
                             append(candidate.name)
 
                             if (index == 0) {
                                 append(
-                                    " · recommandée"
+                                    " Â· recommandée"
                                 )
                             }
 
@@ -814,7 +835,7 @@ private fun ReferenceStarStep(
                                 candidate.constellation
                             )
 
-                            append(" · Alt. ")
+                            append(" Â· Alt. ")
 
                             append(
                                 String.format(
@@ -824,7 +845,7 @@ private fun ReferenceStarStep(
                                 )
                             )
 
-                            append(" · mag ")
+                            append(" Â· mag ")
 
                             append(
                                 String.format(
@@ -834,7 +855,7 @@ private fun ReferenceStarStep(
                                 )
                             )
 
-                            append(" · score ")
+                            append(" Â· score ")
                             append(score)
                         }
 
@@ -907,7 +928,7 @@ private fun ReferenceStarStep(
 
                     Text(
                         text =
-                            "★ ${selectedStar.name}",
+                            "â˜… ${selectedStar.name}",
                         color = StellarGreen,
                         style =
                             MaterialTheme.typography.headlineSmall,
