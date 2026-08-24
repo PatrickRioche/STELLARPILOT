@@ -1,5 +1,7 @@
 package fr.stellarpilot.app.feature.preparation
 
+import fr.stellarpilot.app.feature.connection.ConnectionState
+
 import android.graphics.BitmapFactory
 
 import androidx.compose.foundation.BorderStroke
@@ -392,7 +394,7 @@ private fun ConnectionStep(
 
         if (server == null) {
             val serverReachable =
-                state.restStatus == "OK"
+                state.connectionState == ConnectionState.CONNECTED
 
             Text(
                 text =
@@ -403,6 +405,9 @@ private fun ConnectionStep(
 
                         serverReachable ->
                             "Serveur connecté • détails matériel indisponibles"
+
+                        state.connectionState == ConnectionState.RECONNECTING ->
+                            "Reconnexion au serveur StellarPilot..."
 
                         state.isConnecting ->
                             "Connexion au serveur StellarPilot..."

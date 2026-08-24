@@ -52,6 +52,17 @@ fun ConnectionScreen(
     val state = viewModel.uiState
     val server = state.server
 
+    /*
+     * La connexion au serveur depend de ConnectionState.
+     * /status ne represente que la telemetrie materielle.
+     */
+    val serverConnected =
+        state.connectionState == ConnectionState.CONNECTED
+
+    val serverConnecting =
+        state.connectionState == ConnectionState.CONNECTING ||
+        state.connectionState == ConnectionState.RECONNECTING
+
     LaunchedEffect(Unit) {
         viewModel.connect()
     }
@@ -154,8 +165,17 @@ fun ConnectionScreen(
                     ) {
 
                         StatusDot(
-                            status = server?.devices?.server?.status
-                                ?: if (state.isConnecting) "connecting" else "offline"
+                            status =
+                                when {
+                                    serverConnected ->
+                                        "connected"
+
+                                    serverConnecting ->
+                                        "connecting"
+
+                                    else ->
+                                        "offline"
+                                }
                         )
 
                         Column(
@@ -172,13 +192,17 @@ fun ConnectionScreen(
                             )
 
                             Text(
-                                text = if (server != null) {
-                                    "Connect\u00E9 \u2022 ${state.serverBaseUrl}"
-                                } else if (state.isConnecting) {
-                                    "Connexion en cours..."
-                                } else {
-                                    "Serveur non connect\u00E9"
-                                },
+                                text =
+                                    when {
+                                        serverConnected ->
+                                            "Connect\u00E9 \u2022 ${state.serverBaseUrl}"
+
+                                        serverConnecting ->
+                                            "Reconnexion en cours..."
+
+                                        else ->
+                                            "Serveur non connect\u00E9"
+                                    },
                                 style = MaterialTheme.typography.bodySmall,
                                 color = StellarMuted
                             )
@@ -252,11 +276,17 @@ fun ConnectionScreen(
                     if (server == null) {
 
                         Text(
-                            text = if (state.isConnecting) {
-                                "Lecture de l'\u00E9tat du serveur..."
-                            } else {
-                                "Aucune donn\u00E9e disponible"
-                            },
+                            text =
+                                when {
+                                    serverConnected ->
+                                        "Serveur connect\u00E9 - t\u00E9l\u00E9m\u00E9trie /status indisponible"
+
+                                    serverConnecting ->
+                                        "Lecture de l'\u00E9tat du serveur..."
+
+                                    else ->
+                                        "Aucune donn\u00E9e disponible"
+                                },
                             modifier = Modifier.padding(vertical = 20.dp),
                             color = StellarMuted
                         )

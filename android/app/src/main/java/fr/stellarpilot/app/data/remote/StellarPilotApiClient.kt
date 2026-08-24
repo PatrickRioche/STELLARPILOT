@@ -23,11 +23,71 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
 import org.json.JSONObject
+import java.util.concurrent.TimeUnit
 
 class StellarPilotApiClient(
     private val baseUrl: String,
-    private val client: OkHttpClient = OkHttpClient()
+    private val client: OkHttpClient = createHttpClient()
 ) {
+
+    companion object {
+
+        /*
+         * Configuration r?seau commune ? StellarPilot.
+         *
+         * Les d?lais sont volontairement courts car le serveur
+         * StellarPilot fonctionne normalement sur le m?me r?seau local
+         * que la tablette Android.
+         *
+         * Le ping WebSocket natif d'OkHttp sert de heartbeat transport.
+         * Si le serveur cesse de r?pondre, OkHttp d?clenche automatiquement
+         * l'?chec du WebSocket afin de permettre une reconnexion rapide.
+         */
+        private fun createHttpClient(): OkHttpClient =
+            OkHttpClient.Builder()
+                .connectTimeout(5, TimeUnit.SECONDS)
+                .readTimeout(10, TimeUnit.SECONDS)
+                .writeTimeout(10, TimeUnit.SECONDS)
+                .callTimeout(15, TimeUnit.SECONDS)
+                .retryOnConnectionFailure(true)
+                .build()
+
+        /*
+         * Client d?di? ? /status.
+         *
+         * Il ne partage ni dispatcher ni pool de connexions avec
+         * le WebSocket. Une t?l?m?trie lente ne peut donc pas
+         * perturber le heartbeat temps r?el.
+         */
+        private fun createStatusClient(): OkHttpClient =
+            OkHttpClient.Builder()
+                .connectTimeout(5, TimeUnit.SECONDS)
+                .readTimeout(20, TimeUnit.SECONDS)
+                .writeTimeout(10, TimeUnit.SECONDS)
+                .callTimeout(25, TimeUnit.SECONDS)
+                .retryOnConnectionFailure(true)
+                .build()
+
+        /*
+         * Client exclusivement r?serv? au WebSocket StellarPilot.
+         *
+         * Le ping/pong natif OkHttp constitue le heartbeat r?seau.
+         */
+        private fun createWebSocketClient(): OkHttpClient =
+            OkHttpClient.Builder()
+                .connectTimeout(5, TimeUnit.SECONDS)
+                .writeTimeout(10, TimeUnit.SECONDS)
+                .pingInterval(10, TimeUnit.SECONDS)
+                .retryOnConnectionFailure(true)
+                .build()
+    }
+
+    private val statusClient: OkHttpClient =
+        createStatusClient()
+
+    private val webSocketClient: OkHttpClient =
+        createWebSocketClient()
+
     suspend fun checkHealth() = withContext(Dispatchers.IO) {
         val request = Request.Builder()
             .url(endpoint("health"))
@@ -42,12 +102,20 @@ class StellarPilotApiClient(
     }
 
     suspend fun getStatus(): ServerStatus = withContext(Dispatchers.IO) {
+
+        /*
+         * /status interroge r?ellement INDI et plusieurs p?riph?riques.
+         * Cette requ?te dispose donc d'une marge sup?rieure ? /health.
+         *
+         * Les d?lais courts du client principal restent inchang?s pour
+         * d?tecter rapidement une v?ritable perte du serveur.
+         */
         val request = Request.Builder()
             .url(endpoint("status"))
             .get()
             .build()
 
-        client.newCall(request).execute().use { response ->
+        statusClient.newCall(request).execute().use { response ->
             check(response.isSuccessful) {
                 "HTTP ${response.code} sur /status"
             }
@@ -148,7 +216,10 @@ class StellarPilotApiClient(
             .url(webSocketEndpoint())
             .build()
 
-        return client.newWebSocket(request, listener)
+        return webSocketClient.newWebSocket(
+            request,
+            listener
+        )
     }
 
     private fun endpoint(path: String): String =

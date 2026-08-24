@@ -1,4 +1,5 @@
 import subprocess
+from concurrent.futures import ThreadPoolExecutor
 
 from app.config import get_mode
 
@@ -273,6 +274,17 @@ class IndiService:
         }
 
     def device_status(self) -> dict:
+        """
+        Retourne un instantan? de l'?tat des p?riph?riques INDI.
+
+        La d?tection de la monture et de la cam?ra est effectu?e
+        ? partir d'une seule lecture des propri?t?s CONNECTION.
+
+        Les lectures d?taill?es de la monture et de la cam?ra sont
+        ensuite ex?cut?es en parall?le. Cette organisation ?vite
+        d'additionner leurs d?lais d'attente lorsque le mat?riel
+        r?pond lentement ou devient temporairement indisponible.
+        """
         if get_mode() != "device":
             return {
                 "mount": {
@@ -285,15 +297,8 @@ class IndiService:
                 },
             }
 
-        mount = {
-            "status": "unavailable",
-            "name": None,
-        }
-
-        camera = {
-            "status": "unavailable",
-            "name": None,
-        }
+        mount_name = None
+        camera_name = None
 
         for line in self._connection_properties().splitlines():
             line = line.strip()
@@ -309,26 +314,73 @@ class IndiService:
             lower = name.lower()
 
             if (
-                "onstep" in lower
-                or "lx200" in lower
-                or "mount" in lower
-                or "telescope" in lower
+                mount_name is None
+                and (
+                    "onstep" in lower
+                    or "lx200" in lower
+                    or "mount" in lower
+                    or "telescope" in lower
+                )
             ):
-                mount = {
-                    "status": "ready",
-                    "name": name,
-                    **self._mount_type(name),
-                }
+                mount_name = name
 
             if (
-                "playerone" in lower
-                or "ccd" in lower
-                or "camera" in lower
+                camera_name is None
+                and (
+                    "playerone" in lower
+                    or "ccd" in lower
+                    or "camera" in lower
+                )
             ):
+                camera_name = name
+
+        mount = {
+            "status": "unavailable",
+            "name": None,
+        }
+
+        camera = {
+            "status": "unavailable",
+            "name": None,
+        }
+
+        # Les deux interrogations d?taill?es sont ind?pendantes.
+        # Elles sont donc ex?cut?es en parall?le afin que /status
+        # reste r?actif m?me lorsqu'un p?riph?rique r?pond lentement.
+        with ThreadPoolExecutor(
+            max_workers=2,
+            thread_name_prefix="stellarpilot-indi",
+        ) as executor:
+            mount_future = (
+                executor.submit(
+                    self._mount_type,
+                    mount_name,
+                )
+                if mount_name is not None
+                else None
+            )
+
+            camera_future = (
+                executor.submit(
+                    self._camera_info,
+                    camera_name,
+                )
+                if camera_name is not None
+                else None
+            )
+
+            if mount_name is not None:
+                mount = {
+                    "status": "ready",
+                    "name": mount_name,
+                    **mount_future.result(),
+                }
+
+            if camera_name is not None:
                 camera = {
                     "status": "ready",
-                    "name": name,
-                    **self._camera_info(name),
+                    "name": camera_name,
+                    **camera_future.result(),
                 }
 
         return {

@@ -1,5 +1,7 @@
 package fr.stellarpilot.app.feature.status
 
+import fr.stellarpilot.app.feature.connection.ConnectionState
+
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
@@ -100,10 +102,19 @@ fun StatusScreen(
                 ) {
                     Text(
                         text =
-                            if (state.isConnecting) {
-                                "Connexion au serveur..."
-                            } else {
-                                "Serveur non connect\u00E9"
+                            when (state.connectionState) {
+                                ConnectionState.CONNECTED ->
+                                    "Serveur connect? ? t?l?m?trie indisponible"
+
+                                ConnectionState.CONNECTING ->
+                                    "Connexion au serveur..."
+
+                                ConnectionState.RECONNECTING ->
+                                    "Reconnexion au serveur..."
+
+                                ConnectionState.DISCONNECTED,
+                                ConnectionState.STOPPED ->
+                                    "Serveur non connect?"
                             },
                         color = StellarMuted
                     )

@@ -1,4 +1,14 @@
-from fastapi import FastAPI, HTTPException, WebSocket
+import json
+import logging
+from concurrent.futures import ThreadPoolExecutor
+from time import perf_counter
+
+from fastapi import (
+    FastAPI,
+    HTTPException,
+    WebSocket,
+    WebSocketDisconnect,
+)
 from pydantic import BaseModel, Field
 
 from app.catalog.service import catalog_service
@@ -12,9 +22,12 @@ from app.solving.service import plate_solver
 from app.system.service import system_service
 
 
+logger = logging.getLogger("stellarpilot.websocket")
+
+
 app = FastAPI(
-    title="StellarPilot POC API",
-    version="0.3-poc",
+    title="StellarPilot Prototype API",
+    version="0.4-proto",
 )
 
 
@@ -48,16 +61,47 @@ def health():
         "service": "stellarpilot",
         "status": "ok",
         "mode": get_mode(),
-        "protocol": "poc-3",
+        "protocol": "proto-1",
     }
 
 
 @app.get("/status")
 def status():
+    """
+    Construit l'?tat global du prototype.
+
+    Les sous-syst?mes ind?pendants sont interrog?s en parall?le.
+    Une cam?ra lente, le GPS ou chrony ne doivent pas bloquer
+    successivement toute la r?ponse /status.
+    """
     mode = get_mode()
-    indi = indi_service.device_status()
-    gps = gps_service.status()
-    system = system_service.status()
+    started_at = perf_counter()
+
+    with ThreadPoolExecutor(
+        max_workers=4,
+        thread_name_prefix="stellarpilot-status",
+    ) as executor:
+        indi_future = executor.submit(
+            indi_service.device_status
+        )
+        gps_future = executor.submit(
+            gps_service.status
+        )
+        system_future = executor.submit(
+            system_service.status
+        )
+        catalog_future = executor.submit(
+            catalog_service.status
+        )
+
+        indi = indi_future.result()
+        gps = gps_future.result()
+        system = system_future.result()
+        catalog = catalog_future.result()
+
+    status_duration_ms = int(
+        (perf_counter() - started_at) * 1000
+    )
 
     if mode == "device":
         if (
@@ -122,7 +166,11 @@ def status():
     return {
         "service": "stellarpilot",
         "status": "ok",
+        # Champ historique conserv? pendant la transition
+        # afin de ne pas casser les clients issus du POC.
         "poc": True,
+        "prototype": True,
+        "protocol": "proto-1",
         "mode": mode,
         "devices": {
             "server": {
@@ -133,7 +181,10 @@ def status():
             "gps": gps,
         },
         "system": system,
-        "catalog": catalog_service.status(),
+        "catalog": catalog,
+        "diagnostics": {
+            "status_duration_ms": status_duration_ms,
+        },
         "session": {
             "latitude": session_latitude,
             "longitude": session_longitude,
@@ -382,23 +433,83 @@ def catalog_object(
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
+    """
+    Maintient le canal temps r?el entre StellarPilot Android
+    et StellarPilot Server.
+
+    La fermeture normale d'un client est trait?e explicitement
+    afin qu'une perte Wi-Fi, une mise en veille Android ou un
+    changement de r?seau ne g?n?re pas une erreur serveur inutile.
+    """
     await websocket.accept()
+
+    client = websocket.client
+
+    client_label = (
+        f"{client.host}:{client.port}"
+        if client is not None
+        else "client inconnu"
+    )
+
+    logger.info(
+        "WebSocket connect? : %s",
+        client_label,
+    )
 
     await websocket.send_json(
         {
             "event": "connected",
             "service": "stellarpilot",
             "mode": get_mode(),
-            "protocol": "poc-3",
+            "protocol": "proto-1",
         }
     )
 
-    while True:
-        message = await websocket.receive_text()
+    try:
+        while True:
+            message = await websocket.receive_text()
 
-        await websocket.send_json(
-            {
-                "event": "echo",
-                "message": message,
-            }
+            # Les messages applicatifs StellarPilot utilisent JSON.
+            # Pendant la transition du POC vers le prototype,
+            # les anciennes trames restent accept?es.
+            try:
+                payload = json.loads(message)
+            except (json.JSONDecodeError, TypeError):
+                payload = None
+
+            if (
+                isinstance(payload, dict)
+                and payload.get("type") == "hello"
+            ):
+                await websocket.send_json(
+                    {
+                        "event": "welcome",
+                        "service": "stellarpilot",
+                        "mode": get_mode(),
+                        "protocol": "proto-1",
+                        "client": payload.get(
+                            "client",
+                            "unknown",
+                        ),
+                    }
+                )
+                continue
+
+            await websocket.send_json(
+                {
+                    "event": "echo",
+                    "message": message,
+                }
+            )
+
+    except WebSocketDisconnect:
+        logger.info(
+            "WebSocket d?connect? : %s",
+            client_label,
+        )
+
+    except Exception:
+        logger.exception(
+            "Erreur WebSocket pour %s",
+            client_label,
         )
