@@ -1,5 +1,16 @@
-# StellarPilot Wiki
+<p align="center">
+  <img src="https://raw.githubusercontent.com/PatrickRioche/STELLARPILOT/main/wiki/assets/stellarpilot-logo.png"
+       alt="StellarPilot"
+       width="180">
+</p>
 
+<h1 align="center">StellarPilot</h1>
+
+<p align="center">
+  Pilotage astronomique intelligent, local et indépendant des constructeurs
+</p>
+
+---
 Bienvenue dans la documentation d’installation, d’exploitation et de développement de **StellarPilot**.
 
 StellarPilot est un projet libre d’astronomie amateur visant à fournir une couche de pilotage intelligente, locale et indépendante des constructeurs au-dessus d’INDI.

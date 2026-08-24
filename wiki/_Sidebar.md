@@ -1,5 +1,10 @@
-# StellarPilot
+<p align="center">
+  <img src="https://raw.githubusercontent.com/PatrickRioche/STELLARPILOT/main/wiki/assets/stellarpilot-logo.png"
+       alt="StellarPilot"
+       width="90">
+</p>
 
+### StellarPilot
 - [Accueil](Home)
 - [Présentation](Project-Overview)
 - [Méthode de développement](Development-Methodology)
