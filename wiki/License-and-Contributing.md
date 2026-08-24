@@ -21,4 +21,4 @@ git status
 git diff --check
 ```
 
-Toute procédure d’installation reproductible doit évoluer avec le code correspondant. Le Wiki versionné se trouve dans `docs/wiki/`, les scripts dans `scripts/install/` et `scripts/wiki/`.
+Toute procédure d’installation reproductible doit évoluer avec le code correspondant. Le Wiki versionné se trouve dans `wiki/`, les scripts dans `scripts/install/` et `scripts/wiki/`.

@@ -73,4 +73,4 @@ Avant Gate G0, les versions suffixées `-poc` sont des pré-releases techniques.
 
 ## Documentation as code
 
-Le Wiki est versionné sous `docs/wiki/` puis publiable dans GitHub Wiki. Ainsi les procédures suivent les mêmes règles de review, historique et rollback que le code.
+Le Wiki est versionné sous `wiki/` puis publiable dans GitHub Wiki. Ainsi les procédures suivent les mêmes règles de review, historique et rollback que le code.

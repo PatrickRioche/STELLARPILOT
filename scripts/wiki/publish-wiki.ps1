@@ -1,7 +1,7 @@
 param([string]$Repository = "PatrickRioche/STELLARPILOT")
 $ErrorActionPreference = "Stop"
 $repoRoot = Resolve-Path (Join-Path $PSScriptRoot "..\..")
-$wikiSource = Join-Path $repoRoot "docs\wiki"
+$wikiSource = Join-Path $repoRoot "wiki"
 if (-not (Test-Path (Join-Path $wikiSource "Home.md"))) { throw "Source Wiki introuvable." }
 if (-not (Get-Command gh -ErrorAction SilentlyContinue)) { throw "GitHub CLI gh requis." }
 if (-not (Get-Command git -ErrorAction SilentlyContinue)) { throw "Git requis." }
