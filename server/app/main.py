@@ -791,6 +791,29 @@ def solve(payload: SolvePayload):
     return plate_solver.solve(payload.image)
 
 
+@app.get("/demo/m103/preview.jpg")
+def preview_demo_m103():
+    preview_image = (
+        Path(__file__).resolve().parents[1]
+        / "demo"
+        / "M103-preview.jpg"
+    )
+
+    if not preview_image.exists():
+        raise HTTPException(
+            status_code=404,
+            detail="Aperçu M103 introuvable",
+        )
+
+    return Response(
+        content=preview_image.read_bytes(),
+        media_type="image/jpeg",
+        headers={
+            "Cache-Control": "no-store",
+            "X-StellarPilot-Demo": "M103",
+        },
+    )
+
 @app.post("/demo/m103/solve")
 def solve_demo_m103():
     demo_image = (
