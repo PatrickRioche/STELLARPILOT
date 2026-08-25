@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://raw.githubusercontent.com/PatrickRioche/STELLARPILOT/main/wiki/assets/stellarpilot-logo.png"
+  <img src="https://raw.githubusercontent.com/PatrickRioche/STELLARPILOT/main/LogoStellarPilot.png"
        alt="StellarPilot"
        width="90">
 </p>
