@@ -1,4 +1,4 @@
-﻿package fr.stellarpilot.app.feature.preparation
+package fr.stellarpilot.app.feature.preparation
 
 import fr.stellarpilot.app.feature.connection.ConnectionState
 
@@ -129,18 +129,6 @@ fun PreparationScreen(
         }
     }
 
-    // CAMERA_PREVIEW_AUTOLOAD
-    LaunchedEffect(
-        currentStep,
-        state.serverBaseUrl
-    ) {
-        if (currentStep == 2) {
-            cameraPreviewViewModel.load(
-                    state.serverBaseUrl,
-                    astrometryExposureMs / 1000.0
-                )
-        }
-    }
 
     val essentialReady = remember(server) {
         server != null &&
@@ -258,6 +246,9 @@ fun PreparationScreen(
                     previewState =
                         cameraPreviewState,
 
+                    demoM103State =
+                        cameraPreviewViewModel.demoM103State,
+
                     cameraName =
                         server?.devices?.camera?.name,
 
@@ -266,6 +257,12 @@ fun PreparationScreen(
 
                     onExposureChange = {
                         astrometryExposureMs = it
+                    },
+
+                    onRunDemoM103 = {
+                        cameraPreviewViewModel.runDemoM103(
+                            state.serverBaseUrl
+                        )
                     },
 
                     onRefresh = {

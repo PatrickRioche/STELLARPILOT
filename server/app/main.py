@@ -82,6 +82,10 @@ def status():
     successivement toute la r?ponse /status.
     """
     mode = get_mode()
+    logging.getLogger("uvicorn.error").info(
+        "M103 solve START"
+    )
+
     started_at = perf_counter()
 
     with ThreadPoolExecutor(
@@ -576,6 +580,56 @@ def camera_preview():
             blue = channels["B"][0]
 
             #
+            # Neutralise the Bayer color cast of the sky
+            # background for the screen preview only.
+            #
+            red_background = float(
+                np.median(
+                    red[np.isfinite(red)]
+                )
+            )
+
+            green_background = float(
+                np.median(
+                    green[np.isfinite(green)]
+                )
+            )
+
+            blue_background = float(
+                np.median(
+                    blue[np.isfinite(blue)]
+                )
+            )
+
+            neutral_background = float(
+                np.median(
+                    [
+                        red_background,
+                        green_background,
+                        blue_background,
+                    ]
+                )
+            )
+
+            red = (
+                red
+                + neutral_background
+                - red_background
+            )
+
+            green = (
+                green
+                + neutral_background
+                - green_background
+            )
+
+            blue = (
+                blue
+                + neutral_background
+                - blue_background
+            )
+
+            #
             # IMPORTANT:
             #
             # One global black/white level is used for all
@@ -586,18 +640,67 @@ def camera_preview():
                 np.isfinite(image_data)
             ]
 
-            black, white = np.percentile(
-                source_values,
-                [0.5, 99.7],
+            #
+            # Automatic astronomical preview stretch.
+            #
+            # The median estimates the sky background.
+            # MAD gives a robust estimate of background noise,
+            # without being dominated by bright stars.
+            #
+            background = float(
+                np.median(source_values)
             )
 
-            black = float(black)
-            white = float(white)
+            mad = float(
+                np.median(
+                    np.abs(
+                        source_values - background
+                    )
+                )
+            )
+
+            noise = 1.4826 * mad
+
+            if noise <= 0.0:
+                p16, p84 = np.percentile(
+                    source_values,
+                    [16.0, 84.0],
+                )
+
+                noise = max(
+                    float(
+                        (p84 - p16) / 2.0
+                    ),
+                    1.0,
+                )
+
+            high_percentile = float(
+                np.percentile(
+                    source_values,
+                    99.8,
+                )
+            )
+
+            #
+            # Keep the sky background dark while preserving
+            # faint sources slightly above the background.
+            #
+            black = (
+                background
+                - 0.5 * noise
+            )
+
+            white = max(
+                high_percentile,
+                background
+                + 8.0 * noise,
+            )
 
             if white <= black:
                 black = float(
                     source_values.min()
                 )
+
                 white = float(
                     source_values.max()
                 )
@@ -618,9 +721,20 @@ def camera_preview():
                     1.0,
                 )
 
-                # Gamma-like stretch for screen preview.
-                value = np.sqrt(
-                    value
+                #
+                # Asinh stretch is well suited to astronomical
+                # previews: faint stars are enhanced while
+                # bright stars are less easily saturated.
+                #
+                stretch_strength = 8.0
+
+                value = (
+                    np.arcsinh(
+                        value * stretch_strength
+                    )
+                    / np.arcsinh(
+                        stretch_strength
+                    )
                 )
 
                 return value
@@ -648,7 +762,7 @@ def camera_preview():
                 + 0.0722 * rgb[..., 2]
             )
 
-            saturation = 1.20
+            saturation = 1.08
 
             rgb = (
                 luminance[..., None]
@@ -674,15 +788,56 @@ def camera_preview():
                 np.isfinite(image_data)
             ]
 
-            black, white = np.percentile(
-                source_values,
-                [0.5, 99.7],
+            background = float(
+                np.median(source_values)
+            )
+
+            mad = float(
+                np.median(
+                    np.abs(
+                        source_values - background
+                    )
+                )
+            )
+
+            noise = 1.4826 * mad
+
+            if noise <= 0.0:
+                p16, p84 = np.percentile(
+                    source_values,
+                    [16.0, 84.0],
+                )
+
+                noise = max(
+                    float(
+                        (p84 - p16) / 2.0
+                    ),
+                    1.0,
+                )
+
+            high_percentile = float(
+                np.percentile(
+                    source_values,
+                    99.8,
+                )
+            )
+
+            black = (
+                background
+                - 0.5 * noise
+            )
+
+            white = max(
+                high_percentile,
+                background
+                + 8.0 * noise,
             )
 
             if white <= black:
                 black = float(
                     source_values.min()
                 )
+
                 white = float(
                     source_values.max()
                 )
@@ -702,8 +857,15 @@ def camera_preview():
                 1.0,
             )
 
-            mono = np.sqrt(
-                mono
+            stretch_strength = 8.0
+
+            mono = (
+                np.arcsinh(
+                    mono * stretch_strength
+                )
+                / np.arcsinh(
+                    stretch_strength
+                )
             )
 
             rgb = np.stack(
@@ -752,6 +914,38 @@ def camera_preview():
             optimize=True,
         )
 
+        #
+        # Simple preview diagnostic.
+        #
+        # This does not attempt to identify stars yet.
+        # It only evaluates how strongly the image differs
+        # from its estimated background noise.
+        #
+        p99 = float(
+            np.percentile(
+                source_values,
+                99.0,
+            )
+        )
+
+        contrast_sigma = max(
+            0.0,
+            (
+                p99 - background
+            )
+            / max(
+                noise,
+                1.0e-6,
+            ),
+        )
+
+        if contrast_sigma < 3.0:
+            preview_status = "uniform"
+        elif contrast_sigma < 6.0:
+            preview_status = "weak-signal"
+        else:
+            preview_status = "structured"
+
         return Response(
             content=buffer.getvalue(),
             media_type="image/jpeg",
@@ -762,7 +956,15 @@ def camera_preview():
                 "X-StellarPilot-Bayer":
                     bayer_pattern or "NONE",
                 "X-StellarPilot-Preview":
-                    "color-global-stretch",
+                    "auto-background-asinh",
+                "X-StellarPilot-Preview-Status":
+                    preview_status,
+                "X-StellarPilot-Preview-Background":
+                    f"{background:.3f}",
+                "X-StellarPilot-Preview-Noise":
+                    f"{noise:.3f}",
+                "X-StellarPilot-Preview-Contrast":
+                    f"{contrast_sigma:.3f}",
             },
         )
 
@@ -822,6 +1024,10 @@ def solve_demo_m103():
         / "M103.fits"
     )
 
+    logging.getLogger("uvicorn.error").info(
+        "M103 solve START"
+    )
+
     started_at = perf_counter()
 
     result = plate_solver.solve(
@@ -838,6 +1044,12 @@ def solve_demo_m103():
     result["reference_dec"] = 60.6500
     result["solve_duration_ms"] = int(
         (perf_counter() - started_at) * 1000
+    )
+
+    logging.getLogger("uvicorn.error").info(
+        "M103 solve END status=%s duration_ms=%s",
+        result.get("status"),
+        result["solve_duration_ms"],
     )
 
     return result

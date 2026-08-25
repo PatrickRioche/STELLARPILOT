@@ -1,4 +1,4 @@
-﻿package fr.stellarpilot.app.data.remote
+package fr.stellarpilot.app.data.remote
 
 import android.util.Log
 import kotlinx.coroutines.Dispatchers
@@ -32,7 +32,8 @@ data class PlateSolveResult(
     val pixelScaleArcsec: Double?,
     val detectedStarCount: Int?,
     val detectedStars: List<DetectedStar>,
-    val detail: String?
+    val detail: String?,
+    val solveDurationMs: Int? = null
 )
 
 class CameraPreviewApiClient {
@@ -166,6 +167,129 @@ class CameraPreviewApiClient {
                 }
         }
 
+    suspend fun getDemoM103Preview(
+        serverBaseUrl: String
+    ): ByteArray =
+        withContext(Dispatchers.IO) {
+
+            val url =
+                serverBaseUrl.trimEnd('/') +
+                    "/demo/m103/preview.jpg?t=" +
+                    System.currentTimeMillis()
+
+            val request =
+                Request.Builder()
+                    .url(url)
+                    .get()
+                    .build()
+
+            client.newCall(request)
+                .execute()
+                .use { response ->
+
+                    check(response.isSuccessful) {
+                        "HTTP ${response.code} sur /demo/m103/preview.jpg"
+                    }
+
+                    response.body?.bytes()
+                        ?: error("Aperçu M103 vide")
+                }
+        }
+
+    suspend fun solveDemoM103(
+        serverBaseUrl: String
+    ): PlateSolveResult =
+        withContext(Dispatchers.IO) {
+
+            val url =
+                serverBaseUrl.trimEnd('/') +
+                    "/demo/m103/solve"
+
+            val request =
+                Request.Builder()
+                    .url(url)
+                    .post(
+                        ByteArray(0)
+                            .toRequestBody(null)
+                    )
+                    .build()
+
+            client.newCall(request)
+                .execute()
+                .use { response ->
+
+                    check(response.isSuccessful) {
+                        "HTTP ${response.code} sur /demo/m103/solve"
+                    }
+
+                    val body =
+                        response.body?.string()
+                            ?: error("Réponse démo M103 vide")
+
+                    val json = JSONObject(body)
+
+                    fun nullableDouble(key: String): Double? {
+                        if (!json.has(key) || json.isNull(key)) {
+                            return null
+                        }
+
+                        return json
+                            .optDouble(key)
+                            .takeUnless { it.isNaN() }
+                    }
+
+                    PlateSolveResult(
+                        status =
+                            json.optString(
+                                "status",
+                                "error"
+                            ),
+
+                        solver =
+                            json.optString("solver")
+                                .takeIf {
+                                    it.isNotBlank()
+                                },
+
+                        ra =
+                            nullableDouble("ra"),
+
+                        dec =
+                            nullableDouble("dec"),
+
+                        orientationDeg =
+                            nullableDouble(
+                                "orientation_deg"
+                            ),
+
+                        pixelScaleArcsec =
+                            nullableDouble(
+                                "pixel_scale_arcsec"
+                            ),
+
+                        detectedStarCount = null,
+
+                        detectedStars =
+                            emptyList(),
+
+                        detail =
+                            json.optString("detail")
+                                .takeIf {
+                                    it.isNotBlank()
+                                },
+
+                        solveDurationMs =
+                            if (
+                                json.has("solve_duration_ms") &&
+                                !json.isNull("solve_duration_ms")
+                            ) {
+                                json.optInt("solve_duration_ms")
+                            } else {
+                                null
+                            }
+                    )
+                }
+        }
     suspend fun solve(
         serverBaseUrl: String,
         imagePath: String

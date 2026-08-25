@@ -1,4 +1,4 @@
-﻿package fr.stellarpilot.app.feature.preparation
+package fr.stellarpilot.app.feature.preparation
 
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -26,6 +26,21 @@ data class CameraPreviewUiState(
     val error: String? = null
 )
 
+data class DemoM103UiState(
+    val isLoading: Boolean = false,
+    val isDisplayed: Boolean = false,
+    val imageBytes: ByteArray? = null,
+    val solveStatus: String? = null,
+    val solver: String? = null,
+    val ra: Double? = null,
+    val dec: Double? = null,
+    val orientationDeg: Double? = null,
+    val pixelScaleArcsec: Double? = null,
+    val solveDurationMs: Int? = null,
+    val error: String? = null
+)
+
+
 class CameraPreviewViewModel : ViewModel() {
 
     var uiState by mutableStateOf(
@@ -33,11 +48,84 @@ class CameraPreviewViewModel : ViewModel() {
     )
         private set
 
+    var demoM103State by mutableStateOf(
+        DemoM103UiState()
+    )
+        private set
+
+    fun runDemoM103(
+        serverBaseUrl: String
+    ) {
+        if (demoM103State.isLoading) return
+
+        demoM103State =
+            DemoM103UiState(
+                isLoading = true,
+                isDisplayed = true,
+                solveStatus = "loading"
+            )
+
+        viewModelScope.launch {
+            try {
+                val api =
+                    CameraPreviewApiClient()
+
+                val image =
+                    api.getDemoM103Preview(
+                        serverBaseUrl
+                    )
+
+                demoM103State =
+                    demoM103State.copy(
+                        imageBytes = image,
+                        solveStatus = "solving",
+                        solver = "astrometry.net",
+                        error = null
+                    )
+
+                val solution =
+                    api.solveDemoM103(
+                        serverBaseUrl
+                    )
+
+                demoM103State =
+                    demoM103State.copy(
+                        isLoading = false,
+                        solveStatus = solution.status,
+                        solver = solution.solver,
+                        ra = solution.ra,
+                        dec = solution.dec,
+                        orientationDeg =
+                            solution.orientationDeg,
+                        pixelScaleArcsec =
+                            solution.pixelScaleArcsec,
+                        solveDurationMs =
+                            solution.solveDurationMs,
+                        error = null
+                    )
+
+            } catch (error: Exception) {
+                demoM103State =
+                    demoM103State.copy(
+                        isLoading = false,
+                        solveStatus = "error",
+                        error =
+                            "${error::class.java.simpleName}: ${error.message}"
+                    )
+            }
+        }
+    }
+
     fun load(
         serverBaseUrl: String,
         exposureSeconds: Double
     ) {
         if (uiState.isLoading) return
+
+        demoM103State =
+            demoM103State.copy(
+                isDisplayed = false
+            )
 
         uiState = uiState.copy(
             isLoading = true,
