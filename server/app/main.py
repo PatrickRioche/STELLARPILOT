@@ -791,6 +791,35 @@ def solve(payload: SolvePayload):
     return plate_solver.solve(payload.image)
 
 
+@app.post("/demo/m103/solve")
+def solve_demo_m103():
+    demo_image = (
+        Path(__file__).resolve().parents[1]
+        / "demo"
+        / "M103.fits"
+    )
+
+    started_at = perf_counter()
+
+    result = plate_solver.solve(
+        str(demo_image),
+        ra_hint=23.3458,
+        dec_hint=60.6500,
+        radius_deg=5.0,
+        downsample=2,
+        timeout_s=15,
+    )
+
+    result["demo"] = "M103"
+    result["reference_ra"] = 23.3458
+    result["reference_dec"] = 60.6500
+    result["solve_duration_ms"] = int(
+        (perf_counter() - started_at) * 1000
+    )
+
+    return result
+
+
 
 @app.get("/catalog/status")
 def catalog_status():

@@ -12,7 +12,15 @@ class PlateSolverService:
     dans /usr/share/astrometry.
     """
 
-    def solve(self, image: str) -> dict:
+    def solve(
+        self,
+        image: str,
+        ra_hint: float | None = None,
+        dec_hint: float | None = None,
+        radius_deg: float | None = None,
+        downsample: int | None = None,
+        timeout_s: int = 90,
+    ) -> dict:
         image_path = Path(image)
 
         if not image_path.exists():
@@ -62,11 +70,36 @@ class PlateSolverService:
                     str(image_path),
                 ]
 
+                if (
+                    ra_hint is not None
+                    and dec_hint is not None
+                ):
+                    command[-1:-1] = [
+                        "--ra",
+                        str(ra_hint),
+                        "--dec",
+                        str(dec_hint),
+                    ]
+
+                    if radius_deg is not None:
+                        command[-1:-1] = [
+                            "--radius",
+                            str(radius_deg),
+                        ]
+
+                if (
+                    downsample is not None
+                    and downsample > 1
+                ):
+                    command[-1:-1] = [
+                        "--downsample",
+                        str(downsample),
+                    ]
                 result = subprocess.run(
                     command,
                     capture_output=True,
                     text=True,
-                    timeout=90,
+                    timeout=timeout_s,
                     check=False,
                 )
 
@@ -168,7 +201,7 @@ class PlateSolverService:
                 "image": str(image_path),
                 "detail": (
                     "R?solution astrom?trique interrompue "
-                    "apr?s 90 secondes"
+                    f"apr?s {timeout_s} secondes"
                 ),
             }
 
