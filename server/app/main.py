@@ -1015,7 +1015,7 @@ def mount_goto(payload: GotoPayload):
 
 @app.post("/solve")
 def solve(payload: SolvePayload):
-    return plate_solver.solve(payload.image)
+    return plate_solver.solve_robust(payload.image)
 
 
 @app.get("/demo/m103/preview.jpg")
