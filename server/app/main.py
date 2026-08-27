@@ -23,6 +23,7 @@ from app.config import get_mode
 from app.gps.service import gps_service
 from app.indi.service import indi_service
 from app.imaging.quality import analyze_fits
+from app.imaging.auto_capture import run_auto_capture
 from app.session.state import state
 from app.sky.service import sky_service
 from app.sky.objects import sky_objects_service
@@ -52,6 +53,11 @@ class MountTypePayload(BaseModel):
 
 class CapturePayload(BaseModel):
     exposure_s: float = Field(gt=0, le=3600)
+
+
+class AutoCapturePayload(BaseModel):
+    start_exposure_s: float = Field(gt=0, le=10)
+    max_attempts: int = Field(default=5, ge=1, le=8)
 
 
 class GotoPayload(BaseModel):
@@ -407,6 +413,14 @@ def capture(payload: CapturePayload):
         )
 
     return result
+
+
+@app.post("/camera/auto-capture")
+def auto_capture(payload: AutoCapturePayload):
+    return run_auto_capture(
+        start_exposure_s=payload.start_exposure_s,
+        max_attempts=payload.max_attempts,
+    )
 
 
 @app.get("/camera/preview.jpg")
