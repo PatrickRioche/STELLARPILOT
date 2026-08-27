@@ -22,6 +22,7 @@ from app.catalog.service import catalog_service
 from app.config import get_mode
 from app.gps.service import gps_service
 from app.indi.service import indi_service
+from app.imaging.quality import analyze_fits
 from app.session.state import state
 from app.sky.service import sky_service
 from app.sky.objects import sky_objects_service
@@ -395,7 +396,17 @@ def set_mount_type(payload: MountTypePayload):
 
 @app.post("/camera/capture")
 def capture(payload: CapturePayload):
-    return indi_service.capture(payload.exposure_s)
+    result = indi_service.capture(payload.exposure_s)
+
+    if (
+        result.get("status") == "captured"
+        and result.get("image")
+    ):
+        result["quality"] = analyze_fits(
+            result["image"]
+        )
+
+    return result
 
 
 @app.get("/camera/preview.jpg")

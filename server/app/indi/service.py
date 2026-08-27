@@ -457,7 +457,8 @@ class IndiService:
         )
 
         timestamp = time.strftime("%Y%m%d_%H%M%S")
-        prefix = f"stellarpilot_{timestamp}"
+        capture_id = time.time_ns()
+        prefix = f"stellarpilot_{timestamp}_{capture_id}"
 
         def set_property(property_name: str) -> None:
             result = subprocess.run(
@@ -547,6 +548,11 @@ class IndiService:
             + 20.0
         )
 
+        stable_path = None
+        stable_size = None
+        stable_mtime_ns = None
+        stable_count = 0
+
         while time.monotonic() < deadline:
             candidates = sorted(
                 (
@@ -557,24 +563,58 @@ class IndiService:
                     and item.suffix.lower()
                     in {".fits", ".fit", ".fts"}
                 ),
-                key=lambda item: item.stat().st_mtime,
+                key=lambda item: item.stat().st_mtime_ns,
                 reverse=True,
             )
 
             if candidates:
                 image = candidates[0]
 
-                return {
-                    "status": "captured",
-                    "mode": "device",
-                    "camera": camera_name,
-                    "exposure_s": exposure_s,
-                    "image": str(image),
-                    "size_bytes": image.stat().st_size,
-                }
+                try:
+                    stat = image.stat()
+                    size = stat.st_size
+                    mtime_ns = stat.st_mtime_ns
+                except OSError:
+                    time.sleep(0.25)
+                    continue
+
+                if (
+                    image == stable_path
+                    and size == stable_size
+                    and mtime_ns == stable_mtime_ns
+                ):
+                    stable_count += 1
+                else:
+                    stable_path = image
+                    stable_size = size
+                    stable_mtime_ns = mtime_ns
+                    stable_count = 0
+
+                if (
+                    stable_count >= 2
+                    and size >= 2880
+                    and size % 2880 == 0
+                ):
+                    try:
+                        with image.open("rb") as handle:
+                            header = handle.read(9)
+                    except OSError:
+                        time.sleep(0.25)
+                        continue
+
+                    if header == b"SIMPLE  =":
+                        return {
+                            "status": "captured",
+                            "mode": "device",
+                            "camera": camera_name,
+                            "exposure_s": exposure_s,
+                            "image": str(image),
+                            "size_bytes": size,
+                            "fits_valid": True,
+                            "write_stable": True,
+                        }
 
             time.sleep(0.25)
-
         return {
             "status": "error",
             "mode": "device",
