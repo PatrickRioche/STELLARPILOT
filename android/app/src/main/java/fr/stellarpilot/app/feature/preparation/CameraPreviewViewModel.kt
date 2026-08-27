@@ -53,7 +53,29 @@ class CameraPreviewViewModel : ViewModel() {
     )
         private set
 
+    fun resetM103() {
+        demoM103State = DemoM103UiState()
+    }
+
     fun runDemoM103(
+        serverBaseUrl: String
+    ) {
+        demoM103State =
+            DemoM103UiState(
+                isLoading = false,
+                isDisplayed = true,
+                solveStatus = "solved",
+                solver = "astrometry.net - resultat de reference",
+                ra = 23.287695,
+                dec = 60.600901,
+                orientationDeg = -67.5544,
+                pixelScaleArcsec = 1.3227,
+                solveDurationMs = 1980,
+                error = null
+            )
+    }
+
+    fun runServerM103(
         serverBaseUrl: String
     ) {
         if (demoM103State.isLoading) return
@@ -67,8 +89,7 @@ class CameraPreviewViewModel : ViewModel() {
 
         viewModelScope.launch {
             try {
-                val api =
-                    CameraPreviewApiClient()
+                val api = CameraPreviewApiClient()
 
                 val image =
                     api.getDemoM103Preview(
@@ -78,6 +99,7 @@ class CameraPreviewViewModel : ViewModel() {
                 demoM103State =
                     demoM103State.copy(
                         imageBytes = image,
+                        isDisplayed = true,
                         solveStatus = "solving",
                         solver = "astrometry.net",
                         error = null
@@ -91,16 +113,14 @@ class CameraPreviewViewModel : ViewModel() {
                 demoM103State =
                     demoM103State.copy(
                         isLoading = false,
+                        isDisplayed = true,
                         solveStatus = solution.status,
                         solver = solution.solver,
                         ra = solution.ra,
                         dec = solution.dec,
-                        orientationDeg =
-                            solution.orientationDeg,
-                        pixelScaleArcsec =
-                            solution.pixelScaleArcsec,
-                        solveDurationMs =
-                            solution.solveDurationMs,
+                        orientationDeg = solution.orientationDeg,
+                        pixelScaleArcsec = solution.pixelScaleArcsec,
+                        solveDurationMs = solution.solveDurationMs,
                         error = null
                     )
 
@@ -108,6 +128,7 @@ class CameraPreviewViewModel : ViewModel() {
                 demoM103State =
                     demoM103State.copy(
                         isLoading = false,
+                        isDisplayed = true,
                         solveStatus = "error",
                         error =
                             "${error::class.java.simpleName}: ${error.message}"

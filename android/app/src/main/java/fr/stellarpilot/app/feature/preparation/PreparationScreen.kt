@@ -83,6 +83,10 @@ fun PreparationScreen(
         mutableIntStateOf(0)
     }
 
+    var demoMode by rememberSaveable {
+        mutableStateOf(false)
+    }
+
     var selectedReferenceStarId by rememberSaveable {
         mutableStateOf<String?>(null)
     }
@@ -120,12 +124,32 @@ fun PreparationScreen(
 
     LaunchedEffect(
         currentStep,
-        state.serverBaseUrl
+        demoMode
+    ) {
+        if (currentStep == 2) {
+            if (demoMode) {
+                cameraPreviewViewModel.runDemoM103(
+                    state.serverBaseUrl
+                )
+            } else {
+                cameraPreviewViewModel.resetM103()
+            }
+        }
+    }
+
+    LaunchedEffect(
+        currentStep,
+        state.serverBaseUrl,
+        demoMode
     ) {
         if (currentStep == 3) {
-            skyViewModel.load(
-                state.serverBaseUrl
-            )
+            if (demoMode) {
+                skyViewModel.loadDemoSnapshot()
+            } else {
+                skyViewModel.load(
+                    state.serverBaseUrl
+                )
+            }
         }
     }
 
@@ -172,6 +196,89 @@ fun PreparationScreen(
                 color = StellarMuted
             )
 
+            if (currentStep == 0 && !demoMode) {
+                Spacer(Modifier.height(12.dp))
+
+                OutlinedButton(
+                    onClick = {
+                        demoMode = true
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    border = BorderStroke(
+                        1.dp,
+                        StellarOrange
+                    )
+                ) {
+                    Text(
+                        text = "Activer le mode d\u00E9monstration",
+                        color = StellarOrange,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
+
+            if (demoMode) {
+                Spacer(Modifier.height(12.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    OutlinedButton(
+                        onClick = {
+                            demoMode = false
+                            currentStep = 0
+                            selectedReferenceStarId = null
+                        },
+                        modifier = Modifier.weight(1f),
+                        border = BorderStroke(
+                            1.dp,
+                            StellarOrange
+                        )
+                    ) {
+                        Text(
+                            text = "Mode d\u00E9monstration actif",
+                            color = StellarOrange,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+
+                    Button(
+                        onClick = {
+                            if (
+                                currentStep == 3 &&
+                                selectedReferenceStarId == null
+                            ) {
+                                selectedReferenceStarId =
+                                    skyState.sky
+                                        ?.recommended
+                                        ?.id
+                                        ?: "capella"
+                            }
+
+                            if (currentStep < stepNames.lastIndex) {
+                                currentStep += 1
+                            }
+                        },
+                        enabled = currentStep < stepNames.lastIndex,
+                        modifier = Modifier.weight(1f),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = StellarOrange,
+                            contentColor = StellarBackground
+                        )
+                    ) {
+                        Text(
+                            text =
+                                if (currentStep < stepNames.lastIndex)
+                                    "\u00C9tape suivante en mode d\u00E9mo"
+                                else
+                                    "D\u00E9monstration termin\u00E9e",
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+            }
+
             Spacer(Modifier.height(16.dp))
 
             LinearProgressIndicator(
@@ -208,12 +315,15 @@ fun PreparationScreen(
                 0 -> ConnectionStep(
                     state = state,
                     ready = essentialReady,
+                    demoMode = demoMode,
                     onRefresh = viewModel::connect,
                     onChangeServer = viewModel::setServerAddress,
                     onContinue = { currentStep = 1 }
                 )
 
                 1 -> PositionStep(
+                    demoMode = demoMode,
+
                     mountFamily =
                         server?.session?.mountFamily
                             ?: server?.devices?.mount?.family,
@@ -243,6 +353,8 @@ fun PreparationScreen(
                 )
 
                 2 -> AstrometryStep(
+                    demoMode = demoMode,
+
                     previewState =
                         cameraPreviewState,
 
@@ -260,9 +372,15 @@ fun PreparationScreen(
                     },
 
                     onRunDemoM103 = {
-                        cameraPreviewViewModel.runDemoM103(
-                            state.serverBaseUrl
-                        )
+                        if (demoMode) {
+                            cameraPreviewViewModel.runDemoM103(
+                                state.serverBaseUrl
+                            )
+                        } else {
+                            cameraPreviewViewModel.runServerM103(
+                                state.serverBaseUrl
+                            )
+                        }
                     },
 
                     onRefresh = {
@@ -281,6 +399,7 @@ fun PreparationScreen(
                     }
                 )
                 3 -> ReferenceStarStep(
+                    demoMode = demoMode,
                     skyState = skyState,
 
                     selectedStarId =
@@ -299,14 +418,18 @@ fun PreparationScreen(
                     onOpenSky = onOpenSky,
 
                     onSetLocation = { latitude, longitude ->
-                        skyViewModel.setManualLocation(
-                            serverBaseUrl =
-                                state.serverBaseUrl,
-                            latitude =
-                                latitude,
-                            longitude =
-                                longitude
-                        )
+                        if (demoMode) {
+                            skyViewModel.loadDemoSnapshot()
+                        } else {
+                            skyViewModel.setManualLocation(
+                                serverBaseUrl =
+                                    state.serverBaseUrl,
+                                latitude =
+                                    latitude,
+                                longitude =
+                                    longitude
+                            )
+                        }
                     },
 
                     onPrevious = {
@@ -359,11 +482,21 @@ fun PreparationScreen(
 private fun ConnectionStep(
     state: fr.stellarpilot.app.feature.connection.ConnectionUiState,
     ready: Boolean,
+    demoMode: Boolean,
     onRefresh: () -> Unit,
     onChangeServer: (String) -> Unit,
     onContinue: () -> Unit
 ) {
     val server = state.server
+
+    val serverReachable =
+        state.connectionState == ConnectionState.CONNECTED
+
+    val canContinue =
+        if (demoMode)
+            true
+        else
+            ready
 
     var serverAddress by rememberSaveable(state.serverBaseUrl) {
         mutableStateOf(
@@ -410,10 +543,26 @@ private fun ConnectionStep(
 
         Spacer(Modifier.height(18.dp))
 
-        if (server == null) {
-            val serverReachable =
-                state.connectionState == ConnectionState.CONNECTED
+        Spacer(Modifier.height(8.dp))
 
+        Text(
+            text =
+                if (demoMode)
+                    "Le mode d\u00E9monstration utilise des donn\u00E9es de r\u00E9f\u00E9rence embarqu\u00E9es et ne n\u00E9cessite ni serveur ni mat\u00E9riel r\u00E9el."
+                else
+                    "Activez ce mode pour d\u00E9couvrir StellarPilot sans mat\u00E9riel connect\u00E9.",
+            color =
+                if (demoMode)
+                    StellarOrange
+                else
+                    StellarMuted,
+            style = MaterialTheme.typography.bodySmall
+        )
+
+
+        Spacer(Modifier.height(18.dp))
+
+        if (server == null) {
             Text(
                 text =
                     when {
@@ -482,23 +631,25 @@ private fun ConnectionStep(
 
         Spacer(Modifier.height(10.dp))
 
-        Button(
-            onClick = onContinue,
-            enabled = ready,
-            modifier = Modifier.fillMaxWidth(),
-            colors = ButtonDefaults.buttonColors(
-                containerColor = StellarOrange,
-                contentColor = StellarBackground
-            )
-        ) {
-            Text(
-                text =
-                    if (ready)
-                        "Continuer la pr\u00E9paration"
-                    else
-                        "Mat\u00E9riel essentiel non pr\u00EAt",
-                fontWeight = FontWeight.Bold
-            )
+        if (!demoMode) {
+            Button(
+                onClick = onContinue,
+                enabled = canContinue,
+                modifier = Modifier.fillMaxWidth(),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = StellarOrange,
+                    contentColor = StellarBackground
+                )
+            ) {
+                Text(
+                    text =
+                        if (ready)
+                            "Continuer la pr\u00E9paration"
+                        else
+                            "Mat\u00E9riel essentiel non pr\u00EAt",
+                    fontWeight = FontWeight.Bold
+                )
+            }
         }
 
         if (
@@ -520,6 +671,7 @@ private fun ConnectionStep(
 
 @Composable
 private fun ReferenceStarStep(
+    demoMode: Boolean,
     skyState: SkyUiState,
     selectedStarId: String?,
     onSelectStar: (String) -> Unit,
@@ -551,12 +703,22 @@ private fun ReferenceStarStep(
             ?: recommendations.firstOrNull()
 
 
-    var latitudeText by rememberSaveable {
-        mutableStateOf("")
+    var latitudeText by rememberSaveable(demoMode) {
+        mutableStateOf(
+            if (demoMode)
+                "47.4308"
+            else
+                ""
+        )
     }
 
-    var longitudeText by rememberSaveable {
-        mutableStateOf("")
+    var longitudeText by rememberSaveable(demoMode) {
+        mutableStateOf(
+            if (demoMode)
+                "-0.6271"
+            else
+                ""
+        )
     }
 
     LaunchedEffect(
@@ -1074,7 +1236,7 @@ private fun ReferenceStarStep(
                 modifier =
                     Modifier.weight(1f)
             ) {
-                Text("Précédent")
+                Text("Retour")
             }
 
             Button(
@@ -1111,6 +1273,7 @@ private fun ReferenceStarStep(
 
 @Composable
 private fun PositionStep(
+    demoMode: Boolean,
     mountFamily: String?,
     startupTarget: String?,
     mountTypeLabel: String?,
@@ -1119,7 +1282,11 @@ private fun PositionStep(
     onPrevious: () -> Unit,
     onNext: () -> Unit
 ) {
-    val family = mountFamily?.lowercase()
+    val family =
+        if (demoMode)
+            "eq"
+        else
+            mountFamily?.lowercase()
 
     val isEq = family == "eq"
     val isAz = family == "az"
@@ -1128,6 +1295,9 @@ private fun PositionStep(
 
     val familyTitle =
         when {
+            demoMode ->
+                "Monture \u00E9quatoriale de d\u00E9monstration"
+
             isEq ->
                 "Monture \u00E9quatoriale d\u00E9tect\u00E9e"
 
@@ -1152,6 +1322,9 @@ private fun PositionStep(
 
     val target =
         when {
+            demoMode ->
+                "P\u00F4le c\u00E9leste Nord"
+
             startupTarget == "zenith" || isAz ->
                 "Z\u00E9nith"
 
@@ -1173,6 +1346,10 @@ private fun PositionStep(
 
     val instruction =
         when {
+            demoMode ->
+                "En mode d\u00E9monstration, StellarPilot suppose une monture " +
+                    "\u00E9quatoriale positionn\u00E9e vers le p\u00F4le c\u00E9leste Nord."
+
             isEq && latitude == null ->
                 "Oriente la monture vers le p\u00F4le c\u00E9leste. " +
                     "StellarPilot d\u00E9terminera automatiquement Nord ou Sud " +
@@ -1191,7 +1368,11 @@ private fun PositionStep(
 
     AssistantCard(
         title = "Position initiale",
-        subtitle = "D\u00E9tection automatique via INDI / OnStep"
+        subtitle =
+            if (demoMode)
+                "Mode d\u00E9monstration \u2022 aucun mat\u00E9riel requis"
+            else
+                "D\u00E9tection automatique via INDI / OnStep"
     ) {
 
         Text(
@@ -1213,11 +1394,18 @@ private fun PositionStep(
         )
 
         InfoBlock(
-            label = "Type d\u00E9tect\u00E9",
+            label =
+                if (demoMode)
+                    "Type"
+                else
+                    "Type d\u00E9tect\u00E9",
             value =
-                mountTypeLabel
-                    ?: mountType
-                    ?: "Non disponible"
+                if (demoMode)
+                    "Monture de d\u00E9monstration (EQ)"
+                else
+                    mountTypeLabel
+                        ?: mountType
+                        ?: "Non disponible"
         )
 
         InfoBlock(
@@ -1287,6 +1475,7 @@ private fun PositionStep(
         }
 
         if (
+            !demoMode &&
             isEq &&
             latitude == null
         ) {
@@ -1303,23 +1492,25 @@ private fun PositionStep(
 
         Spacer(Modifier.height(20.dp))
 
-        Button(
-            onClick = onNext,
-            enabled = detected,
-            modifier = Modifier.fillMaxWidth(),
-            colors = ButtonDefaults.buttonColors(
-                containerColor = StellarOrange,
-                contentColor = StellarBackground
-            )
-        ) {
-            Text(
-                text =
-                    if (detected)
-                        "J'ai positionn\u00E9 la monture"
-                    else
-                        "Type de monture requis",
-                fontWeight = FontWeight.Bold
-            )
+        if (!demoMode) {
+            Button(
+                onClick = onNext,
+                enabled = detected,
+                modifier = Modifier.fillMaxWidth(),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = StellarOrange,
+                    contentColor = StellarBackground
+                )
+            ) {
+                Text(
+                    text =
+                        if (detected)
+                            "J'ai positionn\u00E9 la monture"
+                        else
+                            "Type de monture requis",
+                    fontWeight = FontWeight.Bold
+                )
+            }
         }
 
         Spacer(Modifier.height(12.dp))
