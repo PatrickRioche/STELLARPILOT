@@ -1,6 +1,7 @@
 package fr.stellarpilot.app.feature.preparation
 
 import android.graphics.BitmapFactory
+import android.os.SystemClock
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -22,6 +23,10 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -40,6 +45,7 @@ import fr.stellarpilot.app.ui.theme.StellarRed
 import fr.stellarpilot.app.ui.theme.StellarSurface
 import fr.stellarpilot.app.ui.theme.StellarSurfaceRaised
 import fr.stellarpilot.app.ui.theme.StellarText
+import kotlinx.coroutines.delay
 import java.util.Locale
 import kotlin.math.abs
 import kotlin.math.roundToInt
@@ -144,6 +150,37 @@ fun AstrometryStep(
         }
 
     val displayedBitmap = previewBitmap
+
+    var acquisitionElapsedMs by
+        remember {
+            mutableStateOf(0L)
+        }
+
+    LaunchedEffect(
+        previewState.isLoading,
+        previewState.imageBytes
+    ) {
+        if (
+            previewState.isLoading &&
+            previewState.imageBytes == null
+        ) {
+            val startedAt =
+                SystemClock.elapsedRealtime()
+
+            acquisitionElapsedMs = 0L
+
+            while (
+                previewState.isLoading &&
+                previewState.imageBytes == null
+            ) {
+                acquisitionElapsedMs =
+                    SystemClock.elapsedRealtime() -
+                        startedAt
+
+                delay(100)
+            }
+        }
+    }
 
     val exposureIndex =
         remember(exposureMs) {
@@ -723,7 +760,13 @@ fun AstrometryStep(
 
                         Text(
                             text =
-                                "Acquisition de l'image...",
+                                "Acquisition de l'image... ${
+                                    String.format(
+                                        Locale.FRANCE,
+                                        "%.1f s",
+                                        acquisitionElapsedMs / 1000.0
+                                    )
+                                }",
 
                             color =
                                 StellarMuted

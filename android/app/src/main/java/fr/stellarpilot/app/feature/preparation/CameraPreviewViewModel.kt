@@ -150,6 +150,8 @@ class CameraPreviewViewModel : ViewModel() {
 
         uiState = uiState.copy(
             isLoading = true,
+            imageBytes = null,
+            capturePath = null,
             exposureSeconds = exposureSeconds,
             solveStatus = null,
             solver = null,
@@ -186,6 +188,13 @@ class CameraPreviewViewModel : ViewModel() {
                     solver = "astrometry.net",
                     error = null
                 )
+
+                /*
+                 * Laisser Compose afficher la capture avant
+                 * de lancer la résolution astrométrique longue.
+                 */
+                kotlinx.coroutines.yield()
+                kotlinx.coroutines.delay(100)
 
                 val solution =
                     api.solve(

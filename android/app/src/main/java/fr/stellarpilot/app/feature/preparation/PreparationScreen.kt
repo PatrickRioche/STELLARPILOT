@@ -976,16 +976,16 @@ private fun ReferenceStarStep(
 
                             append(
                                 if (selected)
-                                    "â˜… "
+                                    "\u2605 "
                                 else
-                                    "â˜† "
+                                    "\u2606 "
                             )
 
                             append(candidate.name)
 
                             if (index == 0) {
                                 append(
-                                    " Â· recommandée"
+                                    " \u00B7 recommandée"
                                 )
                             }
 
@@ -994,7 +994,7 @@ private fun ReferenceStarStep(
                                 candidate.constellation
                             )
 
-                            append(" Â· Alt. ")
+                            append(" \u00B7 Alt. ")
 
                             append(
                                 String.format(
@@ -1004,7 +1004,7 @@ private fun ReferenceStarStep(
                                 )
                             )
 
-                            append(" Â· mag ")
+                            append(" \u00B7 mag ")
 
                             append(
                                 String.format(
@@ -1014,7 +1014,7 @@ private fun ReferenceStarStep(
                                 )
                             )
 
-                            append(" Â· score ")
+                            append(" \u00B7 score ")
                             append(score)
                         }
 
@@ -1087,7 +1087,7 @@ private fun ReferenceStarStep(
 
                     Text(
                         text =
-                            "â˜… ${selectedStar.name}",
+                            "\u2605 ${selectedStar.name}",
                         color = StellarGreen,
                         style =
                             MaterialTheme.typography.headlineSmall,
