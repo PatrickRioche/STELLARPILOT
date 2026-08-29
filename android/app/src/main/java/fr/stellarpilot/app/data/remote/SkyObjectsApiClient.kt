@@ -37,6 +37,9 @@ class SkyObjectsApiClient(
         minAltitude: Double,
         direction: String?,
         constellation: String,
+        sort: String = "magnitude",
+        order: String = "asc",
+        offset: Int = 0,
         limit: Int = 30
     ): SkyObjectsResult =
         withContext(Dispatchers.IO) {
@@ -47,6 +50,9 @@ class SkyObjectsApiClient(
                     "longitude=$longitude",
                     "category=${encode(category)}",
                     "min_altitude=$minAltitude",
+                    "sort=${encode(sort)}",
+                    "order=${encode(order)}",
+                    "offset=$offset",
                     "limit=$limit"
                 )
 
@@ -273,6 +279,30 @@ class SkyObjectsApiClient(
                 root.optInt(
                     "returned_count",
                     0
+                ),
+
+            sort =
+                root.optString(
+                    "sort",
+                    "magnitude"
+                ),
+
+            order =
+                root.optString(
+                    "order",
+                    "asc"
+                ),
+
+            offset =
+                root.optInt(
+                    "offset",
+                    0
+                ),
+
+            limit =
+                root.optInt(
+                    "limit",
+                    30
                 ),
 
             objects =

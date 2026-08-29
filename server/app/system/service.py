@@ -1,7 +1,6 @@
 import subprocess
 from datetime import datetime, timezone
 
-from app.config import get_mode
 
 
 def run_command(args: list[str], timeout: float = 3.0) -> str:
@@ -21,14 +20,6 @@ def run_command(args: list[str], timeout: float = 3.0) -> str:
 class SystemService:
     def status(self) -> dict:
         now = datetime.now().astimezone()
-
-        if get_mode() != "device":
-            return {
-                "datetime": now.isoformat(),
-                "time_utc": datetime.now(timezone.utc).isoformat(),
-                "time_synced": True,
-                "time_source": "simulation",
-            }
 
         synchronized = (
             run_command(

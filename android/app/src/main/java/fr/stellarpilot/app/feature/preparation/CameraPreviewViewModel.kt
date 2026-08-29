@@ -1,10 +1,12 @@
 package fr.stellarpilot.app.feature.preparation
 
+import android.app.Application
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
-import androidx.lifecycle.ViewModel
+import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import fr.stellarpilot.app.R
 import fr.stellarpilot.app.data.remote.CameraPreviewApiClient
 import fr.stellarpilot.app.data.remote.DetectedStar
 import kotlinx.coroutines.launch
@@ -41,7 +43,9 @@ data class DemoM103UiState(
 )
 
 
-class CameraPreviewViewModel : ViewModel() {
+class CameraPreviewViewModel(
+    application: Application
+) : AndroidViewModel(application) {
 
     var uiState by mutableStateOf(
         CameraPreviewUiState()
@@ -57,15 +61,52 @@ class CameraPreviewViewModel : ViewModel() {
         demoM103State = DemoM103UiState()
     }
 
+    @Suppress("UNUSED_PARAMETER")
     fun runDemoM103(
         serverBaseUrl: String
     ) {
+        /*
+         * Mode D?mo 100 % local :
+         * - aucune connexion au Raspberry Pi
+         * - aucun appel HTTP
+         * - aucun appel INDI
+         * - aucun plate solving r?el
+         *
+         * L'image et le r?sultat astrom?trique de r?f?rence
+         * sont embarqu?s directement dans l'APK.
+         */
+        val imageBytes =
+            try {
+                getApplication<Application>()
+                    .resources
+                    .openRawResource(
+                        R.drawable.m103_preview
+                    )
+                    .use { input ->
+                        input.readBytes()
+                    }
+            } catch (error: Exception) {
+                demoM103State =
+                    DemoM103UiState(
+                        isLoading = false,
+                        isDisplayed = true,
+                        solveStatus = "error",
+                        error =
+                            "Image M103 locale indisponible: " +
+                            error.message
+                    )
+
+                return
+            }
+
         demoM103State =
             DemoM103UiState(
                 isLoading = false,
                 isDisplayed = true,
+                imageBytes = imageBytes,
                 solveStatus = "solved",
-                solver = "astrometry.net - resultat de reference",
+                solver =
+                    "astrometry.net - resultat de reference",
                 ra = 23.287695,
                 dec = 60.600901,
                 orientationDeg = -67.5544,
@@ -73,68 +114,6 @@ class CameraPreviewViewModel : ViewModel() {
                 solveDurationMs = 1980,
                 error = null
             )
-    }
-
-    fun runServerM103(
-        serverBaseUrl: String
-    ) {
-        if (demoM103State.isLoading) return
-
-        demoM103State =
-            DemoM103UiState(
-                isLoading = true,
-                isDisplayed = true,
-                solveStatus = "loading"
-            )
-
-        viewModelScope.launch {
-            try {
-                val api = CameraPreviewApiClient()
-
-                val image =
-                    api.getDemoM103Preview(
-                        serverBaseUrl
-                    )
-
-                demoM103State =
-                    demoM103State.copy(
-                        imageBytes = image,
-                        isDisplayed = true,
-                        solveStatus = "solving",
-                        solver = "astrometry.net",
-                        error = null
-                    )
-
-                val solution =
-                    api.solveDemoM103(
-                        serverBaseUrl
-                    )
-
-                demoM103State =
-                    demoM103State.copy(
-                        isLoading = false,
-                        isDisplayed = true,
-                        solveStatus = solution.status,
-                        solver = solution.solver,
-                        ra = solution.ra,
-                        dec = solution.dec,
-                        orientationDeg = solution.orientationDeg,
-                        pixelScaleArcsec = solution.pixelScaleArcsec,
-                        solveDurationMs = solution.solveDurationMs,
-                        error = null
-                    )
-
-            } catch (error: Exception) {
-                demoM103State =
-                    demoM103State.copy(
-                        isLoading = false,
-                        isDisplayed = true,
-                        solveStatus = "error",
-                        error =
-                            "${error::class.java.simpleName}: ${error.message}"
-                    )
-            }
-        }
     }
 
     fun load(

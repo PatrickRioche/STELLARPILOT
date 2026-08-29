@@ -3,7 +3,8 @@ import logging
 from concurrent.futures import ThreadPoolExecutor
 from io import BytesIO
 from pathlib import Path
-from time import perf_counter
+from datetime import datetime, timezone
+from time import monotonic, perf_counter
 
 import numpy as np
 from astropy.io import fits
@@ -19,7 +20,6 @@ from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
 from app.catalog.service import catalog_service
-from app.config import get_mode
 from app.gps.service import gps_service
 from app.indi.service import indi_service
 from app.imaging.quality import analyze_fits
@@ -35,8 +35,8 @@ logger = logging.getLogger("stellarpilot.websocket")
 
 
 app = FastAPI(
-    title="StellarPilot Prototype API",
-    version="0.5.0-poc",
+    title="StellarPilot Server",
+    version="0.5.0",
 )
 
 
@@ -45,6 +45,14 @@ class LocationPayload(BaseModel):
     longitude: float = Field(ge=-180, le=180)
     altitude: float | None = None
     timestamp: str
+
+
+class TimePayload(BaseModel):
+    utc_epoch_ms: int = Field(gt=0)
+    timezone_offset_minutes: int = Field(
+        ge=-840,
+        le=840,
+    )
 
 
 class MountTypePayload(BaseModel):
@@ -61,7 +69,7 @@ class AutoCapturePayload(BaseModel):
 
 
 class GotoPayload(BaseModel):
-    ra: float
+    ra: float = Field(ge=0, lt=24)
     dec: float = Field(ge=-90, le=90)
 
 
@@ -69,12 +77,115 @@ class SolvePayload(BaseModel):
     image: str
 
 
+def _client_time_utc() -> str | None:
+    if (
+        state.client_time_epoch_s is None
+        or state.client_time_monotonic_s is None
+    ):
+        return None
+
+    epoch_s = (
+        state.client_time_epoch_s
+        + max(
+            0.0,
+            monotonic()
+            - state.client_time_monotonic_s,
+        )
+    )
+
+    return (
+        datetime.fromtimestamp(
+            epoch_s,
+            tz=timezone.utc,
+        )
+        .isoformat(timespec="seconds")
+        .replace("+00:00", "Z")
+    )
+
+
+def _resolve_time(
+    gps: dict,
+    system: dict,
+) -> tuple[str | None, str]:
+
+    if (
+        gps.get("status") == "fix"
+        and gps.get("time_utc")
+    ):
+        return gps["time_utc"], "gps"
+
+    client_time = _client_time_utc()
+
+    if client_time is not None:
+        return client_time, "android"
+
+    return (
+        system.get("datetime"),
+        "system_untrusted",
+    )
+
+
+def _resolve_location(
+    gps: dict,
+    onstep: dict,
+    mode: str,
+):
+    if (
+        mode != "device"
+        and state.latitude is not None
+        and state.longitude is not None
+    ):
+        return (
+            state.latitude,
+            state.longitude,
+            state.altitude,
+            "manual",
+        )
+
+    if (
+        gps.get("status") == "fix"
+        and gps.get("latitude") is not None
+        and gps.get("longitude") is not None
+    ):
+        return (
+            gps["latitude"],
+            gps["longitude"],
+            gps.get("altitude"),
+            "gps",
+        )
+
+    if (
+        onstep.get("status") == "available"
+        and onstep.get("latitude") is not None
+        and onstep.get("longitude") is not None
+    ):
+        return (
+            onstep["latitude"],
+            onstep["longitude"],
+            onstep.get("altitude"),
+            "onstep",
+        )
+
+    if (
+        state.latitude is not None
+        and state.longitude is not None
+    ):
+        return (
+            state.latitude,
+            state.longitude,
+            state.altitude,
+            "manual",
+        )
+
+    return None, None, None, None
+
+
 @app.get("/health")
 def health():
     return {
         "service": "stellarpilot",
         "status": "ok",
-        "mode": get_mode(),
+        "mode": "device",
         "protocol": "proto-1",
     }
 
@@ -82,13 +193,13 @@ def health():
 @app.get("/status")
 def status():
     """
-    Construit l'?tat global du prototype.
+    Construit l'?tat global du serveur.
 
     Les sous-syst?mes ind?pendants sont interrog?s en parall?le.
     Une cam?ra lente, le GPS ou chrony ne doivent pas bloquer
     successivement toute la r?ponse /status.
     """
-    mode = get_mode()
+    mode = "device"
     logging.getLogger("uvicorn.error").info(
         "M103 solve START"
     )
@@ -100,7 +211,7 @@ def status():
         thread_name_prefix="stellarpilot-status",
     ) as executor:
         indi_future = executor.submit(
-            indi_service.device_status
+            indi_service.status_snapshot
         )
         gps_future = executor.submit(
             gps_service.status
@@ -112,55 +223,39 @@ def status():
             catalog_service.status
         )
 
-        indi = indi_future.result()
+        indi_snapshot = indi_future.result()
         gps = gps_future.result()
         system = system_future.result()
         catalog = catalog_future.result()
+
+    indi = {
+        "mount": indi_snapshot["mount"],
+        "camera": indi_snapshot["camera"],
+    }
+
+    onstep_location = indi_snapshot["location"]
 
     status_duration_ms = int(
         (perf_counter() - started_at) * 1000
     )
 
-    if mode == "device":
-        if (
-            gps.get("status") == "fix"
-            and gps.get("latitude") is not None
-            and gps.get("longitude") is not None
-        ):
-            session_latitude = gps["latitude"]
-            session_longitude = gps["longitude"]
-            session_altitude = gps["altitude"]
-            session_timestamp = system["datetime"]
-        else:
-            session_latitude = state.latitude
-            session_longitude = state.longitude
-            session_altitude = state.altitude
-            session_timestamp = (
-                state.timestamp
-                if state.timestamp is not None
-                else system["datetime"]
-            )
-    else:
-        session_latitude = (
-            state.latitude
-            if state.latitude is not None
-            else gps["latitude"]
+    (
+        session_latitude,
+        session_longitude,
+        session_altitude,
+        location_source,
+    ) = _resolve_location(
+        gps,
+        onstep_location,
+        mode,
+    )
+
+    session_timestamp, time_source = (
+        _resolve_time(
+            gps,
+            system,
         )
-        session_longitude = (
-            state.longitude
-            if state.longitude is not None
-            else gps["longitude"]
-        )
-        session_altitude = (
-            state.altitude
-            if state.altitude is not None
-            else gps["altitude"]
-        )
-        session_timestamp = (
-            state.timestamp
-            if state.timestamp is not None
-            else system["datetime"]
-        )
+    )
 
     detected_mount_type = (
         indi["mount"].get("type")
@@ -185,9 +280,7 @@ def status():
         "service": "stellarpilot",
         "status": "ok",
         # Champ historique conserv? pendant la transition
-        # afin de ne pas casser les clients issus du POC.
-        "poc": True,
-        "prototype": True,
+        # afin de ne pas casser les clients issus du ancienne version.
         "protocol": "proto-1",
         "mode": mode,
         "devices": {
@@ -208,6 +301,11 @@ def status():
             "longitude": session_longitude,
             "altitude": session_altitude,
             "timestamp": session_timestamp,
+            "location_source": location_source,
+            "time_source": time_source,
+            "timezone_offset_minutes": (
+                state.client_timezone_offset_minutes
+            ),
             "mount_type": detected_mount_type,
             "mount_type_source": mount_type_source,
             "mount_family": mount_guidance["family"],
@@ -228,6 +326,16 @@ def bright_stars(
     at: str | None = None,
 ):
     gps = gps_service.status()
+    onstep_location = indi_service.mount_location()
+    system = system_service.status()
+
+    resolved_at, _time_source = _resolve_time(
+        gps,
+        system,
+    )
+
+    if at is not None:
+        resolved_at = at
 
     if (
         (latitude is None)
@@ -249,35 +357,34 @@ def bright_stars(
         observer_longitude = longitude
         location_source = "query"
 
-    elif (
-        gps.get("latitude") is not None
-        and gps.get("longitude") is not None
-    ):
-        observer_latitude = gps["latitude"]
-        observer_longitude = gps["longitude"]
-        location_source = "gps"
-
-    elif (
-        state.latitude is not None
-        and state.longitude is not None
-    ):
-        observer_latitude = state.latitude
-        observer_longitude = state.longitude
-        location_source = "manual"
-
     else:
-        return {
-            "status": "location_required",
-            "detail": (
-                "No GPS fix or manual location "
-                "is currently available"
-            ),
-        }
+        (
+            observer_latitude,
+            observer_longitude,
+            _observer_altitude,
+            location_source,
+        ) = _resolve_location(
+            gps,
+            onstep_location,
+            "device",
+        )
+
+        if (
+            observer_latitude is None
+            or observer_longitude is None
+        ):
+            return {
+                "status": "location_required",
+                "detail": (
+                    "No GPS fix, OnStep location "
+                    "or manual location is currently available"
+                ),
+            }
 
     return sky_service.bright_stars(
         latitude=observer_latitude,
         longitude=observer_longitude,
-        at=at,
+        at=resolved_at,
         location_source=location_source,
     )
 
@@ -293,9 +400,22 @@ def sky_objects(
     min_altitude: float = 15.0,
     direction: str | None = None,
     constellation: str | None = None,
+    sort: str = "magnitude",
+    order: str = "asc",
+    offset: int = 0,
     limit: int = 100,
 ):
     gps = gps_service.status()
+    onstep_location = indi_service.mount_location()
+    system = system_service.status()
+
+    resolved_at, _time_source = _resolve_time(
+        gps,
+        system,
+    )
+
+    if at is not None:
+        resolved_at = at
 
     if (
         (latitude is None)
@@ -317,41 +437,43 @@ def sky_objects(
         observer_longitude = longitude
         location_source = "query"
 
-    elif (
-        gps.get("latitude") is not None
-        and gps.get("longitude") is not None
-    ):
-        observer_latitude = gps["latitude"]
-        observer_longitude = gps["longitude"]
-        location_source = "gps"
-
-    elif (
-        state.latitude is not None
-        and state.longitude is not None
-    ):
-        observer_latitude = state.latitude
-        observer_longitude = state.longitude
-        location_source = "manual"
-
     else:
-        return {
-            "status": "location_required",
-            "detail": (
-                "No GPS fix or manual location "
-                "is currently available"
-            ),
-        }
+        (
+            observer_latitude,
+            observer_longitude,
+            _observer_altitude,
+            location_source,
+        ) = _resolve_location(
+            gps,
+            onstep_location,
+            "device",
+        )
+
+        if (
+            observer_latitude is None
+            or observer_longitude is None
+        ):
+            return {
+                "status": "location_required",
+                "detail": (
+                    "No GPS fix, OnStep location "
+                    "or manual location is currently available"
+                ),
+            }
 
     try:
         return sky_objects_service.objects(
             latitude=observer_latitude,
             longitude=observer_longitude,
-            at=at,
+            at=resolved_at,
             category=category,
             query=q,
             min_altitude=min_altitude,
             direction=direction,
             constellation=constellation,
+            sort=sort,
+            order=order,
+            offset=offset,
             limit=limit,
             location_source=location_source,
         )
@@ -370,12 +492,45 @@ def devices():
     }
 
 
+@app.post("/system/time")
+def set_time(payload: TimePayload):
+    state.client_time_epoch_s = (
+        payload.utc_epoch_ms / 1000.0
+    )
+
+    state.client_time_monotonic_s = monotonic()
+
+    state.client_timezone_offset_minutes = (
+        payload.timezone_offset_minutes
+    )
+
+    return {
+        "status": "ok",
+        "time_source": "android",
+        "timestamp_utc": _client_time_utc(),
+        "timezone_offset_minutes": (
+            state.client_timezone_offset_minutes
+        ),
+    }
+
+
 @app.post("/system/location")
 def set_location(payload: LocationPayload):
     state.latitude = payload.latitude
     state.longitude = payload.longitude
     state.altitude = payload.altitude
     state.timestamp = payload.timestamp
+
+    try:
+        timestamp_ms = int(payload.timestamp)
+    except (TypeError, ValueError):
+        timestamp_ms = 0
+
+    if timestamp_ms > 1_000_000_000_000:
+        state.client_time_epoch_s = (
+            timestamp_ms / 1000.0
+        )
+        state.client_time_monotonic_s = monotonic()
 
     return {
         "status": "ok"
@@ -402,17 +557,7 @@ def set_mount_type(payload: MountTypePayload):
 
 @app.post("/camera/capture")
 def capture(payload: CapturePayload):
-    result = indi_service.capture(payload.exposure_s)
-
-    if (
-        result.get("status") == "captured"
-        and result.get("image")
-    ):
-        result["quality"] = analyze_fits(
-            result["image"]
-        )
-
-    return result
+    return indi_service.capture(payload.exposure_s)
 
 
 @app.post("/camera/auto-capture")
@@ -1010,75 +1155,110 @@ def camera_preview():
 
 @app.post("/mount/goto")
 def mount_goto(payload: GotoPayload):
-    return indi_service.goto(payload.ra, payload.dec)
+    gps = gps_service.status()
+    system = system_service.status()
+
+    timestamp_utc, time_source = _resolve_time(
+        gps,
+        system,
+    )
+
+    # Un GOTO astronomique ne doit pas etre lance
+    # avec une heure potentiellement fausse.
+    if (
+        timestamp_utc is None
+        or time_source not in {"gps", "android"}
+    ):
+        return {
+            "status": "error",
+            "detail": (
+                "Aucune source d'heure fiable "
+                "disponible pour initialiser OnStep"
+            ),
+            "time_source": time_source,
+        }
+
+    offset_minutes = (
+        state.client_timezone_offset_minutes
+    )
+
+    # En cas de GPS disponible mais sans information
+    # de fuseau provenant d'Android, utilise le fuseau
+    # configure sur le Raspberry Pi.
+    if offset_minutes is None:
+        try:
+            value = timestamp_utc
+
+            if value.endswith("Z"):
+                value = (
+                    value[:-1]
+                    + "+00:00"
+                )
+
+            instant = datetime.fromisoformat(
+                value
+            )
+
+            if instant.tzinfo is None:
+                instant = instant.replace(
+                    tzinfo=timezone.utc
+                )
+
+            local_offset = (
+                instant
+                .astimezone()
+                .utcoffset()
+            )
+
+            offset_minutes = int(
+                (
+                    local_offset.total_seconds()
+                    if local_offset is not None
+                    else 0
+                )
+                / 60
+            )
+
+        except ValueError:
+            offset_minutes = 0
+
+    time_sync = indi_service.sync_mount_time(
+        utc_iso=timestamp_utc,
+        timezone_offset_minutes=offset_minutes,
+    )
+
+    if time_sync.get("status") not in {
+        "ok",
+    }:
+        return {
+            "status": "error",
+            "detail": (
+                "Synchronisation de l'heure "
+                "OnStep impossible"
+            ),
+            "time_source": time_source,
+            "time_sync": time_sync,
+        }
+
+    result = indi_service.goto(
+        payload.ra,
+        payload.dec,
+    )
+
+    result["time_source"] = time_source
+    result["time_sync"] = time_sync
+
+    return result
+
+
+@app.get("/mount/status")
+def mount_status():
+    return indi_service.mount_status()
 
 
 @app.post("/solve")
 def solve(payload: SolvePayload):
     return plate_solver.solve_robust(payload.image)
-
-
-@app.get("/demo/m103/preview.jpg")
-def preview_demo_m103():
-    preview_image = (
-        Path(__file__).resolve().parents[1]
-        / "demo"
-        / "M103-preview.jpg"
-    )
-
-    if not preview_image.exists():
-        raise HTTPException(
-            status_code=404,
-            detail="Aperçu M103 introuvable",
-        )
-
-    return Response(
-        content=preview_image.read_bytes(),
-        media_type="image/jpeg",
-        headers={
-            "Cache-Control": "no-store",
-            "X-StellarPilot-Demo": "M103",
-        },
-    )
-
-@app.post("/demo/m103/solve")
-def solve_demo_m103():
-    demo_image = (
-        Path(__file__).resolve().parents[1]
-        / "demo"
-        / "M103.fits"
-    )
-
-    logging.getLogger("uvicorn.error").info(
-        "M103 solve START"
-    )
-
-    started_at = perf_counter()
-
-    result = plate_solver.solve(
-        str(demo_image),
-        ra_hint=23.3458,
-        dec_hint=60.6500,
-        radius_deg=5.0,
-        downsample=2,
-        timeout_s=15,
-    )
-
-    result["demo"] = "M103"
-    result["reference_ra"] = 23.3458
-    result["reference_dec"] = 60.6500
-    result["solve_duration_ms"] = int(
-        (perf_counter() - started_at) * 1000
-    )
-
-    logging.getLogger("uvicorn.error").info(
-        "M103 solve END status=%s duration_ms=%s",
-        result.get("status"),
-        result["solve_duration_ms"],
-    )
-
-    return result
-
 
 
 @app.get("/catalog/status")
@@ -1143,7 +1323,7 @@ async def websocket_endpoint(websocket: WebSocket):
         {
             "event": "connected",
             "service": "stellarpilot",
-            "mode": get_mode(),
+            "mode": "device",
             "protocol": "proto-1",
         }
     )
@@ -1153,7 +1333,7 @@ async def websocket_endpoint(websocket: WebSocket):
             message = await websocket.receive_text()
 
             # Les messages applicatifs StellarPilot utilisent JSON.
-            # Pendant la transition du POC vers le prototype,
+            # Pendant la transition du ancienne version vers le serveur,
             # les anciennes trames restent accept?es.
             try:
                 payload = json.loads(message)
@@ -1168,7 +1348,7 @@ async def websocket_endpoint(websocket: WebSocket):
                     {
                         "event": "welcome",
                         "service": "stellarpilot",
-                        "mode": get_mode(),
+                        "mode": "device",
                         "protocol": "proto-1",
                         "client": payload.get(
                             "client",

@@ -51,6 +51,10 @@ fun SkyScreen(
     val state = viewModel.uiState
     val sky = state.sky
 
+    val demoMode =
+        fr.stellarpilot.app.feature.demo
+            .DemoModeState.active
+
     val context = LocalContext.current
 
     val locationPreferences = remember {
@@ -82,10 +86,17 @@ fun SkyScreen(
         mutableStateOf(false)
     }
 
-    LaunchedEffect(serverBaseUrl) {
-        viewModel.load(
-            serverBaseUrl
-        )
+    LaunchedEffect(
+        serverBaseUrl,
+        demoMode
+    ) {
+        if (demoMode) {
+            viewModel.loadDemoSnapshot()
+        } else {
+            viewModel.load(
+                serverBaseUrl
+            )
+        }
     }
 
     Surface(
@@ -447,9 +458,13 @@ fun SkyScreen(
 
             Button(
                 onClick = {
-                    viewModel.load(
-                        serverBaseUrl
-                    )
+                    if (demoMode) {
+                        viewModel.loadDemoSnapshot()
+                    } else {
+                        viewModel.load(
+                            serverBaseUrl
+                        )
+                    }
                 },
                 enabled =
                     !state.isLoading,

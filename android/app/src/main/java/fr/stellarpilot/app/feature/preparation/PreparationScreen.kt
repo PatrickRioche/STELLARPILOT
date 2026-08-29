@@ -87,6 +87,16 @@ fun PreparationScreen(
         mutableStateOf(false)
     }
 
+    /*
+     * Le mode D?mo appartient exclusivement ? l'application
+     * Android. Les autres ?crans peuvent ainsi interdire
+     * tout acc?s r?seau pendant une d?monstration.
+     */
+    LaunchedEffect(demoMode) {
+        fr.stellarpilot.app.feature.demo
+            .DemoModeState.active = demoMode
+    }
+
     var selectedReferenceStarId by rememberSaveable {
         mutableStateOf<String?>(null)
     }
@@ -377,7 +387,7 @@ fun PreparationScreen(
                                 state.serverBaseUrl
                             )
                         } else {
-                            cameraPreviewViewModel.runServerM103(
+                            cameraPreviewViewModel.runDemoM103(
                                 state.serverBaseUrl
                             )
                         }

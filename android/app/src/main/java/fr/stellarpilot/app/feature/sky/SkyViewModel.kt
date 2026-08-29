@@ -41,6 +41,18 @@ class SkyViewModel : ViewModel() {
         overrideLongitude =
             longitude
 
+        /*
+         * En mode D?mo, aucune position n'est envoy?e au Pi
+         * et aucune requ?te HTTP n'est autoris?e.
+         */
+        if (
+            fr.stellarpilot.app.feature.demo
+                .DemoModeState.active
+        ) {
+            loadDemoSnapshot()
+            return
+        }
+
         if (uiState.isLoading) return
 
         uiState = uiState.copy(
@@ -94,6 +106,18 @@ class SkyViewModel : ViewModel() {
 
         overrideLongitude =
             longitude
+
+        /*
+         * En mode D?mo, aucune position n'est envoy?e au Pi
+         * et aucune requ?te HTTP n'est autoris?e.
+         */
+        if (
+            fr.stellarpilot.app.feature.demo
+                .DemoModeState.active
+        ) {
+            loadDemoSnapshot()
+            return
+        }
 
         if (uiState.isLoading) return
 
@@ -228,6 +252,20 @@ class SkyViewModel : ViewModel() {
     }
 
     fun load(serverBaseUrl: String) {
+
+        /*
+         * Garde-fou absolu :
+         * le mode D?mo utilise uniquement les donn?es
+         * embarqu?es dans l'application Android.
+         */
+        if (
+            fr.stellarpilot.app.feature.demo
+                .DemoModeState.active
+        ) {
+            loadDemoSnapshot()
+            return
+        }
+
         if (uiState.isLoading) return
 
         uiState = uiState.copy(

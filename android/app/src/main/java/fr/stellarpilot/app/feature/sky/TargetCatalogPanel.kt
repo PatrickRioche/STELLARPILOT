@@ -418,10 +418,15 @@ fun TargetCatalogPanel(
 
                             Button(
                                 onClick = {
-                                    // Pointage réel à raccorder
-                                    // à l'API monture.
+                                    viewModel.gotoTarget(
+                                        serverBaseUrl =
+                                            serverBaseUrl,
+                                        target =
+                                            target
+                                    )
                                 },
-                                enabled = false,
+                                enabled =
+                                    !state.isGotoLoading,
                                 modifier =
                                     Modifier.fillMaxWidth()
                             ) {
@@ -449,11 +454,157 @@ fun TargetCatalogPanel(
 
                                 Text(
                                     text =
-                                        "Pointer la cible",
+                                        if (
+                                            state.isGotoLoading
+                                        ) {
+                                            "Pointage en cours..."
+                                        } else {
+                                            "Pointer la cible"
+                                        },
                                     fontWeight =
                                         FontWeight.Bold
                                 )
                             }
+
+                            state.gotoMessage
+                                ?.let { message ->
+
+                                    Spacer(
+                                        Modifier.height(
+                                            8.dp
+                                        )
+                                    )
+
+                                    Text(
+                                        text = message,
+                                        color =
+                                            StellarGreen
+                                    )
+                                }
+
+                            state.gotoError
+                                ?.let { message ->
+
+                                    Spacer(
+                                        Modifier.height(
+                                            8.dp
+                                        )
+                                    )
+
+                                    Text(
+                                        text = message,
+                                        color =
+                                            StellarOrange
+                                    )
+                                }
+
+
+                            state.gotoStatus
+                                ?.let { gotoStatus ->
+
+                                    Spacer(
+                                        Modifier.height(
+                                            10.dp
+                                        )
+                                    )
+
+                                    if (
+                                        state.gotoVirtualPosition
+                                    ) {
+                                        Text(
+                                            text =
+                                                "Position virtuelle OnStep",
+                                            color =
+                                                StellarMuted,
+                                            fontWeight =
+                                                FontWeight.Bold
+                                        )
+                                    }
+
+                                    if (
+                                        state.gotoCurrentRa != null &&
+                                        state.gotoCurrentDec != null
+                                    ) {
+                                        Text(
+                                            text =
+                                                "AD actuelle ${
+                                                    formatTargetNumber(
+                                                        state.gotoCurrentRa,
+                                                        4
+                                                    )
+                                                } h \u2022 Dec ${
+                                                    formatSigned(
+                                                        state.gotoCurrentDec
+                                                    )
+                                                }\u00B0",
+                                            color =
+                                                StellarMuted
+                                        )
+                                    }
+
+                                    if (
+                                        state.gotoTargetRa != null &&
+                                        state.gotoTargetDec != null
+                                    ) {
+                                        Text(
+                                            text =
+                                                "AD cible ${
+                                                    formatTargetNumber(
+                                                        state.gotoTargetRa,
+                                                        4
+                                                    )
+                                                } h \u2022 Dec ${
+                                                    formatSigned(
+                                                        state.gotoTargetDec
+                                                    )
+                                                }\u00B0",
+                                            color =
+                                                StellarMuted
+                                        )
+                                    }
+
+                                    state.gotoProgress
+                                        ?.let { progress ->
+
+                                            Text(
+                                                text =
+                                                    "Progression ${
+                                                        formatTargetNumber(
+                                                            progress * 100.0,
+                                                            0
+                                                        )
+                                                    } % \u2022 ${
+                                                        gotoStatus.uppercase(
+                                                            Locale.ROOT
+                                                        )
+                                                    }",
+                                                color =
+                                                    if (
+                                                        progress >= 1.0
+                                                    ) {
+                                                        StellarGreen
+                                                    } else {
+                                                        StellarOrange
+                                                    },
+                                                fontWeight =
+                                                    FontWeight.Bold
+                                            )
+                                        }
+
+                                    state.gotoIndiState
+                                        ?.let { indiState ->
+                                            Text(
+                                                text =
+                                                    "INDI : $indiState",
+                                                color =
+                                                    StellarMuted,
+                                                style =
+                                                    MaterialTheme
+                                                        .typography
+                                                        .bodySmall
+                                            )
+                                        }
+                                }
                         }
                     }
 
@@ -856,7 +1007,183 @@ fun TargetCatalogPanel(
 
                             Text(
                                 text =
-                                    "${result.returnedCount} affiches / " +
+                                    "TRIER PAR",
+                                color =
+                                    StellarOrange,
+                                style =
+                                    MaterialTheme
+                                        .typography
+                                        .labelLarge,
+                                fontWeight =
+                                    FontWeight.Bold
+                            )
+
+                            Spacer(
+                                Modifier.height(
+                                    6.dp
+                                )
+                            )
+
+                            Row(
+                                modifier =
+                                    Modifier
+                                        .fillMaxWidth()
+                                        .horizontalScroll(
+                                            rememberScrollState()
+                                        ),
+                                horizontalArrangement =
+                                    Arrangement.spacedBy(
+                                        8.dp
+                                    )
+                            ) {
+
+                                listOf(
+                                    "magnitude" to
+                                        "Magnitude",
+                                    "altitude" to
+                                        "Hauteur",
+                                    "name" to
+                                        "Nom"
+                                ).forEach {
+                                    option ->
+
+                                    val sortId =
+                                        option.first
+
+                                    val selected =
+                                        result.sort ==
+                                            sortId
+
+                                    val label =
+                                        when (sortId) {
+
+                                            "magnitude" ->
+                                                if (selected) {
+                                                    "Magnitude " +
+                                                        if (
+                                                            result.order ==
+                                                                "asc"
+                                                        ) {
+                                                            "\u2191"
+                                                        } else {
+                                                            "\u2193"
+                                                        }
+                                                } else {
+                                                    "Magnitude"
+                                                }
+
+                                            "altitude" ->
+                                                if (selected) {
+                                                    "Hauteur " +
+                                                        if (
+                                                            result.order ==
+                                                                "asc"
+                                                        ) {
+                                                            "\u2191"
+                                                        } else {
+                                                            "\u2193"
+                                                        }
+                                                } else {
+                                                    "Hauteur"
+                                                }
+
+                                            else ->
+                                                if (selected) {
+                                                    if (
+                                                        result.order ==
+                                                            "asc"
+                                                    ) {
+                                                        "Nom A-Z"
+                                                    } else {
+                                                        "Nom Z-A"
+                                                    }
+                                                } else {
+                                                    "Nom"
+                                                }
+                                        }
+
+                                    FilterChip(
+                                        selected =
+                                            selected,
+                                        onClick = {
+
+                                            val nextOrder =
+                                                if (selected) {
+
+                                                    if (
+                                                        result.order ==
+                                                            "asc"
+                                                    ) {
+                                                        "desc"
+                                                    } else {
+                                                        "asc"
+                                                    }
+
+                                                } else {
+
+                                                    if (
+                                                        sortId ==
+                                                            "altitude"
+                                                    ) {
+                                                        "desc"
+                                                    } else {
+                                                        "asc"
+                                                    }
+                                                }
+
+                                            viewModel.load(
+                                                serverBaseUrl =
+                                                    serverBaseUrl,
+                                                category =
+                                                    category,
+                                                query =
+                                                    searchText,
+                                                minAltitude =
+                                                    minAltitude,
+                                                direction =
+                                                    direction,
+                                                constellation =
+                                                    constellation,
+                                                sort =
+                                                    sortId,
+                                                order =
+                                                    nextOrder,
+                                                offset =
+                                                    0
+                                            )
+                                        },
+                                        label = {
+                                            Text(
+                                                label
+                                            )
+                                        }
+                                    )
+                                }
+                            }
+
+                            Spacer(
+                                Modifier.height(
+                                    12.dp
+                                )
+                            )
+
+                            val firstObject =
+                                if (
+                                    result.returnedCount >
+                                        0
+                                ) {
+                                    result.offset + 1
+                                } else {
+                                    0
+                                }
+
+                            val lastObject =
+                                result.offset +
+                                    result.returnedCount
+
+                            Text(
+                                text =
+                                    "Objets $firstObject-$lastObject / " +
                                         "${result.visibleCount} visibles",
                                 color =
                                     StellarMuted
@@ -922,6 +1249,143 @@ fun TargetCatalogPanel(
                                                 )
                                         )
                                     }
+
+                                if (
+                                    result.visibleCount >
+                                        result.limit
+                                ) {
+
+                                    val pageSize =
+                                        result.limit
+                                            .coerceAtLeast(
+                                                1
+                                            )
+
+                                    val currentPage =
+                                        (
+                                            result.offset /
+                                                pageSize
+                                            ) + 1
+
+                                    val pageCount =
+                                        maxOf(
+                                            1,
+                                            (
+                                                result.visibleCount +
+                                                    pageSize -
+                                                    1
+                                                ) /
+                                                pageSize
+                                        )
+
+                                    Spacer(
+                                        Modifier.height(
+                                            8.dp
+                                        )
+                                    )
+
+                                    Row(
+                                        modifier =
+                                            Modifier
+                                                .fillMaxWidth(),
+                                        horizontalArrangement =
+                                            Arrangement.spacedBy(
+                                                8.dp
+                                            )
+                                    ) {
+
+                                        OutlinedButton(
+                                            onClick = {
+
+                                                viewModel.load(
+                                                    serverBaseUrl =
+                                                        serverBaseUrl,
+                                                    category =
+                                                        category,
+                                                    query =
+                                                        searchText,
+                                                    minAltitude =
+                                                        minAltitude,
+                                                    direction =
+                                                        direction,
+                                                    constellation =
+                                                        constellation,
+                                                    offset =
+                                                        (
+                                                            result.offset -
+                                                                pageSize
+                                                            )
+                                                            .coerceAtLeast(
+                                                                0
+                                                            )
+                                                )
+                                            },
+                                            enabled =
+                                                result.offset >
+                                                    0,
+                                            modifier =
+                                                Modifier
+                                                    .weight(
+                                                        1f
+                                                    )
+                                        ) {
+                                            Text(
+                                                "\u2190 Precedents"
+                                            )
+                                        }
+
+                                        Text(
+                                            text =
+                                                "$currentPage / $pageCount",
+                                            color =
+                                                StellarMuted,
+                                            modifier =
+                                                Modifier
+                                                    .padding(
+                                                        top =
+                                                            12.dp
+                                                    )
+                                        )
+
+                                        Button(
+                                            onClick = {
+
+                                                viewModel.load(
+                                                    serverBaseUrl =
+                                                        serverBaseUrl,
+                                                    category =
+                                                        category,
+                                                    query =
+                                                        searchText,
+                                                    minAltitude =
+                                                        minAltitude,
+                                                    direction =
+                                                        direction,
+                                                    constellation =
+                                                        constellation,
+                                                    offset =
+                                                        result.offset +
+                                                            pageSize
+                                                )
+                                            },
+                                            enabled =
+                                                (
+                                                    result.offset +
+                                                        result.returnedCount
+                                                    ) <
+                                                    result.visibleCount,
+                                            modifier =
+                                                Modifier
+                                                    .weight(
+                                                        1f
+                                                    )
+                                        ) {
+                                            Text(
+                                                "Suivants \u2192"
+                                            )
+                                        }
+                                    }
+                                }
                             }
                         }
                     }

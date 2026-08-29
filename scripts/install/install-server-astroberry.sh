@@ -29,16 +29,23 @@ cd "$DEPLOY_DIR"
 [[ -x .venv/bin/python ]] || python3 -m venv .venv
 .venv/bin/python -m pip install --upgrade pip
 .venv/bin/pip install -r requirements.txt
-.venv/bin/pip install numpy astropy Pillow
 .venv/bin/python - <<'PY2'
-import fastapi, numpy, astropy, PIL
+import fastapi
+import numpy
+import astropy
+import PIL
+import scipy
+
 print('Imports Python OK')
 PY2
 sudo cp "$DEPLOY_DIR/systemd/stellarpilot-server.service" /etc/systemd/system/stellarpilot-server.service
 sudo mkdir -p /etc/systemd/system/stellarpilot-server.service.d
-sudo tee /etc/systemd/system/stellarpilot-server.service.d/device.conf >/dev/null <<'EOF'
+
+# Supprime l'ancien réglage du POC s'il existe.
+sudo rm -f /etc/systemd/system/stellarpilot-server.service.d/device.conf
+
+sudo tee /etc/systemd/system/stellarpilot-server.service.d/runtime.conf >/dev/null <<'EOF'
 [Service]
-Environment=STELLARPILOT_MODE=device
 Environment=PYTHONUNBUFFERED=1
 EOF
 sudo systemctl daemon-reload

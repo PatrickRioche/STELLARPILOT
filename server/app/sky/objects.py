@@ -71,6 +71,9 @@ class SkyObjectsService:
         min_altitude: float = 15.0,
         direction: str | None = None,
         constellation: str | None = None,
+        sort: str = "magnitude",
+        order: str = "asc",
+        offset: int = 0,
         limit: int = 100,
         location_source: str | None = None,
     ) -> dict:
@@ -108,6 +111,40 @@ class SkyObjectsService:
             constellation.strip().casefold()
             if constellation
             else None
+        )
+
+        normalized_sort = (
+            sort.strip().lower()
+            if sort
+            else "magnitude"
+        )
+
+        if normalized_sort not in {
+            "magnitude",
+            "altitude",
+            "name",
+        }:
+            raise ValueError(
+                f"Unknown sort: {sort}"
+            )
+
+        normalized_order = (
+            order.strip().lower()
+            if order
+            else "asc"
+        )
+
+        if normalized_order not in {
+            "asc",
+            "desc",
+        }:
+            raise ValueError(
+                f"Unknown order: {order}"
+            )
+
+        offset = max(
+            0,
+            offset,
         )
 
         min_altitude = max(
@@ -327,21 +364,67 @@ class SkyObjectsService:
                 }
             )
 
-        visible.sort(
-            key=lambda obj: (
-                obj["magnitude"] is None,
-                (
-                    obj["magnitude"]
-                    if obj["magnitude"]
-                    is not None
-                    else 99.0
-                ),
-                -obj["altitude_deg"],
-                obj["name"],
-            )
-        )
+        if normalized_sort == "magnitude":
+            if normalized_order == "asc":
+                visible.sort(
+                    key=lambda obj: (
+                        obj["magnitude"] is None,
+                        (
+                            obj["magnitude"]
+                            if obj["magnitude"]
+                            is not None
+                            else 99.0
+                        ),
+                        -obj["altitude_deg"],
+                        obj["name"].casefold(),
+                    )
+                )
+            else:
+                visible.sort(
+                    key=lambda obj: (
+                        obj["magnitude"] is None,
+                        -(
+                            obj["magnitude"]
+                            if obj["magnitude"]
+                            is not None
+                            else 0.0
+                        ),
+                        -obj["altitude_deg"],
+                        obj["name"].casefold(),
+                    )
+                )
 
-        returned = visible[:limit]
+        elif normalized_sort == "altitude":
+            visible.sort(
+                key=lambda obj: (
+                    (
+                        -obj["altitude_deg"]
+                        if normalized_order == "desc"
+                        else obj["altitude_deg"]
+                    ),
+                    obj["magnitude"] is None,
+                    (
+                        obj["magnitude"]
+                        if obj["magnitude"]
+                        is not None
+                        else 99.0
+                    ),
+                    obj["name"].casefold(),
+                )
+            )
+
+        else:
+            visible.sort(
+                key=lambda obj:
+                    obj["name"].casefold(),
+                reverse=(
+                    normalized_order == "desc"
+                ),
+            )
+
+        returned = visible[
+            offset:offset + limit
+        ]
 
         return {
             "status": "ok",
@@ -381,6 +464,24 @@ class SkyObjectsService:
 
             "limit":
                 limit,
+
+            "offset":
+                offset,
+
+            "sort":
+                normalized_sort,
+
+            "order":
+                normalized_order,
+
+            "has_previous":
+                offset > 0,
+
+            "has_next":
+                (
+                    offset + len(returned)
+                    < len(visible)
+                ),
 
             "categories": [
                 {
