@@ -2,19 +2,10 @@ import json
 import socket
 import time
 
-from app.config import get_mode
 
 
 class GpsService:
     def status(self) -> dict:
-        if get_mode() != "device":
-            return {
-                "status": "fix",
-                "latitude": 47.4784,
-                "longitude": -0.5632,
-                "altitude": None,
-                "mode": 3,
-            }
 
         result = {
             "status": "unavailable",
@@ -22,6 +13,7 @@ class GpsService:
             "longitude": None,
             "altitude": None,
             "mode": 0,
+            "time_utc": None,
         }
 
         try:
@@ -78,6 +70,7 @@ class GpsService:
                                 altitude = message.get("altMSL")
 
                             result["altitude"] = altitude
+                            result["time_utc"] = message.get("time")
                             return result
 
         except OSError:

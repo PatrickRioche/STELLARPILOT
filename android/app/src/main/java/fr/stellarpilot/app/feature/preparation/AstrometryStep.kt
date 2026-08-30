@@ -1,6 +1,7 @@
-﻿package fr.stellarpilot.app.feature.preparation
+package fr.stellarpilot.app.feature.preparation
 
 import android.graphics.BitmapFactory
+import android.os.SystemClock
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -22,14 +23,20 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import fr.stellarpilot.app.R
 import fr.stellarpilot.app.ui.theme.StellarBackground
 import fr.stellarpilot.app.ui.theme.StellarGreen
 import fr.stellarpilot.app.ui.theme.StellarMuted
@@ -38,6 +45,7 @@ import fr.stellarpilot.app.ui.theme.StellarRed
 import fr.stellarpilot.app.ui.theme.StellarSurface
 import fr.stellarpilot.app.ui.theme.StellarSurfaceRaised
 import fr.stellarpilot.app.ui.theme.StellarText
+import kotlinx.coroutines.delay
 import java.util.Locale
 import kotlin.math.abs
 import kotlin.math.roundToInt
@@ -91,10 +99,13 @@ private fun formatAstrometryNumber(
 
 @Composable
 fun AstrometryStep(
+    demoMode: Boolean,
     previewState: CameraPreviewUiState,
+    demoM103State: DemoM103UiState,
     cameraName: String?,
     exposureMs: Int,
     onExposureChange: (Int) -> Unit,
+    onRunDemoM103: () -> Unit,
     onRefresh: () -> Unit,
     onPrevious: () -> Unit,
     onNext: () -> Unit
@@ -118,6 +129,58 @@ fun AstrometryStep(
                 )?.asImageBitmap()
             }
         }
+
+    val demoM103Bitmap =
+        remember(demoM103State.imageBytes) {
+
+            demoM103State.imageBytes?.let { bytes ->
+
+                val options =
+                    BitmapFactory.Options().apply {
+                        inSampleSize = 4
+                    }
+
+                BitmapFactory.decodeByteArray(
+                    bytes,
+                    0,
+                    bytes.size,
+                    options
+                )?.asImageBitmap()
+            }
+        }
+
+    val displayedBitmap = previewBitmap
+
+    var acquisitionElapsedMs by
+        remember {
+            mutableStateOf(0L)
+        }
+
+    LaunchedEffect(
+        previewState.isLoading,
+        previewState.imageBytes
+    ) {
+        if (
+            previewState.isLoading &&
+            previewState.imageBytes == null
+        ) {
+            val startedAt =
+                SystemClock.elapsedRealtime()
+
+            acquisitionElapsedMs = 0L
+
+            while (
+                previewState.isLoading &&
+                previewState.imageBytes == null
+            ) {
+                acquisitionElapsedMs =
+                    SystemClock.elapsedRealtime() -
+                        startedAt
+
+                delay(100)
+            }
+        }
+    }
 
     val exposureIndex =
         remember(exposureMs) {
@@ -147,6 +210,15 @@ fun AstrometryStep(
                 "timeout",
                 "unsolved"
             )
+
+    val demoSolveSucceeded =
+        demoM103State.solveStatus == "solved"
+
+    val canContinue =
+        if (demoMode)
+            demoSolveSucceeded
+        else
+            solveSucceeded
 
     Card(
         modifier =
@@ -204,6 +276,295 @@ fun AstrometryStep(
 
             Spacer(
                 Modifier.height(6.dp)
+            )
+
+            /*
+             * Démonstration astrométrique M103.
+             *
+             * Cette démonstration est indépendante de la
+             * validation de l'astrométrie utilisateur.
+             */
+            Card(
+                modifier =
+                    Modifier.fillMaxWidth(),
+
+                colors =
+                    CardDefaults.cardColors(
+                        containerColor =
+                            StellarSurfaceRaised
+                    ),
+
+                shape =
+                    RoundedCornerShape(12.dp)
+            ) {
+
+                Column(
+                    modifier =
+                        Modifier.padding(14.dp),
+
+                    verticalArrangement =
+                        Arrangement.spacedBy(8.dp)
+                ) {
+
+                    Text(
+                        text =
+                            "Démonstration M103",
+
+                        color =
+                            StellarText,
+
+                        fontWeight =
+                            FontWeight.Bold
+                    )
+
+                    Text(
+                        text =
+                            "Vérifie le fonctionnement du solveur " +
+                                "astrometry.net avec une image FITS " +
+                                "astronomique de référence.",
+
+                        color =
+                            StellarMuted,
+
+                        style =
+                            MaterialTheme
+                                .typography
+                                .bodySmall
+                    )
+
+                    Box(
+                        modifier =
+                            Modifier
+                                .fillMaxWidth()
+                                .height(240.dp)
+                                .background(
+                                    Color.Black,
+                                    RoundedCornerShape(12.dp)
+                                ),
+                        contentAlignment =
+                            Alignment.Center
+                    ) {
+                        when {
+                            demoMode -> {
+                                Image(
+                                    painter = painterResource(
+                                        id = R.drawable.m103_preview
+                                    ),
+                                    contentDescription =
+                                        "M103 - image locale de demonstration",
+                                    modifier =
+                                        Modifier.fillMaxSize(),
+                                    contentScale =
+                                        ContentScale.Fit
+                                )
+                            }
+
+                            demoM103Bitmap != null -> {
+                                Image(
+                                    bitmap = demoM103Bitmap,
+                                    contentDescription =
+                                        "M103 - image recue du serveur",
+                                    modifier =
+                                        Modifier.fillMaxSize(),
+                                    contentScale =
+                                        ContentScale.Fit
+                                )
+                            }
+
+                            else -> {
+                                Text(
+                                    text =
+                                        "L'image M103 sera chargee depuis le serveur lors du test.",
+                                    color =
+                                        StellarMuted,
+                                    style =
+                                        MaterialTheme.typography.bodySmall
+                                )
+                            }
+                        }
+                    }
+
+                    Spacer(
+                        Modifier.height(4.dp)
+                    )
+
+                    if (!demoMode) {
+                    OutlinedButton(
+                        onClick =
+                            onRunDemoM103,
+
+                        enabled =
+                            !demoM103State.isLoading &&
+                                !previewState.isLoading,
+
+                        modifier =
+                            Modifier.fillMaxWidth()
+                    ) {
+
+                        Text(
+                            text =
+                                when {
+                                    demoM103State.isLoading ->
+                                        "Résolution M103 en cours..."
+
+                                    demoM103State.solveStatus != null ->
+                                        "↻ Relancer le test serveur M103"
+
+                                    else ->
+                                        "▶ Tester l'astrométrie serveur avec M103"
+                                }
+                        )
+                    }
+                    }
+
+                    when {
+
+                        demoM103State.solveStatus == "solving" ||
+                            demoM103State.solveStatus == "loading" -> {
+
+                            Text(
+                                text =
+                                    "Analyse du champ M103 avec astrometry.net...",
+
+                                color =
+                                    StellarOrange
+                            )
+                        }
+
+                        demoM103State.solveStatus == "solved" -> {
+
+                            Text(
+                                text =
+                                    "✓ Démonstration réussie",
+
+                                color =
+                                    StellarGreen,
+
+                                fontWeight =
+                                    FontWeight.Bold
+                            )
+
+                            AstrometryValue(
+                                label = "Centre RA",
+                                value =
+                                    formatAstrometryNumber(
+                                        demoM103State.ra,
+                                        6
+                                    )
+                            )
+
+                            AstrometryValue(
+                                label = "Centre DEC",
+                                value =
+                                    "${
+                                        formatAstrometryNumber(
+                                            demoM103State.dec,
+                                            6
+                                        )
+                                    }°"
+                            )
+
+                            AstrometryValue(
+                                label = "Orientation",
+                                value =
+                                    "${
+                                        formatAstrometryNumber(
+                                            demoM103State.orientationDeg,
+                                            2
+                                        )
+                                    }°"
+                            )
+
+                            AstrometryValue(
+                                label = "Échelle",
+                                value =
+                                    "${
+                                        formatAstrometryNumber(
+                                            demoM103State.pixelScaleArcsec,
+                                            3
+                                        )
+                                    } arcsec/pixel"
+                            )
+
+                            demoM103State
+                                .solveDurationMs
+                                ?.let { duration ->
+
+                                    AstrometryValue(
+                                        label = "Durée",
+                                        value =
+                                            String.format(
+                                                Locale.US,
+                                                "%.2f s",
+                                                duration / 1000.0
+                                            )
+                                    )
+                                }
+                        }
+
+                        demoM103State.solveStatus == "error" -> {
+
+                            Text(
+                                text =
+                                    "Échec de la démonstration M103",
+
+                                color =
+                                    StellarRed,
+
+                                fontWeight =
+                                    FontWeight.SemiBold
+                            )
+                        }
+                    }
+
+
+                    demoM103State.error?.let { error ->
+
+                        Text(
+                            text = error,
+                            color = StellarRed,
+                            style =
+                                MaterialTheme
+                                    .typography
+                                    .bodySmall
+                        )
+                    }
+                }
+            }
+
+
+            if (!demoMode) {
+                Spacer(
+                    Modifier.height(8.dp)
+                )
+
+                Text(
+                    text =
+                        "Votre capture caméra",
+
+                color =
+                    StellarText,
+
+                fontWeight =
+                    FontWeight.Bold
+            )
+
+            Text(
+                text =
+                    "Réglez l'exposition puis réalisez votre propre " +
+                        "capture. Seule cette astrométrie permet de continuer.",
+
+                color =
+                    StellarMuted,
+
+                style =
+                    MaterialTheme
+                        .typography
+                        .bodySmall
+            )
+
+            Spacer(
+                Modifier.height(4.dp)
             )
 
             /*
@@ -348,11 +709,23 @@ fun AstrometryStep(
 
                 when {
 
-                    previewBitmap != null -> {
+                    demoMode -> {
+                        Image(
+                            painter = painterResource(
+                                id = R.drawable.m103_preview
+                            ),
+                            contentDescription =
+                                "M103 - image de demonstration",
+                            modifier = Modifier.fillMaxSize(),
+                            contentScale = ContentScale.Fit
+                        )
+                    }
+
+                    displayedBitmap != null -> {
 
                         Image(
                             bitmap =
-                                previewBitmap,
+                                displayedBitmap,
 
                             contentDescription =
                                 "Aperçu caméra",
@@ -387,7 +760,13 @@ fun AstrometryStep(
 
                         Text(
                             text =
-                                "Acquisition de l'image...",
+                                "Acquisition de l'image... ${
+                                    String.format(
+                                        Locale.FRANCE,
+                                        "%.1f s",
+                                        acquisitionElapsedMs / 1000.0
+                                    )
+                                }",
 
                             color =
                                 StellarMuted
@@ -446,7 +825,7 @@ fun AstrometryStep(
 
                     Text(
                         text =
-                            "Résultat astrométrique",
+                            "Dernière astrométrie de votre caméra",
 
                         color =
                             StellarText,
@@ -692,19 +1071,19 @@ fun AstrometryStep(
                                 when (solveStatus) {
 
                                     "timeout" ->
-                                        "Échec : délai d'astrométrie dépassé"
+                                        "Caméra : délai d'astrométrie dépassé"
 
                                     "unsolved" ->
-                                        "Champ non résolu"
+                                        "Caméra : champ non résolu"
 
                                     "failed" ->
-                                        "Échec de la résolution"
+                                        "Caméra : échec de la résolution"
 
                                     "error" ->
-                                        "Erreur d'astrométrie"
+                                        "Caméra : erreur d'astrométrie"
 
                                     else ->
-                                        "Astrométrie : ${previewState.solveStatus}"
+                                        "Astrométrie caméra : ${previewState.solveStatus}"
                                 }
 
                             Text(
@@ -741,7 +1120,7 @@ fun AstrometryStep(
 
                             Text(
                                 text =
-                                    "Aucun résultat pour le moment",
+                                    "Aucune astrométrie caméra pour le moment",
 
                                 color =
                                     StellarMuted
@@ -760,7 +1139,8 @@ fun AstrometryStep(
                     onRefresh,
 
                 enabled =
-                    !previewState.isLoading,
+                    !demoMode &&
+                        !previewState.isLoading,
 
                 modifier =
                     Modifier.fillMaxWidth()
@@ -778,12 +1158,15 @@ fun AstrometryStep(
                 )
             }
 
-            Button(
-                onClick =
-                    onNext,
+            }
 
-                enabled =
-                    solveSucceeded,
+            if (!demoMode) {
+                Button(
+                    onClick =
+                        onNext,
+
+                    enabled =
+                        canContinue,
 
                 modifier =
                     Modifier.fillMaxWidth(),
@@ -800,15 +1183,22 @@ fun AstrometryStep(
 
                 Text(
                     text =
-                        if (solveSucceeded) {
-                            "Continuer vers l'étoile"
+                        if (canContinue) {
+                            if (demoMode)
+                                "Continuer la d\u00E9monstration"
+                            else
+                                "Continuer vers l'\u00E9toile"
                         } else {
-                            "Astrométrie requise"
+                            if (demoMode)
+                                "R\u00E9soudre M103 pour continuer"
+                            else
+                                "Astrom\u00E9trie requise"
                         },
 
                     fontWeight =
                         FontWeight.Bold
                 )
+                }
             }
 
             OutlinedButton(

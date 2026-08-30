@@ -28,5 +28,9 @@ data class SkyObjectsResult(
     val minAltitudeDeg: Double,
     val visibleCount: Int,
     val returnedCount: Int,
+    val sort: String,
+    val order: String,
+    val offset: Int,
+    val limit: Int,
     val objects: List<SkyObject>
 )

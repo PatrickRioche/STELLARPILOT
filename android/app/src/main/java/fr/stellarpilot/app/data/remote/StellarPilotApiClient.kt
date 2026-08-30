@@ -23,7 +23,21 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
 import org.json.JSONObject
+import java.util.TimeZone
 import java.util.concurrent.TimeUnit
+
+data class MountGotoStatus(
+    val status: String,
+    val raHours: Double?,
+    val decDeg: Double?,
+    val targetRaHours: Double?,
+    val targetDecDeg: Double?,
+    val progress: Double?,
+    val progressPercent: Double?,
+    val indiState: String?,
+    val virtualPosition: Boolean,
+    val detail: String?
+)
 
 class StellarPilotApiClient(
     private val baseUrl: String,
@@ -100,6 +114,50 @@ class StellarPilotApiClient(
             }
         }
     }
+
+    suspend fun syncClientTime() =
+        withContext(Dispatchers.IO) {
+
+            /*
+             * Le Raspberry Pi 5 StellarPilot ne possede pas
+             * d'horloge RTC sauvegardee.
+             *
+             * Android fournit donc une ancre temporelle fiable
+             * au debut de la session hors ligne.
+             */
+            val nowMs = System.currentTimeMillis()
+
+            val timezoneOffsetMinutes =
+                TimeZone.getDefault()
+                    .getOffset(nowMs) / 60_000
+
+            val payload = JSONObject()
+                .put("utc_epoch_ms", nowMs)
+                .put(
+                    "timezone_offset_minutes",
+                    timezoneOffsetMinutes
+                )
+
+            val body = payload
+                .toString()
+                .toRequestBody(
+                    "application/json; charset=utf-8"
+                        .toMediaType()
+                )
+
+            val request = Request.Builder()
+                .url(endpoint("system/time"))
+                .post(body)
+                .build()
+
+            client.newCall(request).execute().use {
+                response ->
+
+                check(response.isSuccessful) {
+                    "HTTP ${response.code} sur /system/time"
+                }
+            }
+        }
 
     suspend fun getStatus(): ServerStatus = withContext(Dispatchers.IO) {
 
@@ -211,6 +269,190 @@ class StellarPilotApiClient(
             }
         }
     }
+
+    suspend fun gotoMount(
+        raHours: Double,
+        decDeg: Double
+    ): String = withContext(Dispatchers.IO) {
+
+        val payload =
+            JSONObject()
+                .put(
+                    "ra",
+                    raHours
+                )
+                .put(
+                    "dec",
+                    decDeg
+                )
+
+        val body =
+            payload
+                .toString()
+                .toRequestBody(
+                    "application/json; charset=utf-8"
+                        .toMediaType()
+                )
+
+        val request =
+            Request.Builder()
+                .url(
+                    endpoint(
+                        "mount/goto"
+                    )
+                )
+                .post(body)
+                .build()
+
+        client.newCall(request)
+            .execute()
+            .use { response ->
+
+                check(
+                    response.isSuccessful
+                ) {
+                    "HTTP ${response.code} sur /mount/goto"
+                }
+
+                val responseBody =
+                    response.body
+                        ?.string()
+                        ?: error(
+                            "Reponse /mount/goto vide"
+                        )
+
+                val result =
+                    JSONObject(
+                        responseBody
+                    )
+
+                val status =
+                    result.optString(
+                        "status",
+                        "error"
+                    )
+
+                if (
+                    status !in setOf(
+                        "slewing",
+                        "ok"
+                    )
+                ) {
+                    error(
+                        result.optString(
+                            "detail",
+                            "Echec du pointage"
+                        )
+                    )
+                }
+
+                status
+            }
+    }
+
+    suspend fun getMountMotionStatus(): MountGotoStatus =
+        withContext(Dispatchers.IO) {
+
+            val request =
+                Request.Builder()
+                    .url(
+                        endpoint(
+                            "mount/status"
+                        )
+                    )
+                    .get()
+                    .build()
+
+            client.newCall(request)
+                .execute()
+                .use { response ->
+
+                    check(response.isSuccessful) {
+                        "HTTP ${response.code} sur /mount/status"
+                    }
+
+                    val body =
+                        response.body
+                            ?.string()
+                            ?: error(
+                                "Reponse /mount/status vide"
+                            )
+
+                    val root = JSONObject(body)
+
+                    fun nullableDouble(
+                        key: String
+                    ): Double? {
+                        if (
+                            !root.has(key) ||
+                            root.isNull(key)
+                        ) return null
+
+                        return root.optDouble(
+                            key,
+                            Double.NaN
+                        ).takeUnless {
+                            it.isNaN()
+                        }
+                    }
+
+                    fun nullableString(
+                        key: String
+                    ): String? {
+                        if (
+                            !root.has(key) ||
+                            root.isNull(key)
+                        ) return null
+
+                        return root.optString(key)
+                            .takeIf {
+                                it.isNotBlank()
+                            }
+                    }
+
+                    MountGotoStatus(
+                        status =
+                            root.optString(
+                                "status",
+                                "unknown"
+                            ),
+                        raHours =
+                            nullableDouble("ra"),
+                        decDeg =
+                            nullableDouble("dec"),
+                        targetRaHours =
+                            nullableDouble(
+                                "target_ra"
+                            ),
+                        targetDecDeg =
+                            nullableDouble(
+                                "target_dec"
+                            ),
+                        progress =
+                            nullableDouble(
+                                "progress"
+                            ),
+                        progressPercent =
+                            nullableDouble(
+                                "progress_percent"
+                            ),
+                        indiState =
+                            nullableString(
+                                "indi_state"
+                            ),
+                        virtualPosition =
+                            root.optBoolean(
+                                "virtual_position",
+                                false
+                            ),
+                        detail =
+                            nullableString(
+                                "detail"
+                            )
+                    )
+                }
+        }
+
     fun openEvents(listener: WebSocketListener): WebSocket {
         val request = Request.Builder()
             .url(webSocketEndpoint())

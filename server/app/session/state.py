@@ -10,5 +10,12 @@ class SessionState:
     timestamp: Optional[str] = None
     mount_type: Optional[str] = None
 
+    # Le Pi5 StellarPilot ne possede pas de RTC batterie.
+    # Android fournit une ancre UTC, puis monotonic() maintient
+    # le temps de session tant que le serveur reste allume.
+    client_time_epoch_s: Optional[float] = None
+    client_time_monotonic_s: Optional[float] = None
+    client_timezone_offset_minutes: Optional[int] = None
+
 
 state = SessionState()

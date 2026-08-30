@@ -17,6 +17,26 @@ command -v wcsinfo
 
 Le Pi doit disposer de Python 3, venv, Git, INDI, astrometry.net, index astrométriques et gpsd.
 
+### Dépendances Python du serveur
+
+La source de vérité est `server/requirements.txt`.
+
+Elle installe notamment :
+
+- `fastapi` : API REST et WebSocket ;
+- `uvicorn[standard]` : serveur ASGI ;
+- `pydantic` : validation des données ;
+- `httpx` : client HTTP et tests ;
+- `numpy` : calcul numérique et traitement d'image ;
+- `astropy` : FITS et fonctions astronomiques ;
+- `Pillow` : traitement des images (`PIL`) ;
+- `scipy` : traitement scientifique et analyse d'image ;
+- `pytest` : tests automatisés.
+
+Ne pas installer ces bibliothèques une par une.
+Utiliser toujours `pip install -r requirements.txt`.
+
+
 ## 2. Récupérer le projet
 
 ```bash
@@ -24,12 +44,6 @@ cd ~
 git clone https://github.com/PatrickRioche/STELLARPILOT.git
 cd STELLARPILOT
 git checkout main
-```
-
-Pour figer la version POC :
-
-```bash
-git checkout v0.5.0-poc
 ```
 
 ## 3. Déployer le serveur
@@ -45,23 +59,27 @@ rsync -a --delete --exclude '.venv' --exclude '__pycache__'   ~/STELLARPILOT/ser
 cd ~/stellarpilot-server
 python3 -m venv .venv
 .venv/bin/python -m pip install --upgrade pip
-.venv/bin/pip install -r requirements.txt
-.venv/bin/pip install numpy astropy Pillow
-.venv/bin/python -c "import fastapi,numpy,astropy,PIL; print('Python OK')"
+.venv/bin/python -m pip install -r requirements.txt
+.venv/bin/python -c "import fastapi,numpy,astropy,PIL,scipy; print('Python StellarPilot OK')"
 ```
 
-## 5. Mode matériel réel
+## 5. Serveur matériel réel
 
-Le service doit recevoir `STELLARPILOT_MODE=device`.
+Le serveur StellarPilot fonctionne uniquement avec le matériel réel.
+
+La variable `STELLARPILOT_MODE` n'est plus utilisée.
+
+Le mode Démonstration est entièrement local dans l'application Android
+et fonctionne sans Raspberry Pi, sans serveur et sans INDI.
 
 ## 6. Service systemd
 
 ```bash
 sudo cp ~/stellarpilot-server/systemd/stellarpilot-server.service   /etc/systemd/system/stellarpilot-server.service
 sudo mkdir -p /etc/systemd/system/stellarpilot-server.service.d
-sudo tee /etc/systemd/system/stellarpilot-server.service.d/device.conf >/dev/null <<'EOF'
+sudo rm -f /etc/systemd/system/stellarpilot-server.service.d/device.conf
+sudo tee /etc/systemd/system/stellarpilot-server.service.d/runtime.conf >/dev/null <<'EOF'
 [Service]
-Environment=STELLARPILOT_MODE=device
 Environment=PYTHONUNBUFFERED=1
 EOF
 sudo systemctl daemon-reload

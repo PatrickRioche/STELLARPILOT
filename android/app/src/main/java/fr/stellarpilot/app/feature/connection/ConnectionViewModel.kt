@@ -229,6 +229,23 @@ class ConnectionViewModel : ViewModel() {
                 // /health d?termine la disponibilit? du serveur.
                 api.checkHealth()
 
+                /*
+                 * Le serveur est joignable :
+                 * on lui transmet immediatement l'heure Android.
+                 *
+                 * Un echec de synchronisation temporelle ne doit
+                 * pas faire echouer la connexion StellarPilot.
+                 */
+                try {
+                    api.syncClientTime()
+                } catch (error: Exception) {
+                    Log.w(
+                        TAG,
+                        "Synchronisation heure Android impossible",
+                        error
+                    )
+                }
+
                 uiState = uiState.copy(
                     isConnecting = false,
                     restStatus = "OK"

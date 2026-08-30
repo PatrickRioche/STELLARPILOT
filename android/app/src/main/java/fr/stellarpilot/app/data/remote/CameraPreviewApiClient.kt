@@ -1,4 +1,4 @@
-﻿package fr.stellarpilot.app.data.remote
+package fr.stellarpilot.app.data.remote
 
 import android.util.Log
 import kotlinx.coroutines.Dispatchers
@@ -32,7 +32,8 @@ data class PlateSolveResult(
     val pixelScaleArcsec: Double?,
     val detectedStarCount: Int?,
     val detectedStars: List<DetectedStar>,
-    val detail: String?
+    val detail: String?,
+    val solveDurationMs: Int? = null
 )
 
 class CameraPreviewApiClient {
@@ -66,9 +67,44 @@ class CameraPreviewApiClient {
                             .toMediaType()
                     )
 
+            /*
+             * Connexion d?di?e ? la capture.
+             * Aucun retry automatique : une requ?te = une pose cam?ra.
+             */
+            val captureTimeoutMs =
+                (exposureSeconds * 1000.0).toLong() +
+                    30_000L
+
+            val captureClient =
+                OkHttpClient.Builder()
+                    .connectTimeout(
+                        5,
+                        TimeUnit.SECONDS
+                    )
+                    .readTimeout(
+                        captureTimeoutMs,
+                        TimeUnit.MILLISECONDS
+                    )
+                    .writeTimeout(
+                        10,
+                        TimeUnit.SECONDS
+                    )
+                    .callTimeout(
+                        captureTimeoutMs,
+                        TimeUnit.MILLISECONDS
+                    )
+                    .retryOnConnectionFailure(
+                        false
+                    )
+                    .build()
+
             val request =
                 Request.Builder()
                     .url(url)
+                    .header(
+                        "Connection",
+                        "close"
+                    )
                     .post(payload)
                     .build()
 
@@ -77,9 +113,14 @@ class CameraPreviewApiClient {
                 "CAPTURE $exposureSeconds s"
             )
 
-            client.newCall(request)
+            captureClient.newCall(request)
                 .execute()
                 .use { response ->
+
+                    Log.i(
+                        "StellarPreview",
+                        "CAPTURE HTTP ${response.code}"
+                    )
 
                     check(response.isSuccessful) {
                         "HTTP ${response.code} sur /camera/capture"
@@ -130,43 +171,121 @@ class CameraPreviewApiClient {
     ): ByteArray =
         withContext(Dispatchers.IO) {
 
-            val url =
-                serverBaseUrl.trimEnd('/') +
-                    "/camera/preview.jpg?t=" +
-                    System.currentTimeMillis()
+            var lastError: Exception? = null
 
-            val request =
-                Request.Builder()
-                    .url(url)
-                    .get()
-                    .build()
+            for (attempt in 1..3) {
 
-            Log.i(
-                "StellarPreview",
-                "PREVIEW $url"
-            )
+                val url =
+                    serverBaseUrl.trimEnd('/') +
+                        "/camera/preview.jpg?t=" +
+                        System.currentTimeMillis()
 
-            client.newCall(request)
-                .execute()
-                .use { response ->
+                /*
+                 * La preview utilise volontairement
+                 * une connexion HTTP totalement neuve.
+                 *
+                 * Une tentative ne peut pas bloquer
+                 * plus de 10 secondes.
+                 */
+                val previewClient =
+                    OkHttpClient.Builder()
+                        .connectTimeout(
+                            5,
+                            TimeUnit.SECONDS
+                        )
+                        .readTimeout(
+                            10,
+                            TimeUnit.SECONDS
+                        )
+                        .writeTimeout(
+                            10,
+                            TimeUnit.SECONDS
+                        )
+                        .callTimeout(
+                            10,
+                            TimeUnit.SECONDS
+                        )
+                        .retryOnConnectionFailure(
+                            false
+                        )
+                        .build()
+
+                val request =
+                    Request.Builder()
+                        .url(url)
+                        .header(
+                            "Connection",
+                            "close"
+                        )
+                        .get()
+                        .build()
+
+                Log.i(
+                    "StellarPreview",
+                    "PREVIEW ATTEMPT $attempt/3"
+                )
+
+                Log.i(
+                    "StellarPreview",
+                    "PREVIEW $url"
+                )
+
+                try {
+
+                    val bytes =
+                        previewClient
+                            .newCall(request)
+                            .execute()
+                            .use { response ->
+
+                                Log.i(
+                                    "StellarPreview",
+                                    "PREVIEW HTTP ${response.code}"
+                                )
+
+                                check(
+                                    response.isSuccessful
+                                ) {
+                                    "HTTP ${response.code} sur /camera/preview.jpg"
+                                }
+
+                                response.body?.bytes()
+                                    ?: error(
+                                        "Image camera vide"
+                                    )
+                            }
 
                     Log.i(
                         "StellarPreview",
-                        "PREVIEW HTTP ${response.code}"
+                        "PREVIEW BYTES ${bytes.size}"
                     )
 
-                    check(response.isSuccessful) {
-                        "HTTP ${response.code} sur /camera/preview.jpg"
-                    }
+                    return@withContext bytes
 
-                    response.body?.bytes()
-                        ?: error(
-                            "Image caméra vide"
-                        )
+                } catch (error: Exception) {
+
+                    lastError = error
+
+                    Log.w(
+                        "StellarPreview",
+                        "PREVIEW ATTEMPT $attempt/3 FAILED: " +
+                            "${error::class.java.simpleName}: " +
+                            "${error.message}"
+                    )
                 }
+            }
+
+            error(
+                "Image camera non recue apres " +
+                    "3 tentatives (~30 s). " +
+                    (
+                        lastError?.message
+                            ?: "Erreur reseau inconnue"
+                    )
+            )
         }
 
-    suspend fun solve(
+suspend fun solve(
         serverBaseUrl: String,
         imagePath: String
     ): PlateSolveResult =
