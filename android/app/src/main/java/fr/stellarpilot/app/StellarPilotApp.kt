@@ -62,10 +62,10 @@ private val tabs = listOf(
         "Acquisition des images"
     ),
     StellarTab(
-        "R\u00E9sultats",
+        "Galeries",
         R.drawable.ic_nav_results,
-        "R\u00E9sultats",
-        "Images et r\u00E9sultats de session"
+        "Galeries",
+        "Images et captures de vos sessions"
     )
 )
 
