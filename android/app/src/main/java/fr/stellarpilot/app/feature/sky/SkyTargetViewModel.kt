@@ -6,13 +6,15 @@ import androidx.compose.runtime.setValue
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import fr.stellarpilot.app.data.demo.DemoSkyObjectsDataSource
+import fr.stellarpilot.app.data.remote.MountGotoCommandClient
 import fr.stellarpilot.app.data.remote.SkyObjectsApiClient
-import fr.stellarpilot.app.feature.demo.DemoModeState
 import fr.stellarpilot.app.data.remote.StellarPilotApiClient
 import fr.stellarpilot.app.domain.model.SkyObject
 import fr.stellarpilot.app.domain.model.SkyObjectsResult
+import fr.stellarpilot.app.feature.demo.DemoModeState
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+
 
 data class SkyTargetUiState(
     val isLoading: Boolean = false,
@@ -32,6 +34,7 @@ data class SkyTargetUiState(
     val gotoVirtualPosition: Boolean = false
 )
 
+
 class SkyTargetViewModel : ViewModel() {
 
     private var observerLatitude: Double? = null
@@ -44,6 +47,50 @@ class SkyTargetViewModel : ViewModel() {
         SkyTargetUiState()
     )
         private set
+
+    private fun trackingModeFor(
+        target: SkyObject
+    ): String =
+        when (
+            target.objectType.lowercase()
+        ) {
+            "sun" -> "solar"
+            "moon" -> "lunar"
+            else -> "sidereal"
+        }
+
+    private fun trackingLabelFor(
+        trackingMode: String
+    ): String =
+        when (trackingMode) {
+            "solar" -> "solar"
+            "lunar" -> "lunar"
+            else -> "sidéral"
+        }
+
+    private fun motionStatusLabel(
+        motionStatus: String,
+        trackingLabel: String
+    ): String {
+        val normalizedStatus =
+            motionStatus
+                .trim()
+                .lowercase()
+
+        return when (normalizedStatus) {
+            "tracking" ->
+                "tracking $trackingLabel"
+
+            "slewing" ->
+                "slewing • tracking $trackingLabel"
+
+            "starting" ->
+                "starting • tracking $trackingLabel"
+
+            else ->
+                "$normalizedStatus • tracking $trackingLabel"
+        }
+    }
 
     fun load(
         serverBaseUrl: String,
@@ -221,13 +268,25 @@ class SkyTargetViewModel : ViewModel() {
 
         if (uiState.isGotoLoading) return
 
+        val trackingMode =
+            trackingModeFor(target)
+
+        val trackingLabel =
+            trackingLabelFor(
+                trackingMode
+            )
+
         uiState =
             uiState.copy(
                 isGotoLoading = true,
                 gotoMessage =
                     "Pointage en cours...",
                 gotoError = null,
-                gotoStatus = "starting",
+                gotoStatus =
+                    motionStatusLabel(
+                        "starting",
+                        trackingLabel
+                    ),
                 gotoProgress = 0.0,
                 gotoCurrentRa = null,
                 gotoCurrentDec = null,
@@ -240,7 +299,8 @@ class SkyTargetViewModel : ViewModel() {
         if (DemoModeState.active) {
             viewModelScope.launch {
                 runDemoGoto(
-                    target
+                    target = target,
+                    trackingLabel = trackingLabel
                 )
             }
             return
@@ -255,13 +315,16 @@ class SkyTargetViewModel : ViewModel() {
                         serverBaseUrl
                     )
 
-                val commandStatus =
-                    api.gotoMount(
-                        raHours =
-                            target.raHours,
-                        decDeg =
-                            target.decDeg
-                    )
+                MountGotoCommandClient(
+                    serverBaseUrl
+                ).gotoMount(
+                    raHours =
+                        target.raHours,
+                    decDeg =
+                        target.decDeg,
+                    trackingMode =
+                        trackingMode
+                )
 
                 repeat(240) {
 
@@ -294,7 +357,10 @@ class SkyTargetViewModel : ViewModel() {
                                 },
                             gotoError = null,
                             gotoStatus =
-                                motion.status,
+                                motionStatusLabel(
+                                    motion.status,
+                                    trackingLabel
+                                ),
                             gotoProgress =
                                 motion.progress,
                             gotoCurrentRa =
@@ -344,7 +410,8 @@ class SkyTargetViewModel : ViewModel() {
     }
 
     private suspend fun runDemoGoto(
-        target: SkyObject
+        target: SkyObject,
+        trackingLabel: String
     ) {
 
         val startRa =
@@ -388,6 +455,15 @@ class SkyTargetViewModel : ViewModel() {
                             startDec
                         ) * progress
 
+            val motionStatus =
+                if (
+                    progress < 1.0
+                ) {
+                    "slewing"
+                } else {
+                    "tracking"
+                }
+
             uiState =
                 uiState.copy(
                     isGotoLoading =
@@ -402,13 +478,10 @@ class SkyTargetViewModel : ViewModel() {
                         },
                     gotoError = null,
                     gotoStatus =
-                        if (
-                            progress < 1.0
-                        ) {
-                            "slewing"
-                        } else {
-                            "tracking"
-                        },
+                        motionStatusLabel(
+                            motionStatus,
+                            trackingLabel
+                        ),
                     gotoProgress =
                         progress,
                     gotoCurrentRa =
@@ -426,5 +499,4 @@ class SkyTargetViewModel : ViewModel() {
                 )
         }
     }
-
 }
