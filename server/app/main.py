@@ -1,7 +1,12 @@
 from typing import Literal
 
+from fastapi import HTTPException
+from fastapi.responses import Response
+from pydantic import BaseModel, Field
+
 from app import _main_core as _core
 from app._main_core import *
+from app.imaging.sessions import capture_session_service
 
 
 app = _core.app
@@ -13,6 +18,39 @@ class TrackingGotoPayload(_core.GotoPayload):
         "solar",
         "lunar",
     ] = "sidereal"
+
+
+class CaptureSessionPayload(BaseModel):
+    target_name: str = Field(min_length=1, max_length=120)
+    target_ra_hours: float = Field(ge=0, lt=24)
+    target_dec_deg: float = Field(ge=-90, le=90)
+    object_type: str = "unknown"
+    tracking_mode: Literal[
+        "sidereal",
+        "solar",
+        "lunar",
+    ] = "sidereal"
+    exposure_s: float = Field(default=4.0, gt=0, le=3600)
+    centering_tolerance_arcsec: float = Field(
+        default=30.0,
+        gt=0,
+        le=3600,
+    )
+    recenter_tolerance_arcsec: float = Field(
+        default=30.0,
+        gt=0,
+        le=3600,
+    )
+    astrometry_interval_frames: int = Field(
+        default=8,
+        ge=1,
+        le=1000,
+    )
+    registration_recenter_pixels: float = Field(
+        default=12.0,
+        gt=0,
+        le=1000,
+    )
 
 
 # Remplace uniquement la route historique /mount/goto.
@@ -127,6 +165,147 @@ def mount_goto(payload: TrackingGotoPayload):
     result["time_sync"] = time_sync
 
     return result
+
+
+@app.post("/capture/sessions")
+def create_capture_session(payload: CaptureSessionPayload):
+    return capture_session_service.create_session(
+        target_name=payload.target_name,
+        target_ra_hours=payload.target_ra_hours,
+        target_dec_deg=payload.target_dec_deg,
+        object_type=payload.object_type,
+        tracking_mode=payload.tracking_mode,
+        exposure_s=payload.exposure_s,
+        centering_tolerance_arcsec=(
+            payload.centering_tolerance_arcsec
+        ),
+        recenter_tolerance_arcsec=(
+            payload.recenter_tolerance_arcsec
+        ),
+        astrometry_interval_frames=(
+            payload.astrometry_interval_frames
+        ),
+        registration_recenter_pixels=(
+            payload.registration_recenter_pixels
+        ),
+    )
+
+
+@app.get("/capture/sessions")
+def capture_sessions():
+    return {
+        "sessions": capture_session_service.list_sessions(),
+    }
+
+
+def _capture_session_or_404(session_id: str) -> dict:
+    try:
+        return capture_session_service.get_session(session_id)
+    except KeyError as exc:
+        raise HTTPException(
+            status_code=404,
+            detail="Capture session not found",
+        ) from exc
+
+
+@app.get("/capture/sessions/{session_id}")
+def capture_session(session_id: str):
+    return _capture_session_or_404(session_id)
+
+
+@app.post("/capture/sessions/{session_id}/center")
+def capture_session_center(session_id: str):
+    _capture_session_or_404(session_id)
+    return capture_session_service.center_step(session_id)
+
+
+@app.post("/capture/sessions/{session_id}/stack/start")
+def capture_session_stack_start(session_id: str):
+    _capture_session_or_404(session_id)
+    return capture_session_service.start_stack(session_id)
+
+
+@app.post("/capture/sessions/{session_id}/stack/resume")
+def capture_session_stack_resume(session_id: str):
+    _capture_session_or_404(session_id)
+    return capture_session_service.resume_stack(session_id)
+
+
+@app.post("/capture/sessions/{session_id}/stack/stop")
+def capture_session_stack_stop(session_id: str):
+    _capture_session_or_404(session_id)
+    return capture_session_service.stop_stack(session_id)
+
+
+@app.post("/capture/sessions/{session_id}/finalize")
+def capture_session_finalize(session_id: str):
+    _capture_session_or_404(session_id)
+    return capture_session_service.finalize(session_id)
+
+
+@app.get("/capture/sessions/{session_id}/preview.jpg")
+def capture_session_preview(session_id: str):
+    _capture_session_or_404(session_id)
+    try:
+        content = capture_session_service.preview_bytes(
+            session_id,
+            stack=False,
+        )
+    except FileNotFoundError as exc:
+        raise HTTPException(
+            status_code=404,
+            detail="Capture preview not available",
+        ) from exc
+    return Response(
+        content=content,
+        media_type="image/jpeg",
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+@app.get("/capture/sessions/{session_id}/stack/preview.jpg")
+def capture_session_stack_preview(session_id: str):
+    _capture_session_or_404(session_id)
+    try:
+        content = capture_session_service.preview_bytes(
+            session_id,
+            stack=True,
+        )
+    except FileNotFoundError as exc:
+        raise HTTPException(
+            status_code=404,
+            detail="Stack preview not available",
+        ) from exc
+    return Response(
+        content=content,
+        media_type="image/jpeg",
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+@app.get("/galleries/sessions")
+def gallery_sessions():
+    return {
+        "sessions": capture_session_service.list_galleries(),
+    }
+
+
+@app.get("/galleries/sessions/{session_id}/preview.jpg")
+def gallery_session_preview(session_id: str):
+    try:
+        content = capture_session_service.gallery_preview_bytes(
+            session_id
+        )
+    except FileNotFoundError as exc:
+        raise HTTPException(
+            status_code=404,
+            detail="Gallery preview not available",
+        ) from exc
+    return Response(
+        content=content,
+        media_type="image/jpeg",
+        headers={"Cache-Control": "no-store"},
+    )
 
 
 def __getattr__(name: str):
