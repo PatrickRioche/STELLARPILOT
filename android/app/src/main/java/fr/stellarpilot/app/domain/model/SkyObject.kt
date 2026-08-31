@@ -17,7 +17,10 @@ data class SkyObject(
     val aliasesFr: String?,
     val altitudeDeg: Double,
     val azimuthDeg: Double,
-    val azimuthDirection: String
+    val azimuthDirection: String,
+    val aboveHorizon: Boolean = true,
+    val solarWarning: Boolean = false,
+    val symbol: String? = null
 )
 
 data class SkyObjectsResult(

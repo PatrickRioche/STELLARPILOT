@@ -4,6 +4,7 @@ import sqlite3
 from pathlib import Path
 
 from app.sky.service import sky_service
+from app.sky.solar_system import solar_system_service
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -35,6 +36,7 @@ CATEGORY_TYPES = {
 
 CATEGORY_LABELS_FR = {
     "all": "Tous",
+    "solar_system": "Système solaire",
     "star": "Étoiles",
     "galaxy": "Galaxies",
     "nebula": "Nébuleuses",
@@ -84,10 +86,7 @@ class SkyObjectsService:
             else "all"
         )
 
-        if category not in {
-            "all",
-            *CATEGORY_TYPES.keys(),
-        }:
+        if category not in CATEGORY_LABELS_FR:
             raise ValueError(
                 f"Unknown category: {category}"
             )
@@ -159,6 +158,20 @@ class SkyObjectsService:
 
         dt = sky_service._parse_datetime(at)
 
+        if category == "solar_system":
+            return solar_system_service.objects(
+                latitude=latitude,
+                longitude=longitude,
+                at=dt.isoformat(),
+                query=query,
+                direction=normalized_direction,
+                sort=normalized_sort,
+                order=normalized_order,
+                offset=offset,
+                limit=limit,
+                location_source=location_source,
+            )
+
         sql = """
             SELECT
                 id,
@@ -166,27 +179,19 @@ class SkyObjectsService:
                 messier,
                 ngc,
                 ic,
-
                 object_type,
                 object_type_label_fr,
-
                 constellation_code,
                 constellation_fr,
-
                 ra_hours,
                 dec_deg,
-
                 magnitude,
                 magnitude_band,
-
                 major_axis_arcmin,
                 minor_axis_arcmin,
-
                 common_name_fr,
                 aliases_fr
-
             FROM objects
-
             WHERE
                 ra_hours IS NOT NULL
                 AND dec_deg IS NOT NULL
@@ -195,19 +200,15 @@ class SkyObjectsService:
         parameters = []
 
         if category != "all":
-
             types = CATEGORY_TYPES[category]
-
             placeholders = ",".join(
                 "?"
                 for _ in types
             )
-
             sql += (
                 f" AND object_type "
                 f"IN ({placeholders})"
             )
-
             parameters.extend(types)
 
         normalized_query = (
@@ -217,17 +218,14 @@ class SkyObjectsService:
         )
 
         if normalized_query:
-
             sql += """
                 AND search_text LIKE ?
             """
-
             parameters.append(
                 f"%{normalized_query}%"
             )
 
         with self._connect() as connection:
-
             rows = connection.execute(
                 sql,
                 parameters,
@@ -236,24 +234,19 @@ class SkyObjectsService:
         visible = []
 
         for row in rows:
-
             if normalized_constellation:
-
                 row_constellation = (
                     row["constellation_fr"]
                     or ""
                 )
-
                 if (
-                    row_constellation
-                    .casefold()
+                    row_constellation.casefold()
                     != normalized_constellation
                 ):
                     continue
 
             altitude_deg, azimuth_deg = (
-                sky_service
-                ._equatorial_to_horizontal(
+                sky_service._equatorial_to_horizontal(
                     ra_hours=row["ra_hours"],
                     dec_deg=row["dec_deg"],
                     latitude_deg=latitude,
@@ -266,8 +259,7 @@ class SkyObjectsService:
                 continue
 
             azimuth_direction = (
-                sky_service
-                ._azimuth_direction(
+                sky_service._azimuth_direction(
                     azimuth_deg
                 )
             )
@@ -295,72 +287,47 @@ class SkyObjectsService:
             visible.append(
                 {
                     "id": row["id"],
-
                     "name": display_name,
-
-                    "catalog_name":
-                        row["name"],
-
-                    "reference":
-                        catalog_reference,
-
-                    "messier":
-                        row["messier"],
-
-                    "ngc":
-                        row["ngc"],
-
-                    "ic":
-                        row["ic"],
-
-                    "object_type":
-                        row["object_type"],
-
-                    "object_type_label_fr":
-                        row[
-                            "object_type_label_fr"
-                        ],
-
-                    "constellation":
-                        row["constellation_fr"],
-
-                    "ra_hours":
-                        row["ra_hours"],
-
-                    "dec_deg":
-                        row["dec_deg"],
-
-                    "magnitude":
-                        row["magnitude"],
-
-                    "magnitude_band":
-                        row["magnitude_band"],
-
-                    "major_axis_arcmin":
-                        row["major_axis_arcmin"],
-
-                    "minor_axis_arcmin":
-                        row["minor_axis_arcmin"],
-
-                    "aliases_fr":
-                        row["aliases_fr"],
-
-                    "altitude_deg":
-                        round(
-                            altitude_deg,
-                            2,
-                        ),
-
-                    "azimuth_deg":
-                        round(
-                            azimuth_deg,
-                            2,
-                        ),
-
+                    "catalog_name": row["name"],
+                    "reference": catalog_reference,
+                    "messier": row["messier"],
+                    "ngc": row["ngc"],
+                    "ic": row["ic"],
+                    "object_type": row[
+                        "object_type"
+                    ],
+                    "object_type_label_fr": row[
+                        "object_type_label_fr"
+                    ],
+                    "constellation": row[
+                        "constellation_fr"
+                    ],
+                    "ra_hours": row["ra_hours"],
+                    "dec_deg": row["dec_deg"],
+                    "magnitude": row["magnitude"],
+                    "magnitude_band": row[
+                        "magnitude_band"
+                    ],
+                    "major_axis_arcmin": row[
+                        "major_axis_arcmin"
+                    ],
+                    "minor_axis_arcmin": row[
+                        "minor_axis_arcmin"
+                    ],
+                    "aliases_fr": row["aliases_fr"],
+                    "altitude_deg": round(
+                        altitude_deg,
+                        2,
+                    ),
+                    "azimuth_deg": round(
+                        azimuth_deg,
+                        2,
+                    ),
                     "azimuth_direction":
                         azimuth_direction,
-
                     "visible": True,
+                    "above_horizon": True,
+                    "solar_warning": False,
                 }
             )
 
@@ -428,61 +395,31 @@ class SkyObjectsService:
 
         return {
             "status": "ok",
-
             "observer": {
                 "latitude": latitude,
                 "longitude": longitude,
-                "timestamp_utc":
-                    dt.isoformat(),
+                "timestamp_utc": dt.isoformat(),
                 "location_source":
                     location_source,
             },
-
             "category": category,
-
             "category_label_fr":
-                CATEGORY_LABELS_FR[
-                    category
-                ],
-
+                CATEGORY_LABELS_FR[category],
             "query": query,
-
-            "min_altitude_deg":
-                min_altitude,
-
-            "direction":
-                normalized_direction,
-
-            "constellation":
-                constellation,
-
-            "visible_count":
-                len(visible),
-
-            "returned_count":
-                len(returned),
-
-            "limit":
-                limit,
-
-            "offset":
-                offset,
-
-            "sort":
-                normalized_sort,
-
-            "order":
-                normalized_order,
-
-            "has_previous":
-                offset > 0,
-
-            "has_next":
-                (
-                    offset + len(returned)
-                    < len(visible)
-                ),
-
+            "min_altitude_deg": min_altitude,
+            "direction": normalized_direction,
+            "constellation": constellation,
+            "visible_count": len(visible),
+            "returned_count": len(returned),
+            "limit": limit,
+            "offset": offset,
+            "sort": normalized_sort,
+            "order": normalized_order,
+            "has_previous": offset > 0,
+            "has_next": (
+                offset + len(returned)
+                < len(visible)
+            ),
             "categories": [
                 {
                     "id": key,
@@ -491,7 +428,6 @@ class SkyObjectsService:
                 for key, label
                 in CATEGORY_LABELS_FR.items()
             ],
-
             "objects": returned,
         }
 
