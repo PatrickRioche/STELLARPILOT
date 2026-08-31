@@ -14,6 +14,8 @@ _TRACKING_MODE_ELEMENTS = {
 class IndiService(_CoreIndiService):
     """Facade INDI ajoutant le choix portable du mode de suivi."""
 
+    _mount_cache_ttl_s = 5.0
+
     @staticmethod
     def tracking_mode_element(
         tracking_mode: str | None,
@@ -33,6 +35,42 @@ class IndiService(_CoreIndiService):
 
         return normalized, element
 
+    def _find_connected_mount(self) -> str | None:
+        """
+        Evite plusieurs lectures INDI identiques pendant un meme GOTO.
+
+        sync_mount_time(), set_tracking_mode() puis le GOTO sont executes
+        a quelques secondes d'intervalle. La lecture CONNECTION est donc
+        reutilisee sur une courte fenetre afin de ne pas cumuler les
+        timeouts de indi_getprop avant le demarrage du mouvement.
+        """
+        now = time.monotonic()
+        cached_name = getattr(
+            self,
+            "_cached_mount_name",
+            None,
+        )
+        cached_at = getattr(
+            self,
+            "_cached_mount_at",
+            0.0,
+        )
+
+        if (
+            cached_name is not None
+            and now - cached_at
+            <= self._mount_cache_ttl_s
+        ):
+            return cached_name
+
+        mount_name = super()._find_connected_mount()
+
+        if mount_name is not None:
+            self._cached_mount_name = mount_name
+            self._cached_mount_at = now
+
+        return mount_name
+
     @staticmethod
     def _tracking_mode_output(
         mount_name: str,
@@ -45,24 +83,28 @@ class IndiService(_CoreIndiService):
                 "-p",
                 "7624",
                 "-t",
-                "2",
+                "1",
                 f"{mount_name}.TELESCOPE_TRACK_MODE.*",
             ],
             capture_output=True,
             text=True,
-            timeout=4,
+            timeout=3,
             check=False,
         )
 
-        if result.returncode != 0:
+        output = result.stdout.strip()
+
+        # Selon la version des outils INDI, indi_getprop peut terminer
+        # avec un code non nul apres son delai tout en ayant deja renvoye
+        # la propriete demandee. Le contenu recu reste alors exploitable.
+        if not output:
             detail = (
                 result.stderr.strip()
-                or result.stdout.strip()
                 or "TELESCOPE_TRACK_MODE indisponible"
             )
             raise RuntimeError(detail)
 
-        return result.stdout
+        return output
 
     def set_tracking_mode(
         self,
@@ -70,8 +112,11 @@ class IndiService(_CoreIndiService):
         tracking_mode: str,
     ) -> str:
         """
-        Selectionne un mode via la propriete standard INDI
+        Selectionne le mode via la propriete standard INDI
         TELESCOPE_TRACK_MODE, puis confirme le readback.
+
+        indi_setprop ne possede pas d'option -s : la commande doit suivre
+        directement la syntaxe standard device.property.element=value.
         """
         normalized, element = self.tracking_mode_element(
             tracking_mode
@@ -82,43 +127,44 @@ class IndiService(_CoreIndiService):
             f"TELESCOPE_TRACK_MODE.{element}"
         )
 
-        available = self._tracking_mode_output(
-            mount_name
-        )
-
-        if f"{property_name}=" not in available:
-            raise RuntimeError(
-                "La monture INDI ne supporte pas le mode "
-                f"de suivi {normalized}"
+        try:
+            result = subprocess.run(
+                [
+                    "indi_setprop",
+                    "-h",
+                    "127.0.0.1",
+                    "-p",
+                    "7624",
+                    "-t",
+                    "2",
+                    f"{property_name}=On",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=4,
+                check=False,
             )
-
-        result = subprocess.run(
-            [
-                "indi_setprop",
-                "-h",
-                "127.0.0.1",
-                "-p",
-                "7624",
-                "-t",
-                "5",
-                "-s",
-                f"{property_name}=On",
-            ],
-            capture_output=True,
-            text=True,
-            timeout=7,
-            check=False,
-        )
+        except (
+            OSError,
+            subprocess.SubprocessError,
+        ) as exc:
+            raise RuntimeError(str(exc)) from exc
 
         if result.returncode != 0:
             detail = (
                 result.stderr.strip()
                 or result.stdout.strip()
-                or "Erreur INDI inconnue"
+                or (
+                    "La monture INDI ne supporte pas le mode "
+                    f"de suivi {normalized}"
+                )
             )
             raise RuntimeError(detail)
 
-        for _ in range(3):
+        # Le driver peut mettre quelques dizaines de millisecondes a
+        # publier le nouvel etat. Deux lectures courtes suffisent tout en
+        # evitant de bloquer /mount/goto pendant plusieurs secondes.
+        for _ in range(2):
             readback = self._tracking_mode_output(
                 mount_name
             )
