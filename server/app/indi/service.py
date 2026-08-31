@@ -1,3 +1,4 @@
+import shutil
 import subprocess
 import time
 from pathlib import Path
@@ -193,6 +194,7 @@ class IndiService(_CoreIndiService):
         INDI capture directory. Capture sessions immediately relocate the
         completed FITS below ``stellarpilot-server/tmp`` so processing data
         survives independently from the operating-system /tmp policy.
+        ``shutil.move`` deliberately supports /tmp being a separate tmpfs.
         """
         result = super().capture(exposure_s)
 
@@ -216,7 +218,7 @@ class IndiService(_CoreIndiService):
         destination = destination_dir / destination_name
 
         try:
-            source.replace(destination)
+            shutil.move(str(source), str(destination))
         except OSError as exc:
             return {
                 **result,
