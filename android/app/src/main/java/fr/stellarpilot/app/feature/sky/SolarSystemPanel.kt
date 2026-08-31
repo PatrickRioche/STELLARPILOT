@@ -45,48 +45,29 @@ import fr.stellarpilot.app.ui.theme.StellarSurfaceRaised
 import fr.stellarpilot.app.ui.theme.StellarText
 import java.util.Locale
 
-
 @Composable
 fun SolarSystemPanel(
     serverBaseUrl: String,
     observerKey: String,
     viewModel: SkyTargetViewModel =
-        viewModel(
-            key = "solar-system-targets"
-        )
+        viewModel(key = "solar-system-targets")
 ) {
     val state = viewModel.uiState
     val context = LocalContext.current
 
-    val observerParts =
-        observerKey.split(
-            ":",
-            limit = 2
-        )
-
-    val observerLatitude =
-        observerParts
-            .getOrNull(0)
-            ?.toDoubleOrNull()
-
-    val observerLongitude =
-        observerParts
-            .getOrNull(1)
-            ?.toDoubleOrNull()
+    val observerParts = observerKey.split(":", limit = 2)
+    val observerLatitude = observerParts.getOrNull(0)?.toDoubleOrNull()
+    val observerLongitude = observerParts.getOrNull(1)?.toDoubleOrNull()
 
     var pendingSolarTarget by remember {
         mutableStateOf<SkyObject?>(null)
     }
-
     var gotoTargetId by rememberSaveable {
         mutableStateOf<Int?>(null)
     }
 
     fun loadTargets() {
-        if (
-            observerLatitude != null &&
-            observerLongitude != null
-        ) {
+        if (observerLatitude != null && observerLongitude != null) {
             viewModel.load(
                 serverBaseUrl = serverBaseUrl,
                 category = "solar_system",
@@ -106,30 +87,15 @@ fun SolarSystemPanel(
         viewModel.select(target)
 
         context
-            .getSharedPreferences(
-                "stellarpilot_target",
-                0
-            )
+            .getSharedPreferences("stellarpilot_target", 0)
             .edit()
             .putInt("id", target.id)
             .putString("name", target.name)
             .putString("reference", target.reference)
-            .putString(
-                "object_type",
-                target.objectType
-            )
-            .putString(
-                "constellation",
-                target.constellation
-            )
-            .putString(
-                "ra_hours",
-                target.raHours.toString()
-            )
-            .putString(
-                "dec_deg",
-                target.decDeg.toString()
-            )
+            .putString("object_type", target.objectType)
+            .putString("constellation", target.constellation)
+            .putString("ra_hours", target.raHours.toString())
+            .putString("dec_deg", target.decDeg.toString())
             .apply()
     }
 
@@ -145,10 +111,7 @@ fun SolarSystemPanel(
         }
     }
 
-    LaunchedEffect(
-        serverBaseUrl,
-        observerKey
-    ) {
+    LaunchedEffect(serverBaseUrl, observerKey) {
         loadTargets()
     }
 
@@ -162,8 +125,7 @@ fun SolarSystemPanel(
             textContentColor = StellarText,
             title = {
                 Text(
-                    text =
-                        "⚠ DANGER — OBSERVATION SOLAIRE",
+                    text = "⚠ DANGER — OBSERVATION SOLAIRE",
                     fontWeight = FontWeight.Bold
                 )
             },
@@ -188,20 +150,17 @@ fun SolarSystemPanel(
                         gotoTargetId = target.id
                         pendingSolarTarget = null
                         viewModel.gotoTarget(
-                            serverBaseUrl =
-                                serverBaseUrl,
+                            serverBaseUrl = serverBaseUrl,
                             target = target
                         )
                     },
-                    colors =
-                        ButtonDefaults.buttonColors(
-                            containerColor = StellarRed,
-                            contentColor = StellarBackground
-                        )
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = StellarRed,
+                        contentColor = StellarBackground
+                    )
                 ) {
                     Text(
-                        text =
-                            "JE CONFIRME — GOTO SOLEIL",
+                        text = "JE CONFIRME — GOTO SOLEIL",
                         fontWeight = FontWeight.Bold
                     )
                 }
@@ -212,34 +171,24 @@ fun SolarSystemPanel(
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(18.dp),
-        colors =
-            CardDefaults.cardColors(
-                containerColor =
-                    StellarSurfaceRaised
-            ),
-        border =
-            BorderStroke(
-                1.dp,
-                StellarBorder
-            )
+        colors = CardDefaults.cardColors(
+            containerColor = StellarSurfaceRaised
+        ),
+        border = BorderStroke(1.dp, StellarBorder)
     ) {
         Column(
-            modifier =
-                Modifier
-                    .fillMaxWidth()
-                    .padding(16.dp)
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp)
         ) {
             Text(
                 text = "SYSTÈME SOLAIRE",
                 color = StellarOrange,
-                style =
-                    MaterialTheme.typography.labelLarge,
+                style = MaterialTheme.typography.labelLarge,
                 fontWeight = FontWeight.Bold
             )
 
-            Spacer(
-                Modifier.height(6.dp)
-            )
+            Spacer(Modifier.height(6.dp))
 
             Text(
                 text =
@@ -248,32 +197,20 @@ fun SolarSystemPanel(
             )
 
             state.selected?.let { selectedTarget ->
-                Spacer(
-                    Modifier.height(16.dp)
-                )
+                Spacer(Modifier.height(16.dp))
 
                 SelectedSolarSystemTargetCard(
                     target = selectedTarget,
-                    isGotoLoading =
-                        state.isGotoLoading,
+                    state = state,
                     showGotoStatus =
-                        gotoTargetId ==
-                            selectedTarget.id,
-                    gotoMessage =
-                        state.gotoMessage,
-                    gotoError =
-                        state.gotoError,
-                    gotoProgress =
-                        state.gotoProgress,
+                        gotoTargetId == selectedTarget.id,
                     onGoto = {
                         gotoTarget(selectedTarget)
                     }
                 )
             }
 
-            Spacer(
-                Modifier.height(14.dp)
-            )
+            Spacer(Modifier.height(14.dp))
 
             OutlinedButton(
                 onClick = {
@@ -283,87 +220,64 @@ fun SolarSystemPanel(
                     !state.isLoading &&
                         observerLatitude != null &&
                         observerLongitude != null,
-                modifier =
-                    Modifier.fillMaxWidth()
+                modifier = Modifier.fillMaxWidth()
             ) {
                 Text("Actualiser les positions")
             }
 
-            Spacer(
-                Modifier.height(16.dp)
-            )
+            Spacer(Modifier.height(16.dp))
 
             when {
-                observerLatitude == null ||
-                    observerLongitude == null -> {
+                observerLatitude == null || observerLongitude == null -> {
                     Text(
-                        text =
-                            "Position observateur indisponible.",
+                        text = "Position observateur indisponible.",
                         color = StellarRed
                     )
                 }
 
-                state.isLoading &&
-                    state.result == null -> {
+                state.isLoading && state.result == null -> {
                     CircularProgressIndicator(
                         color = StellarOrange,
-                        modifier =
-                            Modifier.size(30.dp)
+                        modifier = Modifier.size(30.dp)
                     )
 
-                    Spacer(
-                        Modifier.height(8.dp)
-                    )
+                    Spacer(Modifier.height(8.dp))
 
                     Text(
-                        text =
-                            "Calcul des éphémérides...",
+                        text = "Calcul des éphémérides...",
                         color = StellarMuted
                     )
                 }
 
-                state.error != null &&
-                    state.result == null -> {
+                state.error != null && state.result == null -> {
                     Text(
-                        text =
-                            state.error
-                                ?: "Erreur éphémérides",
+                        text = state.error ?: "Erreur éphémérides",
                         color = StellarRed
                     )
                 }
 
                 else -> {
-                    val result = state.result
-
-                    if (result != null) {
+                    state.result?.let { result ->
                         Text(
                             text =
                                 "${result.visibleCount} au-dessus de l'horizon • ${result.returnedCount} corps calculés",
                             color = StellarMuted,
-                            style =
-                                MaterialTheme.typography.bodySmall
+                            style = MaterialTheme.typography.bodySmall
                         )
 
-                        Spacer(
-                            Modifier.height(12.dp)
-                        )
+                        Spacer(Modifier.height(12.dp))
 
-                        result.objects
-                            .forEach { target ->
-                                SolarSystemTargetCard(
-                                    target = target,
-                                    selected =
-                                        state.selected?.id ==
-                                            target.id,
-                                    onSelect = {
-                                        selectTarget(target)
-                                    }
-                                )
+                        result.objects.forEach { target ->
+                            SolarSystemTargetCard(
+                                target = target,
+                                selected = state.selected?.id == target.id,
+                                onSelect = {
+                                    selectTarget(target)
+                                }
+                            )
 
-                                Spacer(
-                                    Modifier.height(10.dp)
-                                )
-                            }
+                            Spacer(Modifier.height(10.dp))
+                        }
                     }
                 }
             }
@@ -371,34 +285,24 @@ fun SolarSystemPanel(
     }
 }
 
-
 @Composable
 private fun SelectedSolarSystemTargetCard(
     target: SkyObject,
-    isGotoLoading: Boolean,
+    state: SkyTargetUiState,
     showGotoStatus: Boolean,
-    gotoMessage: String?,
-    gotoError: String?,
-    gotoProgress: Double?,
     onGoto: () -> Unit
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
-        colors =
-            CardDefaults.cardColors(
-                containerColor = StellarBackground
-            ),
-        border =
-            BorderStroke(
-                1.dp,
-                StellarGreen
-            )
+        colors = CardDefaults.cardColors(
+            containerColor = StellarBackground
+        ),
+        border = BorderStroke(1.dp, StellarGreen)
     ) {
         Column(
-            modifier =
-                Modifier
-                    .fillMaxWidth()
-                    .padding(14.dp)
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(14.dp)
         ) {
             Text(
                 text = "CIBLE SÉLECTIONNÉE",
@@ -406,31 +310,22 @@ private fun SelectedSolarSystemTargetCard(
                 fontWeight = FontWeight.Bold
             )
 
-            Spacer(
-                Modifier.height(8.dp)
-            )
+            Spacer(Modifier.height(8.dp))
 
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement =
-                    Arrangement.SpaceBetween
+                horizontalArrangement = Arrangement.SpaceBetween
             ) {
                 Row(
-                    horizontalArrangement =
-                        Arrangement.spacedBy(10.dp),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
                     modifier = Modifier.weight(1f)
                 ) {
                     Text(
-                        text =
-                            target.symbol ?: "●",
+                        text = target.symbol ?: "●",
                         color =
-                            if (target.solarWarning) {
-                                StellarRed
-                            } else {
-                                StellarOrange
-                            },
-                        style =
-                            MaterialTheme.typography.headlineSmall,
+                            if (target.solarWarning) StellarRed
+                            else StellarOrange,
+                        style = MaterialTheme.typography.headlineSmall,
                         fontWeight = FontWeight.Bold
                     )
 
@@ -438,14 +333,12 @@ private fun SelectedSolarSystemTargetCard(
                         Text(
                             text = target.name,
                             color = StellarText,
-                            style =
-                                MaterialTheme.typography.titleLarge,
+                            style = MaterialTheme.typography.titleLarge,
                             fontWeight = FontWeight.Bold
                         )
 
                         Text(
-                            text =
-                                target.objectTypeLabelFr,
+                            text = target.objectTypeLabelFr,
                             color = StellarMuted
                         )
                     }
@@ -453,74 +346,56 @@ private fun SelectedSolarSystemTargetCard(
 
                 Text(
                     text =
-                        if (target.aboveHorizon) {
-                            "VISIBLE"
-                        } else {
-                            "SOUS HORIZON"
-                        },
+                        if (target.aboveHorizon) "VISIBLE"
+                        else "SOUS HORIZON",
                     color =
-                        if (target.aboveHorizon) {
-                            StellarGreen
-                        } else {
-                            StellarMuted
-                        },
-                    style =
-                        MaterialTheme.typography.labelSmall,
+                        if (target.aboveHorizon) StellarGreen
+                        else StellarMuted,
+                    style = MaterialTheme.typography.labelSmall,
                     fontWeight = FontWeight.Bold
                 )
             }
 
-            Spacer(
-                Modifier.height(8.dp)
-            )
+            Spacer(Modifier.height(8.dp))
 
             Text(
                 text =
-                    "AD ${formatSolarNumber(target.raHours, 4)} h • Dec ${formatSolarSigned(target.decDeg)}°",
+                    "AD ${formatSolarNumber(target.raHours, 4)} h • Dec ${formatSolarSigned(target.decDeg, 4)}°",
                 color = StellarMuted
             )
 
             Text(
                 text =
-                    "Alt ${formatSolarSigned(target.altitudeDeg)}° • Az ${formatSolarNumber(target.azimuthDeg, 1)}° ${target.azimuthDirection}",
+                    "Alt. ${formatSolarNumber(target.altitudeDeg, 1)}° • Az. ${formatSolarNumber(target.azimuthDeg, 1)}° ${target.azimuthDirection}",
                 color = StellarMuted
             )
 
             if (target.solarWarning) {
-                Spacer(
-                    Modifier.height(8.dp)
-                )
+                Spacer(Modifier.height(8.dp))
 
                 Text(
                     text =
                         "Filtre solaire adapté obligatoire avant tout pointage.",
                     color = StellarRed,
                     fontWeight = FontWeight.Bold,
-                    style =
-                        MaterialTheme.typography.bodySmall
+                    style = MaterialTheme.typography.bodySmall
                 )
             }
 
-            Spacer(
-                Modifier.height(14.dp)
-            )
+            Spacer(Modifier.height(14.dp))
 
             Button(
                 onClick = onGoto,
                 enabled =
                     target.aboveHorizon &&
-                        !isGotoLoading,
-                modifier =
-                    Modifier.fillMaxWidth(),
-                colors =
-                    ButtonDefaults.buttonColors(
-                        containerColor = StellarOrange,
-                        contentColor = StellarBackground,
-                        disabledContainerColor =
-                            StellarSurfaceRaised,
-                        disabledContentColor =
-                            StellarMuted
-                    )
+                        !state.isGotoLoading,
+                modifier = Modifier.fillMaxWidth(),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = StellarOrange,
+                    contentColor = StellarBackground,
+                    disabledContainerColor = StellarSurfaceRaised,
+                    disabledContentColor = StellarMuted
+                )
             ) {
                 Text(
                     text =
@@ -528,8 +403,7 @@ private fun SelectedSolarSystemTargetCard(
                             !target.aboveHorizon ->
                                 "Pointage indisponible — sous l'horizon"
 
-                            isGotoLoading &&
-                                showGotoStatus ->
+                            state.isGotoLoading && showGotoStatus ->
                                 "Pointage en cours..."
 
                             else ->
@@ -540,42 +414,78 @@ private fun SelectedSolarSystemTargetCard(
             }
 
             if (showGotoStatus) {
-                gotoMessage?.let { message ->
-                    Spacer(
-                        Modifier.height(8.dp)
-                    )
-
+                state.gotoMessage?.let { message ->
+                    Spacer(Modifier.height(8.dp))
                     Text(
                         text = message,
                         color = StellarGreen
                     )
                 }
 
-                gotoError?.let { message ->
-                    Spacer(
-                        Modifier.height(8.dp)
-                    )
-
+                state.gotoError?.let { message ->
+                    Spacer(Modifier.height(8.dp))
                     Text(
                         text = message,
-                        color = StellarRed
+                        color = StellarOrange
                     )
                 }
 
-                gotoProgress?.let { progress ->
-                    Text(
-                        text =
-                            "Progression ${formatSolarNumber(progress * 100.0, 0)} %",
-                        color = StellarMuted,
-                        style =
-                            MaterialTheme.typography.bodySmall
-                    )
+                state.gotoStatus?.let { gotoStatus ->
+                    Spacer(Modifier.height(10.dp))
+
+                    if (state.gotoVirtualPosition) {
+                        Text(
+                            text = "Position virtuelle OnStep",
+                            color = StellarMuted,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+
+                    if (
+                        state.gotoCurrentRa != null &&
+                        state.gotoCurrentDec != null
+                    ) {
+                        Text(
+                            text =
+                                "AD actuelle ${formatSolarNumber(state.gotoCurrentRa, 4)} h • Dec ${formatSolarSigned(state.gotoCurrentDec, 4)}°",
+                            color = StellarMuted
+                        )
+                    }
+
+                    if (
+                        state.gotoTargetRa != null &&
+                        state.gotoTargetDec != null
+                    ) {
+                        Text(
+                            text =
+                                "AD cible ${formatSolarNumber(state.gotoTargetRa, 4)} h • Dec ${formatSolarSigned(state.gotoTargetDec, 4)}°",
+                            color = StellarMuted
+                        )
+                    }
+
+                    state.gotoProgress?.let { progress ->
+                        Text(
+                            text =
+                                "Progression ${formatSolarNumber(progress * 100.0, 0)} % • ${gotoStatus.uppercase(Locale.ROOT)}",
+                            color =
+                                if (progress >= 1.0) StellarGreen
+                                else StellarOrange,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+
+                    state.gotoIndiState?.let { indiState ->
+                        Text(
+                            text = "INDI : $indiState",
+                            color = StellarMuted,
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
                 }
             }
         }
     }
 }
-
 
 @Composable
 private fun SolarSystemTargetCard(
@@ -584,59 +494,40 @@ private fun SolarSystemTargetCard(
     onSelect: () -> Unit
 ) {
     val cardAlpha =
-        if (target.aboveHorizon) {
-            1f
-        } else {
-            0.5f
-        }
+        if (target.aboveHorizon) 1f else 0.5f
 
     Card(
-        modifier =
-            Modifier
-                .fillMaxWidth()
-                .alpha(cardAlpha),
+        modifier = Modifier
+            .fillMaxWidth()
+            .alpha(cardAlpha),
         shape = RoundedCornerShape(14.dp),
-        colors =
-            CardDefaults.cardColors(
-                containerColor = StellarBackground
-            ),
-        border =
-            BorderStroke(
-                1.dp,
-                if (selected) {
-                    StellarOrange
-                } else {
-                    StellarBorder
-                }
-            )
+        colors = CardDefaults.cardColors(
+            containerColor = StellarBackground
+        ),
+        border = BorderStroke(
+            1.dp,
+            if (selected) StellarOrange else StellarBorder
+        )
     ) {
         Column(
-            modifier =
-                Modifier
-                    .fillMaxWidth()
-                    .padding(14.dp)
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(14.dp)
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement =
-                    Arrangement.SpaceBetween
+                horizontalArrangement = Arrangement.SpaceBetween
             ) {
                 Row(
-                    horizontalArrangement =
-                        Arrangement.spacedBy(10.dp),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
                     modifier = Modifier.weight(1f)
                 ) {
                     Text(
-                        text =
-                            target.symbol ?: "●",
+                        text = target.symbol ?: "●",
                         color =
-                            if (target.solarWarning) {
-                                StellarRed
-                            } else {
-                                StellarOrange
-                            },
-                        style =
-                            MaterialTheme.typography.headlineSmall,
+                            if (target.solarWarning) StellarRed
+                            else StellarOrange,
+                        style = MaterialTheme.typography.headlineSmall,
                         fontWeight = FontWeight.Bold
                     )
 
@@ -644,90 +535,69 @@ private fun SolarSystemTargetCard(
                         Text(
                             text = target.name,
                             color = StellarText,
-                            style =
-                                MaterialTheme.typography.titleMedium,
+                            style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.Bold
                         )
 
                         Text(
-                            text =
-                                target.objectTypeLabelFr,
+                            text = target.objectTypeLabelFr,
                             color = StellarMuted,
-                            style =
-                                MaterialTheme.typography.bodySmall
+                            style = MaterialTheme.typography.bodySmall
                         )
                     }
                 }
 
                 Text(
                     text =
-                        if (target.aboveHorizon) {
-                            "VISIBLE"
-                        } else {
-                            "SOUS HORIZON"
-                        },
+                        if (target.aboveHorizon) "VISIBLE"
+                        else "SOUS HORIZON",
                     color =
-                        if (target.aboveHorizon) {
-                            StellarGreen
-                        } else {
-                            StellarMuted
-                        },
-                    style =
-                        MaterialTheme.typography.labelSmall,
+                        if (target.aboveHorizon) StellarGreen
+                        else StellarMuted,
+                    style = MaterialTheme.typography.labelSmall,
                     fontWeight = FontWeight.Bold
                 )
             }
 
-            Spacer(
-                Modifier.height(10.dp)
-            )
+            Spacer(Modifier.height(10.dp))
 
             Text(
                 text =
-                    "AD ${formatSolarNumber(target.raHours, 4)} h • Dec ${formatSolarSigned(target.decDeg)}°",
+                    "AD ${formatSolarNumber(target.raHours, 4)} h • Dec ${formatSolarSigned(target.decDeg, 4)}°",
                 color = StellarMuted
             )
 
             Text(
                 text =
-                    "Alt ${formatSolarSigned(target.altitudeDeg)}° • Az ${formatSolarNumber(target.azimuthDeg, 1)}° ${target.azimuthDirection}",
+                    "Alt. ${formatSolarNumber(target.altitudeDeg, 1)}° • Az. ${formatSolarNumber(target.azimuthDeg, 1)}° ${target.azimuthDirection}",
                 color = StellarMuted
             )
 
             if (target.solarWarning) {
-                Spacer(
-                    Modifier.height(8.dp)
-                )
+                Spacer(Modifier.height(8.dp))
 
                 Text(
                     text =
                         "Filtre solaire adapté obligatoire avant tout pointage.",
                     color = StellarRed,
                     fontWeight = FontWeight.Bold,
-                    style =
-                        MaterialTheme.typography.bodySmall
+                    style = MaterialTheme.typography.bodySmall
                 )
             }
 
-            Spacer(
-                Modifier.height(12.dp)
-            )
+            Spacer(Modifier.height(12.dp))
 
             if (selected) {
                 Button(
                     onClick = onSelect,
                     enabled = target.aboveHorizon,
-                    modifier =
-                        Modifier.fillMaxWidth(),
-                    colors =
-                        ButtonDefaults.buttonColors(
-                            containerColor = StellarOrange,
-                            contentColor = StellarBackground,
-                            disabledContainerColor =
-                                StellarSurfaceRaised,
-                            disabledContentColor =
-                                StellarMuted
-                        )
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = StellarOrange,
+                        contentColor = StellarBackground,
+                        disabledContainerColor = StellarSurfaceRaised,
+                        disabledContentColor = StellarMuted
+                    )
                 ) {
                     Text(
                         text = "Cible sélectionnée",
@@ -738,8 +608,7 @@ private fun SolarSystemTargetCard(
                 OutlinedButton(
                     onClick = onSelect,
                     enabled = target.aboveHorizon,
-                    modifier =
-                        Modifier.fillMaxWidth()
+                    modifier = Modifier.fillMaxWidth()
                 ) {
                     Text(
                         text =
@@ -755,7 +624,6 @@ private fun SolarSystemTargetCard(
     }
 }
 
-
 private fun formatSolarNumber(
     value: Double,
     decimals: Int
@@ -766,12 +634,12 @@ private fun formatSolarNumber(
         value
     )
 
-
 private fun formatSolarSigned(
-    value: Double
+    value: Double,
+    decimals: Int
 ): String =
     String.format(
         Locale.FRANCE,
-        "%+.1f",
+        "%+.${decimals}f",
         value
     )
