@@ -10,6 +10,9 @@ from app.imaging.centering_capture import (
     capture_centering_frame,
     solve_centering_frame,
 )
+from app.imaging.preparation_astrometry import (
+    preparation_astrometry_archive,
+)
 from app.imaging.sessions import capture_session_service
 
 
@@ -57,19 +60,91 @@ class CaptureSessionPayload(BaseModel):
     )
 
 
-# Remplace uniquement la route historique /mount/goto.
-# Toutes les autres routes restent definies dans _main_core.
+# Replace the routes that need behavior layered on top of _main_core.
+_OVERRIDDEN_ROUTES = {
+    ("/mount/goto", "POST"),
+    ("/camera/capture", "POST"),
+    ("/camera/preview.jpg", "GET"),
+    ("/solve", "POST"),
+}
+
 app.router.routes[:] = [
     route
     for route in app.router.routes
-    if not (
-        getattr(route, "path", None) == "/mount/goto"
-        and "POST" in (
-            getattr(route, "methods", set())
-            or set()
-        )
+    if not any(
+        getattr(route, "path", None) == path
+        and method
+        in (getattr(route, "methods", set()) or set())
+        for path, method in _OVERRIDDEN_ROUTES
     )
 ]
+
+
+@app.post("/camera/capture")
+def capture(payload: _core.CapturePayload):
+    """Capture Assistant 3 frame and persist the FITS immediately."""
+    result = _core.capture(payload)
+
+    if result.get("status") != "captured":
+        return result
+
+    try:
+        archive = preparation_astrometry_archive.archive_capture(result)
+    except Exception as exc:
+        _core.logger.exception(
+            "Unable to persist Preparation Assistant 3 astrometry capture"
+        )
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "Capture réalisée mais archivage persistant "
+                f"Assistant 3 impossible : {exc}"
+            ),
+        ) from exc
+
+    enriched = dict(result)
+    enriched["persistent_archive"] = archive
+    return enriched
+
+
+@app.get("/camera/preview.jpg")
+def camera_preview():
+    """Return legacy preview and persist its JPEG beside the FITS."""
+    response = _core.camera_preview()
+    source = response.headers.get("X-StellarPilot-Source")
+
+    if source:
+        try:
+            preparation_astrometry_archive.record_preview(
+                source,
+                bytes(response.body),
+                headers=dict(response.headers),
+            )
+        except Exception:
+            # initial.fits is already safe; a JPEG can always be regenerated.
+            _core.logger.exception(
+                "Unable to persist Preparation Assistant 3 preview"
+            )
+
+    return response
+
+
+@app.post("/solve")
+def solve(payload: _core.SolvePayload):
+    """Solve the Assistant 3 frame and enrich persistent metadata."""
+    result = _core.solve(payload)
+
+    try:
+        preparation_astrometry_archive.record_solve(
+            payload.image,
+            result,
+        )
+    except Exception:
+        _core.logger.exception(
+            "Unable to update Preparation Assistant 3 solve metadata"
+        )
+
+    return result
 
 
 @app.post("/mount/goto")
