@@ -1,6 +1,7 @@
 package fr.stellarpilot.app.feature.sky
 
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -17,6 +18,7 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -86,6 +88,10 @@ fun SkyScreen(
         mutableStateOf(false)
     }
 
+    var skyMode by rememberSaveable {
+        mutableStateOf("solar_system")
+    }
+
     LaunchedEffect(
         serverBaseUrl,
         demoMode
@@ -128,7 +134,7 @@ fun SkyScreen(
             )
 
             Text(
-                text = "Objets observables",
+                text = "Choisir une cible",
                 style =
                     MaterialTheme.typography.headlineMedium,
                 fontWeight = FontWeight.Bold,
@@ -141,12 +147,12 @@ fun SkyScreen(
 
             Text(
                 text =
-                    "Choisissez une cible visible depuis votre position actuelle.",
+                    "Système solaire ou catalogue du ciel profond, calculés depuis votre position actuelle.",
                 color = StellarMuted
             )
 
             Spacer(
-                Modifier.height(22.dp)
+                Modifier.height(20.dp)
             )
 
             when {
@@ -200,7 +206,7 @@ fun SkyScreen(
                     SkyCard {
                         Text(
                             text =
-                                "POSITION N\u00C9CESSAIRE",
+                                "POSITION NÉCESSAIRE",
                             color = StellarOrange,
                             style =
                                 MaterialTheme.typography.labelLarge,
@@ -214,7 +220,7 @@ fun SkyScreen(
 
                         Text(
                             text =
-                                "Le GPS n'est pas fix\u00E9. Indiquez la position du lieu d'observation.",
+                                "Le GPS n'est pas fixé. Indiquez la position du lieu d'observation.",
                             color = StellarMuted
                         )
 
@@ -330,6 +336,27 @@ fun SkyScreen(
                                     FontWeight.Bold
                             )
                         }
+
+                        if (
+                            sky != null &&
+                            sky.status !=
+                                "location_required"
+                        ) {
+                            Spacer(
+                                Modifier.height(8.dp)
+                            )
+
+                            OutlinedButton(
+                                onClick = {
+                                    editManualLocation =
+                                        false
+                                },
+                                modifier =
+                                    Modifier.fillMaxWidth()
+                            ) {
+                                Text("Annuler")
+                            }
+                        }
                     }
                 }
 
@@ -337,118 +364,144 @@ fun SkyScreen(
                     val observer =
                         sky.observer
 
-                    if (
-                        observer?.locationSource ==
-                            "manual"
-                    ) {
-                        OutlinedButton(
-                            onClick = {
-                                observer.latitude
-                                    ?.let {
-                                        manualLatitude =
-                                            it.toString()
-                                    }
-
-                                observer.longitude
-                                    ?.let {
-                                        manualLongitude =
-                                            it.toString()
-                                    }
-
-                                editManualLocation =
-                                    true
-                            },
-                            modifier =
-                                Modifier.fillMaxWidth()
+                    val locationSourceLabel =
+                        when (
+                            observer?.locationSource
                         ) {
-                            Text(
-                                "Modifier la position"
-                            )
+                            "gps" -> "GPS"
+                            "manual" -> "Manuelle"
+                            "query" -> "Test"
+                            "demo" -> "Démo"
+                            "onstep" -> "OnStep"
+                            else ->
+                                observer?.locationSource
+                                    ?: "Inconnue"
                         }
-
-                        Spacer(
-                            Modifier.height(12.dp)
-                        )
-                    }
 
                     SkyCard {
                         Text(
-                            text = "POSITION",
+                            text =
+                                "POSITION • $locationSourceLabel",
                             color = StellarOrange,
                             style =
                                 MaterialTheme.typography.labelLarge,
-                            fontWeight =
-                                FontWeight.Bold
+                            fontWeight = FontWeight.Bold
                         )
 
                         Spacer(
-                            Modifier.height(8.dp)
+                            Modifier.height(6.dp)
                         )
 
-                        SkyInfoRow(
-                            label = "Latitude",
-                            value =
-                                observer?.latitude
-                                    ?.let {
-                                        formatNumber(
-                                            it,
-                                            5
-                                        ) +
-                                            "\u00B0"
-                                    }
-                                    ?: "\u2014"
+                        Text(
+                            text =
+                                "${observer?.latitude?.let { formatNumber(it, 5) } ?: "—"}°  •  ${observer?.longitude?.let { formatNumber(it, 5) } ?: "—"}°",
+                            color = StellarText,
+                            fontWeight = FontWeight.SemiBold
                         )
 
-                        SkyInfoRow(
-                            label = "Longitude",
-                            value =
-                                observer?.longitude
-                                    ?.let {
-                                        formatNumber(
-                                            it,
-                                            5
-                                        ) +
-                                            "\u00B0"
-                                    }
-                                    ?: "\u2014"
+                        if (
+                            observer?.locationSource ==
+                                "manual"
+                        ) {
+                            Spacer(
+                                Modifier.height(10.dp)
+                            )
+
+                            OutlinedButton(
+                                onClick = {
+                                    observer.latitude
+                                        ?.let {
+                                            manualLatitude =
+                                                it.toString()
+                                        }
+
+                                    observer.longitude
+                                        ?.let {
+                                            manualLongitude =
+                                                it.toString()
+                                        }
+
+                                    editManualLocation =
+                                        true
+                                },
+                                modifier =
+                                    Modifier.fillMaxWidth()
+                            ) {
+                                Text(
+                                    "Modifier la position"
+                                )
+                            }
+                        }
+                    }
+
+                    Spacer(
+                        Modifier.height(16.dp)
+                    )
+
+                    Row(
+                        modifier =
+                            Modifier
+                                .fillMaxWidth()
+                                .horizontalScroll(
+                                    rememberScrollState()
+                                ),
+                        horizontalArrangement =
+                            Arrangement.spacedBy(8.dp)
+                    ) {
+                        FilterChip(
+                            selected =
+                                skyMode ==
+                                    "solar_system",
+                            onClick = {
+                                skyMode =
+                                    "solar_system"
+                            },
+                            label = {
+                                Text("Système solaire")
+                            }
                         )
 
-                        SkyInfoRow(
-                            label = "Source",
-                            value =
-                                when (
-                                    observer?.locationSource
-                                ) {
-                                    "gps" ->
-                                        "GPS"
-
-                                    "manual" ->
-                                        "Manuelle"
-
-                                    "query" ->
-                                        "Test"
-
-                                    else ->
-                                        observer
-                                            ?.locationSource
-                                            ?: "\u2014"
-                                }
+                        FilterChip(
+                            selected =
+                                skyMode ==
+                                    "catalog",
+                            onClick = {
+                                skyMode = "catalog"
+                            },
+                            label = {
+                                Text("Catalogue du ciel")
+                            }
                         )
                     }
 
                     Spacer(
-                        Modifier.height(18.dp)
+                        Modifier.height(14.dp)
                     )
 
-                    TargetCatalogPanel(
-                        serverBaseUrl =
-                            serverBaseUrl,
-                        observerKey =
-                            listOf(
-                                observer?.latitude,
-                                observer?.longitude
-                            ).joinToString(":")
-                    )
+                    val observerKey =
+                        listOf(
+                            observer?.latitude,
+                            observer?.longitude
+                        ).joinToString(":")
+
+                    if (
+                        skyMode ==
+                            "solar_system"
+                    ) {
+                        SolarSystemPanel(
+                            serverBaseUrl =
+                                serverBaseUrl,
+                            observerKey =
+                                observerKey
+                        )
+                    } else {
+                        TargetCatalogPanel(
+                            serverBaseUrl =
+                                serverBaseUrl,
+                            observerKey =
+                                observerKey
+                        )
+                    }
                 }
             }
 
@@ -480,7 +533,7 @@ fun SkyScreen(
             ) {
                 Text(
                     text =
-                        "Actualiser le ciel",
+                        "Actualiser la position",
                     fontWeight =
                         FontWeight.Bold
                 )
@@ -523,36 +576,6 @@ private fun SkyCard(
             content()
         }
     }
-}
-
-
-@Composable
-private fun SkyInfoRow(
-    label: String,
-    value: String
-) {
-    Row(
-        modifier =
-            Modifier.fillMaxWidth(),
-        horizontalArrangement =
-            Arrangement.SpaceBetween
-    ) {
-        Text(
-            text = label,
-            color = StellarMuted
-        )
-
-        Text(
-            text = value,
-            color = StellarText,
-            fontWeight =
-                FontWeight.SemiBold
-        )
-    }
-
-    Spacer(
-        Modifier.height(5.dp)
-    )
 }
 
 
