@@ -350,7 +350,7 @@ private fun SolarSystemTargetCard(
         shape = RoundedCornerShape(14.dp),
         colors =
             CardDefaults.cardColors(
-                containerColor = StellarSurface
+                containerColor = StellarBackground
             ),
         border =
             BorderStroke(
@@ -466,46 +466,55 @@ private fun SolarSystemTargetCard(
                 Modifier.height(12.dp)
             )
 
-            Button(
-                onClick = onGoto,
-                enabled =
-                    target.aboveHorizon &&
-                        !isGotoLoading,
-                modifier =
-                    Modifier.fillMaxWidth(),
-                colors =
-                    ButtonDefaults.buttonColors(
-                        containerColor =
-                            if (target.solarWarning) {
-                                StellarRed
-                            } else {
-                                MaterialTheme.colorScheme.secondary
-                            },
-                        contentColor = StellarBackground,
-                        disabledContainerColor =
-                            StellarSurfaceRaised,
-                        disabledContentColor =
-                            StellarMuted
-                    )
-            ) {
-                Text(
-                    text =
-                        when {
-                            !target.aboveHorizon ->
-                                "GOTO indisponible — sous l'horizon"
-
-                            target.solarWarning ->
+            if (target.solarWarning) {
+                Button(
+                    onClick = onGoto,
+                    enabled =
+                        target.aboveHorizon &&
+                            !isGotoLoading,
+                    modifier =
+                        Modifier.fillMaxWidth(),
+                    colors =
+                        ButtonDefaults.buttonColors(
+                            containerColor = StellarRed,
+                            contentColor = StellarBackground,
+                            disabledContainerColor =
+                                StellarSurfaceRaised,
+                            disabledContentColor =
+                                StellarMuted
+                        )
+                ) {
+                    Text(
+                        text =
+                            if (target.aboveHorizon) {
                                 "GOTO SOLEIL — DANGER"
-
-                            isGotoLoading &&
-                                showGotoStatus ->
+                            } else {
+                                "GOTO SOLEIL — SOUS HORIZON"
+                            },
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            } else {
+                OutlinedButton(
+                    onClick = onGoto,
+                    enabled =
+                        target.aboveHorizon &&
+                            !isGotoLoading,
+                    modifier =
+                        Modifier.fillMaxWidth()
+                ) {
+                    Text(
+                        text =
+                            if (
+                                isGotoLoading &&
+                                showGotoStatus
+                            ) {
                                 "Pointage en cours..."
-
-                            else ->
+                            } else {
                                 "Choisir cette cible"
-                        },
-                    fontWeight = FontWeight.Bold
-                )
+                            }
+                    )
+                }
             }
 
             if (showGotoStatus) {
