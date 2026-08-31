@@ -20,12 +20,12 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.asImageBitmap
@@ -33,6 +33,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import fr.stellarpilot.app.feature.demo.DemoModeState
 import fr.stellarpilot.app.ui.theme.StellarBackground
 import fr.stellarpilot.app.ui.theme.StellarBorder
 import fr.stellarpilot.app.ui.theme.StellarGreen
@@ -53,6 +54,7 @@ fun CaptureScreen(
     val state = viewModel.uiState
     val target = state.target
     val session = state.session
+    val demoMode = DemoModeState.active
 
     val bitmap = remember(state.imageBytes) {
         state.imageBytes?.let { bytes ->
@@ -101,6 +103,32 @@ fun CaptureScreen(
                     "Astrométrie de centrage, validation visuelle, puis stacking avec contrôle périodique du pointage.",
                 color = StellarMuted
             )
+
+            if (demoMode) {
+                Spacer(Modifier.height(12.dp))
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    color = StellarSurfaceRaised,
+                    shape = RoundedCornerShape(12.dp),
+                    border = BorderStroke(1.dp, StellarOrange)
+                ) {
+                    Column(
+                        modifier = Modifier.padding(12.dp)
+                    ) {
+                        Text(
+                            text = "MODE DÉMONSTRATION • 100 % LOCAL",
+                            color = StellarOrange,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            text =
+                                "Capture, astrométrie et stacking sont simulés dans l'application. Aucun ordre n'est envoyé au Raspberry Pi.",
+                            color = StellarMuted,
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
+                }
+            }
 
             Spacer(Modifier.height(18.dp))
 
@@ -227,6 +255,44 @@ fun CaptureScreen(
                     color = StellarMuted,
                     style = MaterialTheme.typography.bodySmall
                 )
+
+                if (state.operationPhase != null) {
+                    Spacer(Modifier.height(14.dp))
+
+                    val elapsedSeconds =
+                        state.operationElapsedMs / 1000.0
+                    val expectedSeconds =
+                        state.operationExpectedMs / 1000.0
+                    val exposureProgress =
+                        if (state.operationExpectedMs > 0L) {
+                            (
+                                state.operationElapsedMs.toFloat() /
+                                    state.operationExpectedMs.toFloat()
+                                ).coerceIn(0f, 1f)
+                        } else {
+                            0f
+                        }
+
+                    Text(
+                        text =
+                            if (state.operationPhase == "capture") {
+                                "Acquisition de l'image… ${format(elapsedSeconds, 1)} / ${format(expectedSeconds, 1)} s"
+                            } else {
+                                "Pose ${format(expectedSeconds, 1)} s terminée • astrométrie en cours… ${format(elapsedSeconds, 1)} s"
+                            },
+                        color = StellarOrange,
+                        fontWeight = FontWeight.SemiBold
+                    )
+
+                    Spacer(Modifier.height(6.dp))
+
+                    LinearProgressIndicator(
+                        progress = exposureProgress,
+                        modifier = Modifier.fillMaxWidth(),
+                        color = StellarOrange,
+                        trackColor = StellarSurfaceRaised
+                    )
+                }
             }
 
             Spacer(Modifier.height(14.dp))
@@ -250,10 +316,10 @@ fun CaptureScreen(
                         else -> "À CONTRÔLER"
                     },
                     color =
-                        if (centering?.status == "centered") {
-                            StellarGreen
-                        } else {
-                            StellarMuted
+                        when (centering?.status) {
+                            "centered" -> StellarGreen
+                            "unsolved" -> StellarRed
+                            else -> StellarMuted
                         },
                     fontWeight = FontWeight.Bold
                 )
@@ -273,6 +339,26 @@ fun CaptureScreen(
                             "Centre astrométrique : AD ${format(ra / 15.0, 4)} h • DEC ${centering.solveDecDeg?.let { formatSigned(it, 4) } ?: "—"}°",
                         color = StellarMuted
                     )
+                }
+
+                if (centering?.status == "unsolved") {
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        text =
+                            "Aucune correction AD/DEC n'est envoyée tant que le champ n'est pas résolu.",
+                        color = StellarMuted,
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                    centering.solverDetail
+                        ?.takeIf { it.isNotBlank() }
+                        ?.let { detail ->
+                            Spacer(Modifier.height(4.dp))
+                            Text(
+                                text = detail,
+                                color = StellarMuted,
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                        }
                 }
 
                 Spacer(Modifier.height(12.dp))
