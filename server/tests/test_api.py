@@ -89,12 +89,13 @@ def test_mount_goto_device(monkeypatch):
     monkeypatch.setattr(
         main_module.indi_service,
         "goto",
-        lambda ra, dec: {
+        lambda ra, dec, tracking_mode="sidereal": {
             "status": "slewing",
             "mode": "device",
             "mount": "LX200 OnStep",
             "ra": ra,
             "dec": dec,
+            "tracking_mode": tracking_mode,
         },
     )
 
@@ -103,6 +104,7 @@ def test_mount_goto_device(monkeypatch):
         json={
             "ra": 5.5,
             "dec": 22.0,
+            "tracking_mode": "solar",
         },
     )
 
@@ -112,6 +114,7 @@ def test_mount_goto_device(monkeypatch):
 
     assert body["status"] == "slewing"
     assert body["mode"] == "device"
+    assert body["tracking_mode"] == "solar"
     assert body["time_source"] == "android"
     assert body["time_sync"]["status"] == "ok"
 
