@@ -211,6 +211,7 @@ class CaptureViewModel(
                     ?: throw IllegalArgumentException(
                         "Aucune cible sélectionnée"
                     )
+                val api = CaptureSessionApiClient(serverBaseUrl)
 
                 for (attempt in 1..4) {
                     uiState = uiState.copy(
@@ -221,24 +222,29 @@ class CaptureViewModel(
                         expectedSeconds = session.exposureSeconds
                     )
 
-                    session =
-                        CaptureSessionApiClient(serverBaseUrl)
-                            .centerStep(session.id)
-
-                    stopOperationTimer()
+                    session = api.captureCenterFrame(session.id)
 
                     val preview =
                         runCatching {
-                            CaptureSessionApiClient(serverBaseUrl)
-                                .getPreview(
-                                    session.id,
-                                    stack = false
-                                )
+                            api.getPreview(
+                                session.id,
+                                stack = false
+                            )
                         }.getOrNull()
 
                     uiState = uiState.copy(
                         session = session,
-                        imageBytes = preview ?: uiState.imageBytes
+                        imageBytes = preview ?: uiState.imageBytes,
+                        operationPhase = "astrometry",
+                        statusMessage =
+                            "Image acquise • astrométrie en cours…"
+                    )
+
+                    session = api.solveCenterFrame(session.id)
+                    stopOperationTimer()
+
+                    uiState = uiState.copy(
+                        session = session
                     )
 
                     when (session.centering.status) {
@@ -625,15 +631,23 @@ class CaptureViewModel(
             delay(700)
 
             val api = CaptureSessionApiClient(serverBaseUrl)
-            val verified = api.centerStep(session.id)
+            val captured = api.captureCenterFrame(session.id)
             val preview =
                 runCatching {
                     api.getPreview(session.id, stack = false)
                 }.getOrNull()
 
             uiState = uiState.copy(
-                session = verified,
-                imageBytes = preview ?: uiState.imageBytes
+                session = captured,
+                imageBytes = preview ?: uiState.imageBytes,
+                statusMessage =
+                    "Image de contrôle acquise • astrométrie en cours…"
+            )
+
+            val verified = api.solveCenterFrame(session.id)
+
+            uiState = uiState.copy(
+                session = verified
             )
 
             if (verified.centering.status == "centered") {
