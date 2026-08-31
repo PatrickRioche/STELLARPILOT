@@ -479,7 +479,7 @@ private fun SolarSystemTargetCard(
                             if (target.solarWarning) {
                                 StellarRed
                             } else {
-                                StellarOrange
+                                MaterialTheme.colorScheme.secondary
                             },
                         contentColor = StellarBackground,
                         disabledContainerColor =
@@ -502,7 +502,7 @@ private fun SolarSystemTargetCard(
                                 "Pointage en cours..."
 
                             else ->
-                                "Pointer la cible"
+                                "Choisir cette cible"
                         },
                     fontWeight = FontWeight.Bold
                 )
