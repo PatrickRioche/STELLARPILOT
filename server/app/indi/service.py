@@ -1,5 +1,6 @@
 import subprocess
 import time
+from pathlib import Path
 
 from app.indi._service_core import IndiService as _CoreIndiService
 
@@ -12,7 +13,7 @@ _TRACKING_MODE_ELEMENTS = {
 
 
 class IndiService(_CoreIndiService):
-    """Facade INDI ajoutant le choix portable du mode de suivi."""
+    """Facade INDI ajoutant le suivi portable et le stockage de session."""
 
     _mount_cache_ttl_s = 5.0
 
@@ -179,6 +180,56 @@ class IndiService(_CoreIndiService):
             "Le mode de suivi INDI n'a pas ete confirme: "
             f"{normalized}"
         )
+
+    def capture(
+        self,
+        exposure_s: float,
+        output_dir: str | Path | None = None,
+        prefix: str | None = None,
+    ) -> dict:
+        """Capture a FITS and optionally move it into a session workspace.
+
+        The legacy preparation screen still uses the historical temporary
+        INDI capture directory. Capture sessions immediately relocate the
+        completed FITS below ``stellarpilot-server/tmp`` so processing data
+        survives independently from the operating-system /tmp policy.
+        """
+        result = super().capture(exposure_s)
+
+        if (
+            output_dir is None
+            or result.get("status") != "captured"
+            or not result.get("image")
+        ):
+            return result
+
+        source = Path(result["image"])
+        destination_dir = Path(output_dir)
+        destination_dir.mkdir(parents=True, exist_ok=True)
+
+        suffix = source.suffix.lower() or ".fits"
+        destination_name = (
+            f"{prefix}{suffix}"
+            if prefix
+            else source.name
+        )
+        destination = destination_dir / destination_name
+
+        try:
+            source.replace(destination)
+        except OSError as exc:
+            return {
+                **result,
+                "status": "error",
+                "detail": (
+                    "Capture FITS recue mais impossible a deplacer "
+                    f"dans la session: {exc}"
+                ),
+            }
+
+        result["image"] = str(destination)
+        result["storage"] = "session"
+        return result
 
     def goto(
         self,
