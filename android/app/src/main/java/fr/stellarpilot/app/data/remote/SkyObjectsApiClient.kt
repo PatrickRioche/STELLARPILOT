@@ -137,6 +137,12 @@ class SkyObjectsApiClient(
                             )
                                 ?: continue
 
+                        val altitudeDeg =
+                            item.optDouble(
+                                "altitude_deg",
+                                0.0
+                            )
+
                         add(
                             SkyObject(
                                 id =
@@ -217,10 +223,7 @@ class SkyObjectsApiClient(
                                     ),
 
                                 altitudeDeg =
-                                    item.optDouble(
-                                        "altitude_deg",
-                                        0.0
-                                    ),
+                                    altitudeDeg,
 
                                 azimuthDeg =
                                     item.optDouble(
@@ -232,6 +235,23 @@ class SkyObjectsApiClient(
                                     item.optString(
                                         "azimuth_direction",
                                         ""
+                                    ),
+
+                                aboveHorizon =
+                                    item.optBoolean(
+                                        "above_horizon",
+                                        altitudeDeg > 0.0
+                                    ),
+
+                                solarWarning =
+                                    item.optBoolean(
+                                        "solar_warning",
+                                        false
+                                    ),
+
+                                symbol =
+                                    item.nullableString(
+                                        "symbol"
                                     )
                             )
                         )
