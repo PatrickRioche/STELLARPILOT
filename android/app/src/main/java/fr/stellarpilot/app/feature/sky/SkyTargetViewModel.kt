@@ -234,7 +234,7 @@ class SkyTargetViewModel : ViewModel() {
                 gotoTargetRa = target.raHours,
                 gotoTargetDec = target.decDeg,
                 gotoIndiState = null,
-                gotoVirtualPosition = true
+                gotoVirtualPosition = DemoModeState.active
             )
 
         if (DemoModeState.active) {
@@ -263,7 +263,7 @@ class SkyTargetViewModel : ViewModel() {
                             target.decDeg
                     )
 
-repeat(240) {
+                repeat(240) {
 
                     delay(500)
 
@@ -310,7 +310,8 @@ repeat(240) {
                             gotoIndiState =
                                 motion.indiState,
                             gotoVirtualPosition =
-                                motion.virtualPosition
+                                DemoModeState.active &&
+                                    motion.virtualPosition
                         )
 
                     if (done) {
@@ -341,6 +342,7 @@ repeat(240) {
             }
         }
     }
+
     private suspend fun runDemoGoto(
         target: SkyObject
     ) {
