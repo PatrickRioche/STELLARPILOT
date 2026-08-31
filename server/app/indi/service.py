@@ -4,6 +4,7 @@ import time
 from pathlib import Path
 
 from app.indi._service_core import IndiService as _CoreIndiService
+from app.imaging.preparation_astrometry import preparation_astrometry_archive
 
 
 _TRACKING_MODE_ELEMENTS = {
@@ -188,21 +189,41 @@ class IndiService(_CoreIndiService):
         output_dir: str | Path | None = None,
         prefix: str | None = None,
     ) -> dict:
-        """Capture a FITS and optionally move it into a session workspace.
+        """Capture a FITS and persist or relocate it according to its caller.
 
-        The legacy preparation screen still uses the historical temporary
-        INDI capture directory. Capture sessions immediately relocate the
-        completed FITS below ``stellarpilot-server/tmp`` so processing data
-        survives independently from the operating-system /tmp policy.
-        ``shutil.move`` deliberately supports /tmp being a separate tmpfs.
+        ``/camera/capture`` (Preparation Assistant 3) calls this method
+        without ``output_dir``. Its completed FITS is therefore copied
+        immediately to persistent application data below
+        ``server/data/astrometry/assistant-3`` before the API returns.
+
+        Capture sessions pass ``output_dir`` and keep their existing runtime
+        workflow below ``stellarpilot-server/tmp``. ``shutil.move`` supports
+        Linux /tmp being a separate tmpfs/filesystem.
         """
         result = super().capture(exposure_s)
 
-        if (
-            output_dir is None
-            or result.get("status") != "captured"
-            or not result.get("image")
-        ):
+        if result.get("status") != "captured" or not result.get("image"):
+            return result
+
+        # Historical /camera/capture = Preparation / Assistant 3.
+        # Persist the scientific FITS before Android can request preview/solve.
+        if output_dir is None:
+            try:
+                archive = preparation_astrometry_archive.archive_capture(
+                    result
+                )
+            except Exception as exc:
+                return {
+                    **result,
+                    "status": "error",
+                    "detail": (
+                        "Capture FITS recue mais archivage persistant "
+                        f"Assistant 3 impossible : {exc}"
+                    ),
+                }
+
+            result["persistent_astrometry"] = archive
+            result["storage"] = "assistant-3-persistent"
             return result
 
         source = Path(result["image"])
