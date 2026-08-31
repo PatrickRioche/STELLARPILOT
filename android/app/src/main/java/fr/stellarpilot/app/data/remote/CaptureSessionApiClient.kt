@@ -121,13 +121,44 @@ class CaptureSessionApiClient(
     suspend fun centerStep(
         sessionId: String
     ): CaptureSessionStatus = withContext(Dispatchers.IO) {
+        centerAction(
+            "capture/sessions/$sessionId/center"
+        )
+    }
+
+    suspend fun captureCenterFrame(
+        sessionId: String
+    ): CaptureSessionStatus = withContext(Dispatchers.IO) {
+        centerAction(
+            "capture/sessions/$sessionId/center/capture"
+        )
+    }
+
+    suspend fun solveCenterFrame(
+        sessionId: String
+    ): CaptureSessionStatus = withContext(Dispatchers.IO) {
+        centerAction(
+            "capture/sessions/$sessionId/center/solve"
+        )
+    }
+
+    private fun centerAction(path: String): CaptureSessionStatus {
         val root = executeJson(
-            path = "capture/sessions/$sessionId/center",
+            path = path,
             method = "POST"
         )
+        val status = root.optString("status")
+        if (status == "error") {
+            error(
+                root.optString(
+                    "detail",
+                    "Action de centrage impossible"
+                )
+            )
+        }
         val session = root.optJSONObject("session")
             ?: error("Réponse de centrage sans session")
-        parseSession(session)
+        return parseSession(session)
     }
 
     suspend fun startStack(
