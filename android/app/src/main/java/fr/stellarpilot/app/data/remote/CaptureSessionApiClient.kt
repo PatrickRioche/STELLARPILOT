@@ -17,7 +17,9 @@ data class CaptureCenteringStatus(
     val solveDecDeg: Double?,
     val correctionRaHours: Double?,
     val correctionDecDeg: Double?,
-    val attempts: Int
+    val attempts: Int,
+    val solverStatus: String?,
+    val solverDetail: String?
 )
 
 
@@ -351,7 +353,9 @@ class CaptureSessionApiClient(
                     nullableDouble(centering, "correction_ra_hours"),
                 correctionDecDeg =
                     nullableDouble(centering, "correction_dec_deg"),
-                attempts = centering.optInt("attempts", 0)
+                attempts = centering.optInt("attempts", 0),
+                solverStatus = nullableString(centering, "solver_status"),
+                solverDetail = nullableString(centering, "solver_detail")
             ),
             stacking = CaptureStackingStatus(
                 running = stacking.optBoolean("running", false),
