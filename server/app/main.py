@@ -6,6 +6,10 @@ from pydantic import BaseModel, Field
 
 from app import _main_core as _core
 from app._main_core import *
+from app.imaging.centering_capture import (
+    capture_centering_frame,
+    solve_centering_frame,
+)
 from app.imaging.sessions import capture_session_service
 
 
@@ -217,6 +221,18 @@ def capture_session(session_id: str):
 def capture_session_center(session_id: str):
     _capture_session_or_404(session_id)
     return capture_session_service.center_step(session_id)
+
+
+@app.post("/capture/sessions/{session_id}/center/capture")
+def capture_session_center_capture(session_id: str):
+    _capture_session_or_404(session_id)
+    return capture_centering_frame(session_id)
+
+
+@app.post("/capture/sessions/{session_id}/center/solve")
+def capture_session_center_solve(session_id: str):
+    _capture_session_or_404(session_id)
+    return solve_centering_frame(session_id)
 
 
 @app.post("/capture/sessions/{session_id}/stack/start")
