@@ -25,7 +25,10 @@ object DemoSkyObjectsDataSource {
         direction: String,
         aliases: String? = null,
         major: Double? = null,
-        minor: Double? = null
+        minor: Double? = null,
+        aboveHorizon: Boolean = altitude > 0.0,
+        solarWarning: Boolean = false,
+        symbol: String? = null
     ) =
         SkyObject(
             id = id,
@@ -44,7 +47,10 @@ object DemoSkyObjectsDataSource {
             aliasesFr = aliases,
             altitudeDeg = altitude,
             azimuthDeg = azimuth,
-            azimuthDirection = direction
+            azimuthDirection = direction,
+            aboveHorizon = aboveHorizon,
+            solarWarning = solarWarning,
+            symbol = symbol
         )
 
     private val catalog =
@@ -97,7 +103,6 @@ object DemoSkyObjectsDataSource {
                 2.5303, 89.264, 1.98,
                 47.4, 0.5, "N"
             ),
-
             item(
                 20, "M31", "M31",
                 "galaxy", "Galaxie", "Andromede",
@@ -130,7 +135,6 @@ object DemoSkyObjectsDataSource {
                 "Galaxie du Cigare",
                 11.2, 4.3
             ),
-
             item(
                 30, "M42", "M42",
                 "nebula", "Nebuleuse", "Orion",
@@ -155,7 +159,6 @@ object DemoSkyObjectsDataSource {
                 "Nebuleuse de la Lyre",
                 1.4, 1.0
             ),
-
             item(
                 40, "M45", "M45",
                 "cluster", "Amas", "Taureau",
@@ -190,6 +193,79 @@ object DemoSkyObjectsDataSource {
             )
         )
 
+    /*
+     * Snapshot uniquement destine a la Demo locale. En mode reel les
+     * coordonnees du Systeme solaire sont calculees dynamiquement par
+     * le serveur avec Astropy pour l'heure et la position d'observation.
+     */
+    private val solarSystemCatalog =
+        listOf(
+            item(
+                -101, "Soleil", "Soleil",
+                "sun", "Soleil", null,
+                10.7, 7.6, null,
+                -18.0, 82.0, "E",
+                solarWarning = true,
+                symbol = "☉"
+            ),
+            item(
+                -102, "Lune", "Lune",
+                "moon", "Lune", null,
+                2.4, 16.2, null,
+                34.0, 151.0, "SE",
+                symbol = "☾"
+            ),
+            item(
+                -103, "Mercure", "Mercure",
+                "planet", "Planète", null,
+                11.1, 5.4, null,
+                -10.0, 91.0, "E",
+                symbol = "☿"
+            ),
+            item(
+                -104, "Vénus", "Vénus",
+                "planet", "Planète", null,
+                12.0, 0.5, null,
+                12.0, 104.0, "E",
+                symbol = "♀"
+            ),
+            item(
+                -105, "Mars", "Mars",
+                "planet", "Planète", null,
+                6.4, 23.0, null,
+                28.0, 129.0, "SE",
+                symbol = "♂"
+            ),
+            item(
+                -106, "Jupiter", "Jupiter",
+                "planet", "Planète", null,
+                8.2, 20.0, null,
+                44.0, 176.0, "S",
+                symbol = "♃"
+            ),
+            item(
+                -107, "Saturne", "Saturne",
+                "planet", "Planète", null,
+                0.9, 3.1, null,
+                22.0, 218.0, "SW",
+                symbol = "♄"
+            ),
+            item(
+                -108, "Uranus", "Uranus",
+                "planet", "Planète", null,
+                4.1, 20.2, null,
+                15.0, 245.0, "SW",
+                symbol = "♅"
+            ),
+            item(
+                -109, "Neptune", "Neptune",
+                "planet", "Planète", null,
+                0.1, -0.8, null,
+                -5.0, 266.0, "W",
+                symbol = "♆"
+            )
+        )
+
     fun getObjects(
         latitude: Double,
         longitude: Double,
@@ -204,29 +280,36 @@ object DemoSkyObjectsDataSource {
         limit: Int = 30
     ): SkyObjectsResult {
 
-        /*
-         * Latitude/longitude font volontairement partie
-         * de la meme interface que la source distante.
-         * Le snapshot Demo utilise des alt/az fixes.
-         */
         @Suppress("UNUSED_VARIABLE")
         val observer = latitude to longitude
 
         val normalizedQuery =
             query.trim().lowercase()
 
+        val solarSystemMode =
+            category == "solar_system"
+
+        val source =
+            if (solarSystemMode) {
+                solarSystemCatalog
+            } else {
+                catalog
+            }
+
         val filtered =
-            catalog
+            source
                 .asSequence()
                 .filter {
-                    category == "all" ||
+                    solarSystemMode ||
+                        category == "all" ||
                         it.objectType.equals(
                             category,
                             ignoreCase = true
                         )
                 }
                 .filter {
-                    it.altitudeDeg >= minAltitude
+                    solarSystemMode ||
+                        it.altitudeDeg >= minAltitude
                 }
                 .filter {
                     direction.isNullOrBlank() ||
@@ -236,7 +319,8 @@ object DemoSkyObjectsDataSource {
                         )
                 }
                 .filter {
-                    constellation.isBlank() ||
+                    solarSystemMode ||
+                        constellation.isBlank() ||
                         it.constellation
                             ?.equals(
                                 constellation.trim(),
@@ -281,7 +365,6 @@ object DemoSkyObjectsDataSource {
 
         val comparator =
             when (normalizedSort) {
-
                 "name" ->
                     Comparator<SkyObject> { a, b ->
                         val result =
@@ -289,7 +372,6 @@ object DemoSkyObjectsDataSource {
                                 b.name,
                                 ignoreCase = true
                             )
-
                         if (
                             normalizedOrder == "desc"
                         ) {
@@ -304,44 +386,35 @@ object DemoSkyObjectsDataSource {
                         if (
                             normalizedOrder == "desc"
                         ) {
-                            b.altitudeDeg
-                                .compareTo(
-                                    a.altitudeDeg
-                                )
+                            b.altitudeDeg.compareTo(
+                                a.altitudeDeg
+                            )
                         } else {
-                            a.altitudeDeg
-                                .compareTo(
-                                    b.altitudeDeg
-                                )
+                            a.altitudeDeg.compareTo(
+                                b.altitudeDeg
+                            )
                         }
                     }
 
                 else ->
                     Comparator<SkyObject> { a, b ->
-
                         when {
                             a.magnitude == null &&
-                                b.magnitude == null ->
-                                0
+                                b.magnitude == null -> 0
 
-                            a.magnitude == null ->
-                                1
-
-                            b.magnitude == null ->
-                                -1
+                            a.magnitude == null -> 1
+                            b.magnitude == null -> -1
 
                             normalizedOrder ==
                                 "desc" ->
-                                b.magnitude
-                                    .compareTo(
-                                        a.magnitude
-                                    )
+                                b.magnitude.compareTo(
+                                    a.magnitude
+                                )
 
                             else ->
-                                a.magnitude
-                                    .compareTo(
-                                        b.magnitude
-                                    )
+                                a.magnitude.compareTo(
+                                    b.magnitude
+                                )
                         }
                     }
             }
@@ -373,6 +446,7 @@ object DemoSkyObjectsDataSource {
 
         val categoryLabel =
             when (category) {
+                "solar_system" -> "Système solaire"
                 "star" -> "Etoiles"
                 "galaxy" -> "Galaxies"
                 "nebula" -> "Nebuleuses"
@@ -388,8 +462,20 @@ object DemoSkyObjectsDataSource {
                 query.takeIf {
                     it.isNotBlank()
                 },
-            minAltitudeDeg = minAltitude,
-            visibleCount = sorted.size,
+            minAltitudeDeg =
+                if (solarSystemMode) {
+                    0.0
+                } else {
+                    minAltitude
+                },
+            visibleCount =
+                if (solarSystemMode) {
+                    sorted.count {
+                        it.aboveHorizon
+                    }
+                } else {
+                    sorted.size
+                },
             returnedCount = page.size,
             sort = normalizedSort,
             order = normalizedOrder,
