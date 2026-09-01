@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from app.imaging.quality import analyze_fits
 from app.imaging.sessions import CaptureSessionService, capture_session_service
 
 
@@ -12,10 +13,9 @@ def capture_centering_frame(
 ) -> dict[str, Any]:
     """Capture one centering frame and expose its preview immediately.
 
-    The previous /center endpoint performed capture + astrometry in one
-    blocking request.  That meant Android could not display the image until
-    plate solving had completed.  This first phase ends as soon as the FITS
-    has been acquired and its JPEG preview has been written.
+    Capture and Assistant 3 now use the same runtime FITS preview renderer.
+    The FITS is also scored before plate solving so the Capture screen can
+    display the same astrometry-quality indicator as Preparation.
     """
     service = service or capture_session_service
 
@@ -50,6 +50,7 @@ def capture_centering_frame(
     except Exception:
         metadata["preview"] = None
 
+    metadata["centering_quality"] = analyze_fits(str(image))
     metadata["centering"] = {
         "status": "captured",
         "attempts": attempt,
