@@ -2,6 +2,7 @@ package fr.stellarpilot.app.feature.status
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -22,19 +23,21 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
-import fr.stellarpilot.app.data.remote.MountClockStatus
 import fr.stellarpilot.app.data.remote.MountTimeApiClient
+import fr.stellarpilot.app.data.remote.TimeSourceStatus
+import fr.stellarpilot.app.data.remote.TimeSynchronizationStatus
 import fr.stellarpilot.app.ui.theme.StellarGreen
 import fr.stellarpilot.app.ui.theme.StellarMuted
 import fr.stellarpilot.app.ui.theme.StellarOrange
 import fr.stellarpilot.app.ui.theme.StellarText
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.util.Locale
 
 
 data class MountClockUiState(
     val isLoading: Boolean = false,
-    val clock: MountClockStatus? = null,
+    val synchronization: TimeSynchronizationStatus? = null,
     val error: String? = null
 )
 
@@ -53,20 +56,20 @@ class MountClockViewModel : ViewModel() {
             )
 
             try {
-                val clock =
+                val synchronization =
                     MountTimeApiClient(serverBaseUrl)
-                        .getStatus()
+                        .getSynchronizationStatus()
 
                 uiState = MountClockUiState(
                     isLoading = false,
-                    clock = clock,
+                    synchronization = synchronization,
                     error = null
                 )
             } catch (error: Exception) {
                 uiState = uiState.copy(
                     isLoading = false,
                     error = error.message
-                        ?: "Lecture de l'heure OnStep impossible"
+                        ?: "Lecture de la synchronisation temporelle impossible"
                 )
             }
         }
@@ -81,16 +84,19 @@ fun OnStepClockStatusBlock(
     viewModel: MountClockViewModel = viewModel()
 ) {
     val state = viewModel.uiState
-    val clock = state.clock
+    val synchronization = state.synchronization
 
     LaunchedEffect(serverBaseUrl, refreshKey) {
-        viewModel.load(serverBaseUrl)
+        while (true) {
+            viewModel.load(serverBaseUrl)
+            delay(5_000)
+        }
     }
 
     Spacer(Modifier.height(14.dp))
 
     Text(
-        text = "HORLOGE ONSTEP • INDI",
+        text = "SYNCHRONISATION TEMPORELLE",
         style = MaterialTheme.typography.labelLarge,
         fontWeight = FontWeight.Bold,
         color = StellarOrange
@@ -98,56 +104,157 @@ fun OnStepClockStatusBlock(
 
     Spacer(Modifier.height(6.dp))
 
-    ClockInfoLine(
-        label = "Heure OnStep (UTC)",
-        value = clock?.utc ?: "Non disponible"
-    )
-
-    ClockInfoLine(
-        label = "Offset OnStep",
-        value = clock?.offsetHours
-            ?.let {
-                String.format(
-                    Locale.FRANCE,
-                    "%+.2f h",
-                    it
-                )
-            }
-            ?: "Non disponible"
-    )
-
-    val referenceSource = clock?.referenceSource
-
-    ClockInfoLine(
-        label = "Référence",
-        value = when (referenceSource) {
-            "gps" -> "GPS"
-            "android" -> "Tablette Android"
-            "system_untrusted" -> "Système Pi non fiable"
-            null -> "Non disponible"
-            else -> referenceSource.uppercase(Locale.ROOT)
-        }
-    )
-
-    val synchronized = clock?.synchronized == true
-    val synchronizationLabel = when {
-        state.isLoading -> "Lecture en cours…"
-        synchronized -> "SYNCHRONISÉE"
-        clock?.synchronization == "drift" -> "À RESYNCHRONISER"
-        clock?.status != "available" -> "HEURE INDI INDISPONIBLE"
-        clock?.referenceSource == "system_untrusted" -> "NON VÉRIFIÉE"
+    val overallGood = synchronization?.status == "synchronized"
+    val overallLabel = when {
+        state.isLoading && synchronization == null -> "LECTURE EN COURS…"
+        synchronization?.status == "synchronized" -> "TOUT SYNCHRONISÉ"
+        synchronization?.status == "partial" -> "SYNCHRONISATION PARTIELLE"
+        synchronization?.status == "attention" -> "ÉCART DÉTECTÉ"
         else -> "NON VÉRIFIÉE"
     }
 
     ClockStatusLine(
-        label = "Synchronisation",
-        value = synchronizationLabel,
-        good = synchronized
+        label = "État global",
+        value = overallLabel,
+        good = overallGood
     )
 
-    clock?.driftSeconds?.let { drift ->
+    ClockInfoLine(
+        label = "Référence",
+        value = referenceSourceLabel(
+            synchronization?.referenceSource
+        )
+    )
+
+    ClockInfoLine(
+        label = "Heure de référence",
+        value = synchronization?.referenceUtc
+            ?: "Non disponible"
+    )
+
+    ClockInfoLine(
+        label = "Tolérance",
+        value = synchronization?.toleranceSeconds
+            ?.let {
+                String.format(
+                    Locale.FRANCE,
+                    "%.0f s",
+                    it
+                )
+            }
+            ?: "10 s"
+    )
+
+    synchronization?.let { sync ->
+        TimeSourceBlock(
+            title = "GPS",
+            source = sync.gps
+        )
+
+        TimeSourceBlock(
+            title = "Tablette Android",
+            source = sync.android,
+            extraValue = sync.android.timezoneOffsetMinutes
+                ?.let { minutes ->
+                    val hours = minutes / 60.0
+                    String.format(
+                        Locale.FRANCE,
+                        "UTC%+.1f",
+                        hours
+                    )
+                },
+            extraLabel = "Fuseau"
+        )
+
+        TimeSourceBlock(
+            title = "Raspberry Pi",
+            source = sync.raspberryPi,
+            subtitle = "Contrôle uniquement · non autoritaire"
+        )
+
+        TimeSourceBlock(
+            title = "OnStep / INDI",
+            source = sync.onStep,
+            subtitle = "Heure publiée par TIME_UTC",
+            extraValue = sync.onStep.offsetHours
+                ?.let { offset ->
+                    String.format(
+                        Locale.FRANCE,
+                        "%+.2f h",
+                        offset
+                    )
+                },
+            extraLabel = "Offset OnStep"
+        )
+
+        sync.onStep.indiState?.let { indiState ->
+            ClockInfoLine(
+                label = "État TIME_UTC INDI",
+                value = indiState
+            )
+        }
+
+        sync.note?.let { note ->
+            Spacer(Modifier.height(8.dp))
+            Text(
+                text = note,
+                color = StellarMuted,
+                style = MaterialTheme.typography.bodySmall
+            )
+        }
+    }
+
+    state.error?.let { error ->
+        Spacer(Modifier.height(6.dp))
+        Text(
+            text = error,
+            color = StellarOrange,
+            style = MaterialTheme.typography.bodySmall
+        )
+    }
+}
+
+
+@Composable
+private fun TimeSourceBlock(
+    title: String,
+    source: TimeSourceStatus,
+    subtitle: String? = null,
+    extraLabel: String? = null,
+    extraValue: String? = null
+) {
+    Spacer(Modifier.height(12.dp))
+
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            text = title,
+            modifier = Modifier.weight(1f),
+            color = StellarText,
+            fontWeight = FontWeight.Bold
+        )
+
+        SourceStatusBadge(source)
+    }
+
+    subtitle?.let {
+        Text(
+            text = it,
+            color = StellarMuted,
+            style = MaterialTheme.typography.bodySmall
+        )
+    }
+
+    ClockInfoLine(
+        label = "UTC",
+        value = source.utc ?: "Non disponible"
+    )
+
+    source.driftSeconds?.let { drift ->
         ClockInfoLine(
-            label = "Écart mesuré",
+            label = "Écart référence",
             value = String.format(
                 Locale.FRANCE,
                 "%.1f s",
@@ -156,32 +263,68 @@ fun OnStepClockStatusBlock(
         )
     }
 
-    if (synchronized) {
-        Text(
-            text = "✓ Heure OnStep cohérente avec la référence fiable (tolérance 10 s)",
-            color = StellarGreen,
-            style = MaterialTheme.typography.bodySmall,
-            fontWeight = FontWeight.SemiBold
-        )
-    } else if (!state.isLoading) {
-        Text(
-            text =
-                clock?.detail
-                    ?: "Vérifiez l'heure de la monture avant un déplacement depuis Ciel.",
-            color = StellarOrange,
-            style = MaterialTheme.typography.bodySmall
+    if (extraLabel != null && extraValue != null) {
+        ClockInfoLine(
+            label = extraLabel,
+            value = extraValue
         )
     }
 
-    state.error?.let { error ->
-        Spacer(Modifier.height(4.dp))
+    source.detail?.let { detail ->
         Text(
-            text = error,
+            text = detail,
             color = StellarOrange,
             style = MaterialTheme.typography.bodySmall
         )
     }
 }
+
+
+@Composable
+private fun SourceStatusBadge(
+    source: TimeSourceStatus
+) {
+    val good = source.synchronized == true ||
+        source.trustedReference
+
+    val label = when {
+        source.trustedReference -> "RÉFÉRENCE"
+        !source.available -> "INDISPONIBLE"
+        source.synchronized == true -> "SYNCHRONISÉ"
+        source.synchronized == false -> "ÉCART"
+        else -> "DISPONIBLE"
+    }
+
+    val color = if (good) StellarGreen else StellarOrange
+
+    Row(
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(
+            modifier = Modifier
+                .background(color, CircleShape)
+                .padding(4.dp)
+        )
+
+        Text(
+            text = label,
+            modifier = Modifier.padding(start = 6.dp),
+            color = color,
+            style = MaterialTheme.typography.labelSmall,
+            fontWeight = FontWeight.Bold
+        )
+    }
+}
+
+
+private fun referenceSourceLabel(source: String?): String =
+    when (source) {
+        "gps" -> "GPS"
+        "android" -> "Tablette Android"
+        "system_untrusted" -> "Raspberry Pi · non fiable"
+        null -> "Non disponible"
+        else -> source.uppercase(Locale.ROOT)
+    }
 
 
 @Composable
