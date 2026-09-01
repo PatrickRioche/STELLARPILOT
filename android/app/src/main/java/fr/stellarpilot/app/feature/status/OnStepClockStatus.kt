@@ -116,7 +116,7 @@ fun OnStepClockStatusBlock(
         state.isLoading && synchronization == null -> "LECTURE EN COURS…"
         synchronization?.status == "synchronized" -> "TOUT SYNCHRONISÉ"
         synchronization?.status == "partial" -> "SYNCHRONISATION PARTIELLE"
-        synchronization?.status == "attention" -> "ÉCART DÉTECTÉ"
+        synchronization?.status == "attention" -> "À VÉRIFIER"
         else -> "NON VÉRIFIÉE"
     }
 
@@ -124,6 +124,16 @@ fun OnStepClockStatusBlock(
         label = "État global",
         value = overallLabel,
         good = overallGood
+    )
+
+    ClockStatusLine(
+        label = "Pointage Ciel",
+        value = when {
+            state.isLoading && synchronization == null -> "VÉRIFICATION…"
+            synchronization?.mountControlReady == true -> "PRÊT"
+            else -> "BLOQUÉ / À VÉRIFIER"
+        },
+        good = synchronization?.mountControlReady == true
     )
 
     ClockInfoLine(
@@ -182,7 +192,7 @@ fun OnStepClockStatusBlock(
         TimeSourceBlock(
             title = "OnStep / INDI",
             source = sync.onStep,
-            subtitle = "Heure publiée par TIME_UTC",
+            subtitle = "TIME_UTC publiée par INDI · diagnostic uniquement",
             extraValue = sync.onStep.offsetHours
                 ?.let { offset ->
                     String.format(
@@ -194,10 +204,33 @@ fun OnStepClockStatusBlock(
             extraLabel = "Offset OnStep"
         )
 
-        sync.onStep.indiState?.let { indiState ->
+        sync.onStep.expectedOffsetHours?.let { expected ->
             ClockInfoLine(
+                label = "Offset attendu",
+                value = String.format(
+                    Locale.FRANCE,
+                    "%+.2f h",
+                    expected
+                )
+            )
+        }
+
+        sync.onStep.offsetMatchesReference?.let { matches ->
+            ClockStatusLine(
+                label = "Cohérence offset",
+                value = if (matches) "OK" else "À CORRIGER",
+                good = matches
+            )
+        }
+
+        sync.onStep.indiState?.let { indiState ->
+            ClockStatusLine(
                 label = "État TIME_UTC INDI",
-                value = indiState
+                value = indiState,
+                good = indiState.equals(
+                    "Ok",
+                    ignoreCase = true
+                )
             )
         }
 
@@ -261,7 +294,11 @@ private fun TimeSourceBlock(
 
     source.driftSeconds?.let { drift ->
         ClockInfoLine(
-            label = "Écart référence",
+            label = if (source.driftAdvisory) {
+                "Écart TIME_UTC (indicatif)"
+            } else {
+                "Écart référence"
+            },
             value = String.format(
                 Locale.FRANCE,
                 "%.1f s",
@@ -291,18 +328,26 @@ private fun TimeSourceBlock(
 private fun SourceStatusBadge(
     source: TimeSourceStatus
 ) {
-    val good = source.synchronized == true ||
-        source.trustedReference
+    val alert = source.indiState?.equals(
+        "Alert",
+        ignoreCase = true
+    ) == true
+
+    val good = source.trustedReference ||
+        source.controlReady == true ||
+        source.synchronized == true
 
     val label = when {
         source.trustedReference -> "RÉFÉRENCE"
         !source.available -> "INDISPONIBLE"
+        alert -> "ALERTE"
+        source.controlReady == true -> "PRÊT"
         source.synchronized == true -> "SYNCHRONISÉ"
         source.synchronized == false -> "ÉCART"
         else -> "DISPONIBLE"
     }
 
-    val color = if (good) StellarGreen else StellarOrange
+    val color = if (good && !alert) StellarGreen else StellarOrange
 
     Row(
         verticalAlignment = Alignment.CenterVertically
