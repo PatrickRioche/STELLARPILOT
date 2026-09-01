@@ -237,6 +237,7 @@ class IndiService(_CoreIndiService):
             "utc": None,
             "offset_hours": None,
             "indi_state": None,
+            "indi_permission": None,
             "reference_utc": reference_utc,
             "reference_source": reference_source,
             "drift_seconds": None,
@@ -264,6 +265,8 @@ class IndiService(_CoreIndiService):
                     "-t",
                     "2",
                     f"{mount_name}.TIME_UTC.*",
+                    f"{mount_name}.TIME_UTC._STATE",
+                    f"{mount_name}.TIME_UTC._PERM",
                 ],
                 capture_output=True,
                 text=True,
@@ -318,6 +321,8 @@ class IndiService(_CoreIndiService):
             except ValueError:
                 offset_hours = None
 
+        indi_state = values.get("_STATE")
+        indi_permission = values.get("_PERM")
         drift_seconds = None
         synchronized = None
         synchronization = "unverified"
@@ -334,11 +339,21 @@ class IndiService(_CoreIndiService):
                 drift_seconds = abs(
                     (mount_instant - reference_instant).total_seconds()
                 )
-                synchronized = drift_seconds <= 10.0
+                state_is_alert = (
+                    (indi_state or "").strip().lower() == "alert"
+                )
+                synchronized = (
+                    drift_seconds <= 10.0
+                    and not state_is_alert
+                )
                 synchronization = (
                     "synchronized"
                     if synchronized
-                    else "drift"
+                    else (
+                        "alert"
+                        if state_is_alert
+                        else "drift"
+                    )
                 )
             except ValueError:
                 synchronization = "unverified"
@@ -350,7 +365,8 @@ class IndiService(_CoreIndiService):
             "utc": utc_value,
             "utc_raw": utc_raw,
             "offset_hours": offset_hours,
-            "indi_state": values.get("_STATE"),
+            "indi_state": indi_state,
+            "indi_permission": indi_permission,
             "reference_utc": normalized_reference,
             "reference_source": reference_source,
             "drift_seconds": (
