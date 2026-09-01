@@ -203,15 +203,32 @@ class IndiService(_CoreIndiService):
             .replace("+00:00", "Z")
         )
 
+    @staticmethod
+    def _utc_instant(value: str) -> datetime:
+        normalized = value.strip()
+
+        if normalized.endswith("Z"):
+            normalized = normalized[:-1] + "+00:00"
+
+        instant = datetime.fromisoformat(normalized)
+
+        if instant.tzinfo is None:
+            instant = instant.replace(tzinfo=timezone.utc)
+
+        return instant.astimezone(timezone.utc)
+
     def mount_time_status(
         self,
         mount_name: str | None = None,
+        reference_utc: str | None = None,
+        reference_source: str | None = None,
     ) -> dict:
         """Read the OnStep/LX200 clock directly from INDI.
 
-        This deliberately does not reuse the Android, GPS or Raspberry Pi
-        clock.  It is a real readback of the mount ``TIME_UTC`` property so
-        the Status screen can compare two independent time sources.
+        The clock readback is independent from Android/GPS/Raspberry Pi.
+        When a trusted StellarPilot reference is provided, the response also
+        reports the measured clock drift.  A difference <= 10 seconds is
+        considered synchronized; larger differences are reported as drift.
         """
         unavailable = {
             "status": "unavailable",
@@ -220,6 +237,11 @@ class IndiService(_CoreIndiService):
             "utc": None,
             "offset_hours": None,
             "indi_state": None,
+            "reference_utc": reference_utc,
+            "reference_source": reference_source,
+            "drift_seconds": None,
+            "synchronized": None,
+            "synchronization": "unverified",
             "detail": None,
         }
 
@@ -296,6 +318,31 @@ class IndiService(_CoreIndiService):
             except ValueError:
                 offset_hours = None
 
+        drift_seconds = None
+        synchronized = None
+        synchronization = "unverified"
+        normalized_reference = reference_utc
+
+        if (
+            reference_utc
+            and reference_source in {"gps", "android"}
+        ):
+            try:
+                normalized_reference = self._normalize_utc(reference_utc)
+                mount_instant = self._utc_instant(utc_value)
+                reference_instant = self._utc_instant(normalized_reference)
+                drift_seconds = abs(
+                    (mount_instant - reference_instant).total_seconds()
+                )
+                synchronized = drift_seconds <= 10.0
+                synchronization = (
+                    "synchronized"
+                    if synchronized
+                    else "drift"
+                )
+            except ValueError:
+                synchronization = "unverified"
+
         return {
             "status": "available",
             "source": "indi",
@@ -304,6 +351,15 @@ class IndiService(_CoreIndiService):
             "utc_raw": utc_raw,
             "offset_hours": offset_hours,
             "indi_state": values.get("_STATE"),
+            "reference_utc": normalized_reference,
+            "reference_source": reference_source,
+            "drift_seconds": (
+                round(drift_seconds, 3)
+                if drift_seconds is not None
+                else None
+            ),
+            "synchronized": synchronized,
+            "synchronization": synchronization,
             "detail": None,
         }
 
