@@ -32,9 +32,13 @@ data class TimeSourceStatus(
     val trustedReference: Boolean,
     val timezoneOffsetMinutes: Int? = null,
     val offsetHours: Double? = null,
+    val expectedOffsetHours: Double? = null,
+    val offsetMatchesReference: Boolean? = null,
+    val controlReady: Boolean? = null,
     val indiState: String? = null,
     val synchronization: String? = null,
     val readbackKind: String? = null,
+    val driftAdvisory: Boolean = false,
     val detail: String? = null
 )
 
@@ -44,6 +48,7 @@ data class TimeSynchronizationStatus(
     val toleranceSeconds: Double,
     val referenceSource: String?,
     val referenceUtc: String?,
+    val mountControlReady: Boolean,
     val gps: TimeSourceStatus,
     val android: TimeSourceStatus,
     val raspberryPi: TimeSourceStatus,
@@ -122,6 +127,15 @@ class MountTimeApiClient(
                     offsetHours = source.nullableDouble(
                         "offset_hours"
                     ),
+                    expectedOffsetHours = source.nullableDouble(
+                        "expected_offset_hours"
+                    ),
+                    offsetMatchesReference = source.nullableBoolean(
+                        "offset_matches_reference"
+                    ),
+                    controlReady = source.nullableBoolean(
+                        "control_ready"
+                    ),
                     indiState = source.nullableString(
                         "indi_state"
                     ),
@@ -130,6 +144,10 @@ class MountTimeApiClient(
                     ),
                     readbackKind = source.nullableString(
                         "readback_kind"
+                    ),
+                    driftAdvisory = source.optBoolean(
+                        "drift_advisory",
+                        false
                     ),
                     detail = source.nullableString("detail")
                 )
@@ -149,6 +167,10 @@ class MountTimeApiClient(
                 ),
                 referenceUtc = root.nullableString(
                     "reference_utc"
+                ),
+                mountControlReady = root.optBoolean(
+                    "mount_control_ready",
+                    false
                 ),
                 gps = parseSource("gps"),
                 android = parseSource("android"),
