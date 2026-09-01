@@ -496,12 +496,18 @@ def time_synchronization():
             and source.get("utc") is not None
         ]
         any_bad = any(value is False for value in available_checks)
+        any_alert = (
+            str(sources["onstep"].get("indi_state") or "")
+            .strip()
+            .lower()
+            == "alert"
+        )
         all_available = all(
             source.get("available")
             for source in sources.values()
         )
 
-        if any_bad:
+        if any_bad or any_alert:
             overall = "attention"
         elif all_available and available_checks:
             overall = "synchronized"
