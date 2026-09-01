@@ -5,8 +5,6 @@ data class ServerSession(
     val longitude: Double?,
     val altitude: Double?,
     val timestamp: String?,
-    val timeSource: String? = null,
-    val timezoneOffsetMinutes: Int? = null,
     val mountType: String?,
     val mountTypeSource: String?,
     val mountFamily: String?,
@@ -19,16 +17,6 @@ data class DeviceStatus(
     val name: String? = null
 )
 
-data class MountTimeStatus(
-    val status: String,
-    val source: String? = null,
-    val utc: String? = null,
-    val utcRaw: String? = null,
-    val offsetHours: Double? = null,
-    val indiState: String? = null,
-    val detail: String? = null
-)
-
 data class MountStatus(
     val status: String,
     val name: String? = null,
@@ -36,8 +24,7 @@ data class MountStatus(
     val typeLabel: String? = null,
     val family: String? = null,
     val familyLabel: String? = null,
-    val startupTarget: String? = null,
-    val time: MountTimeStatus? = null
+    val startupTarget: String? = null
 )
 
 data class CameraSensor(
