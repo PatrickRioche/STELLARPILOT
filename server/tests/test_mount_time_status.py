@@ -17,6 +17,8 @@ def test_mount_time_status_reads_indi_and_compares_reference(monkeypatch):
             stdout=(
                 "LX200 OnStep.TIME_UTC.UTC=2026-09-01T07:30:00\n"
                 "LX200 OnStep.TIME_UTC.OFFSET=2.00\n"
+                "LX200 OnStep.TIME_UTC._STATE=Ok\n"
+                "LX200 OnStep.TIME_UTC._PERM=rw\n"
             ),
             stderr="",
         )
@@ -37,6 +39,8 @@ def test_mount_time_status_reads_indi_and_compares_reference(monkeypatch):
     assert result["source"] == "indi"
     assert result["utc"] == "2026-09-01T07:30:00Z"
     assert result["offset_hours"] == 2.0
+    assert result["indi_state"] == "Ok"
+    assert result["indi_permission"] == "rw"
     assert result["drift_seconds"] == 4.0
     assert result["synchronized"] is True
     assert result["synchronization"] == "synchronized"
@@ -49,6 +53,7 @@ def test_mount_time_status_marks_large_drift(monkeypatch):
             stdout=(
                 "LX200 OnStep.TIME_UTC.UTC=2026-09-01T07:28:00\n"
                 "LX200 OnStep.TIME_UTC.OFFSET=2.00\n"
+                "LX200 OnStep.TIME_UTC._STATE=Ok\n"
             ),
             stderr="",
         )
@@ -68,6 +73,36 @@ def test_mount_time_status_marks_large_drift(monkeypatch):
     assert result["drift_seconds"] == 120.0
     assert result["synchronized"] is False
     assert result["synchronization"] == "drift"
+
+
+def test_mount_time_status_marks_indi_alert(monkeypatch):
+    def fake_run(*args, **kwargs):
+        return SimpleNamespace(
+            returncode=0,
+            stdout=(
+                "LX200 OnStep.TIME_UTC.UTC=2026-09-01T07:30:00\n"
+                "LX200 OnStep.TIME_UTC.OFFSET=2.00\n"
+                "LX200 OnStep.TIME_UTC._STATE=Alert\n"
+            ),
+            stderr="",
+        )
+
+    monkeypatch.setattr(
+        "app.indi.service.subprocess.run",
+        fake_run,
+    )
+
+    service = IndiService()
+    result = service.mount_time_status(
+        mount_name="LX200 OnStep",
+        reference_utc="2026-09-01T07:30:02Z",
+        reference_source="android",
+    )
+
+    assert result["drift_seconds"] == 2.0
+    assert result["indi_state"] == "Alert"
+    assert result["synchronized"] is False
+    assert result["synchronization"] == "alert"
 
 
 def test_mount_time_endpoint_uses_trusted_reference(monkeypatch):
@@ -120,3 +155,64 @@ def test_mount_time_endpoint_uses_trusted_reference(monkeypatch):
         "reference_utc": "2026-09-01T07:30:00Z",
         "reference_source": "gps",
     }
+
+
+def test_time_synchronization_endpoint_compares_all_sources(monkeypatch):
+    monkeypatch.setattr(
+        main_module._core.gps_service,
+        "status",
+        lambda: {
+            "status": "fix",
+            "time_utc": "2026-09-01T07:30:00Z",
+            "latitude": 47.46,
+            "longitude": -0.61,
+        },
+    )
+    monkeypatch.setattr(
+        main_module._core.system_service,
+        "status",
+        lambda: {
+            "datetime": "2026-09-01T09:30:03+02:00",
+        },
+    )
+    monkeypatch.setattr(
+        main_module._core,
+        "_client_time_utc",
+        lambda: "2026-09-01T07:30:02Z",
+    )
+    main_module._core.state.client_timezone_offset_minutes = 120
+
+    def fake_mount_time_status(
+        mount_name=None,
+        reference_utc=None,
+        reference_source=None,
+    ):
+        return {
+            "status": "available",
+            "utc": "2026-09-01T07:30:04Z",
+            "offset_hours": 2.0,
+            "indi_state": "Ok",
+            "indi_permission": "rw",
+            "drift_seconds": 4.0,
+            "synchronized": True,
+            "synchronization": "synchronized",
+            "detail": None,
+        }
+
+    monkeypatch.setattr(
+        main_module._core.indi_service,
+        "mount_time_status",
+        fake_mount_time_status,
+    )
+
+    response = client.get("/time/synchronization")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "synchronized"
+    assert payload["reference_source"] == "gps"
+    assert payload["sources"]["gps"]["trusted_reference"] is True
+    assert payload["sources"]["android"]["drift_seconds"] == 2.0
+    assert payload["sources"]["raspberry_pi"]["drift_seconds"] == 3.0
+    assert payload["sources"]["onstep"]["drift_seconds"] == 4.0
+    assert payload["sources"]["onstep"]["indi_state"] == "Ok"
