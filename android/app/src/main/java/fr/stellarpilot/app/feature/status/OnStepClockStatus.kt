@@ -2,7 +2,6 @@ package fr.stellarpilot.app.feature.status
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -100,6 +99,14 @@ fun OnStepClockStatusBlock(
         style = MaterialTheme.typography.labelLarge,
         fontWeight = FontWeight.Bold,
         color = StellarOrange
+    )
+
+    Spacer(Modifier.height(4.dp))
+
+    Text(
+        text = "Actualisation automatique toutes les 5 s",
+        color = StellarMuted,
+        style = MaterialTheme.typography.bodySmall
     )
 
     Spacer(Modifier.height(6.dp))
