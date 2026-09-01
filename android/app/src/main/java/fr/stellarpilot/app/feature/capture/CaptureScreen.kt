@@ -1,8 +1,6 @@
 package fr.stellarpilot.app.feature.capture
 
-import android.graphics.BitmapFactory
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -26,14 +24,13 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import fr.stellarpilot.app.feature.demo.DemoModeState
+import fr.stellarpilot.app.ui.components.AstrometryQualityIndicator
+import fr.stellarpilot.app.ui.components.StellarImagePreview
 import fr.stellarpilot.app.ui.theme.StellarBackground
 import fr.stellarpilot.app.ui.theme.StellarBorder
 import fr.stellarpilot.app.ui.theme.StellarGreen
@@ -55,16 +52,6 @@ fun CaptureScreen(
     val target = state.target
     val session = state.session
     val demoMode = DemoModeState.active
-
-    val bitmap = remember(state.imageBytes) {
-        state.imageBytes?.let { bytes ->
-            BitmapFactory.decodeByteArray(
-                bytes,
-                0,
-                bytes.size
-            )?.asImageBitmap()
-        }
-    }
 
     Surface(
         modifier = Modifier.fillMaxSize(),
@@ -251,7 +238,7 @@ fun CaptureScreen(
 
                 Text(
                     text =
-                        "Valeur initiale : 4 s. Elle sera ensuite ajustée au profil du setup et à la qualité réelle du suivi.",
+                        "Valeur initiale : 4 s. Le rendu JPEG est maintenant identique à celui de l'Assistant 3.",
                     color = StellarMuted,
                     style = MaterialTheme.typography.bodySmall
                 )
@@ -323,6 +310,17 @@ fun CaptureScreen(
                         },
                     fontWeight = FontWeight.Bold
                 )
+
+                session?.centeringQuality?.let { quality ->
+                    Spacer(Modifier.height(10.dp))
+                    AstrometryQualityIndicator(
+                        score = quality.score,
+                        label = quality.label,
+                        starCount = quality.starCount,
+                        saturatedPercent = quality.saturatedPercent,
+                        classification = quality.classification
+                    )
+                }
 
                 centering?.errorArcsec?.let { error ->
                     Spacer(Modifier.height(4.dp))
@@ -400,33 +398,14 @@ fun CaptureScreen(
 
                 Spacer(Modifier.height(10.dp))
 
-                if (bitmap != null) {
-                    Image(
-                        bitmap = bitmap,
-                        contentDescription = "Capture astronomique",
-                        modifier = Modifier.fillMaxWidth(),
-                        contentScale = ContentScale.FillWidth
-                    )
-                } else {
-                    Surface(
-                        modifier =
-                            Modifier
-                                .fillMaxWidth()
-                                .height(220.dp),
-                        color = StellarSurfaceRaised,
-                        shape = RoundedCornerShape(12.dp)
-                    ) {
-                        Column(
-                            modifier = Modifier.padding(20.dp),
-                            verticalArrangement = Arrangement.Center
-                        ) {
-                            Text(
-                                text = "Aucune image",
-                                color = StellarMuted
-                            )
-                        }
-                    }
-                }
+                StellarImagePreview(
+                    imageBytes = state.imageBytes,
+                    contentDescription = "Capture astronomique",
+                    loadingText =
+                        if (state.isBusy) state.statusMessage else null,
+                    emptyText = "Aucune image",
+                    showCrosshair = false
+                )
             }
 
             Spacer(Modifier.height(14.dp))
