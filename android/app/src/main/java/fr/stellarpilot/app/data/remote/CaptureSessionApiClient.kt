@@ -23,6 +23,16 @@ data class CaptureCenteringStatus(
 )
 
 
+data class CaptureQualityStatus(
+    val score: Int?,
+    val label: String?,
+    val classification: String?,
+    val starCount: Int?,
+    val saturatedPercent: Double?,
+    val recommendedExposureFactor: Double?
+)
+
+
 data class CaptureStackingStatus(
     val running: Boolean,
     val recenterRequired: Boolean,
@@ -47,6 +57,7 @@ data class CaptureSessionStatus(
     val rejectedFrames: Int,
     val integrationSeconds: Double,
     val centering: CaptureCenteringStatus,
+    val centeringQuality: CaptureQualityStatus?,
     val stacking: CaptureStackingStatus,
     val hasPreview: Boolean,
     val hasStackPreview: Boolean,
@@ -341,6 +352,7 @@ class CaptureSessionApiClient(
         val setup = root.optJSONObject("setup") ?: JSONObject()
         val counts = root.optJSONObject("counts") ?: JSONObject()
         val centering = root.optJSONObject("centering") ?: JSONObject()
+        val centeringQuality = root.optJSONObject("centering_quality")
         val stacking = root.optJSONObject("stacking") ?: JSONObject()
 
         fun nullableDouble(
@@ -360,6 +372,48 @@ class CaptureSessionApiClient(
             return json.optString(key)
                 .takeIf { it.isNotBlank() }
         }
+
+        val parsedQuality =
+            centeringQuality?.let { quality ->
+                if (quality.optString("status") != "ok") {
+                    null
+                } else {
+                    CaptureQualityStatus(
+                        score =
+                            if (
+                                quality.has("astrometry_score") &&
+                                !quality.isNull("astrometry_score")
+                            ) {
+                                quality.optInt("astrometry_score")
+                            } else {
+                                null
+                            },
+                        label =
+                            nullableString(quality, "quality_label"),
+                        classification =
+                            nullableString(quality, "classification"),
+                        starCount =
+                            if (
+                                quality.has("star_count") &&
+                                !quality.isNull("star_count")
+                            ) {
+                                quality.optInt("star_count")
+                            } else {
+                                null
+                            },
+                        saturatedPercent =
+                            nullableDouble(
+                                quality,
+                                "saturated_percent"
+                            ),
+                        recommendedExposureFactor =
+                            nullableDouble(
+                                quality,
+                                "recommended_exposure_factor"
+                            )
+                    )
+                }
+            }
 
         return CaptureSessionStatus(
             id = root.optString("id"),
@@ -388,6 +442,7 @@ class CaptureSessionApiClient(
                 solverStatus = nullableString(centering, "solver_status"),
                 solverDetail = nullableString(centering, "solver_detail")
             ),
+            centeringQuality = parsedQuality,
             stacking = CaptureStackingStatus(
                 running = stacking.optBoolean("running", false),
                 recenterRequired =
