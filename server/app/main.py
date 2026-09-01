@@ -218,6 +218,7 @@ def solve(payload: _core.SolvePayload):
 
 @app.post("/mount/goto")
 def mount_goto(payload: TrackingGotoPayload):
+    """Point the mount without rewriting a validated OnStep clock."""
     gps = _core.gps_service.status()
     system = _core.system_service.status()
 
@@ -226,8 +227,10 @@ def mount_goto(payload: TrackingGotoPayload):
         system,
     )
 
-    # Un GOTO astronomique ne doit pas etre lance
-    # avec une heure potentiellement fausse.
+    # StellarPilot still requires a trusted session time for sky calculations,
+    # but hardware tests showed that rewriting TIME_UTC before every GOTO can
+    # disturb an otherwise correct OnStep configuration.  GOTO is therefore
+    # read-only with respect to the mount clock.
     if (
         timestamp_utc is None
         or time_source not in {"gps", "android"}
@@ -235,73 +238,66 @@ def mount_goto(payload: TrackingGotoPayload):
         return {
             "status": "error",
             "detail": (
-                "Aucune source d'heure fiable "
-                "disponible pour initialiser OnStep"
+                "Aucune source d'heure fiable disponible pour le pointage"
             ),
             "time_source": time_source,
         }
 
-    offset_minutes = (
-        _core.state.client_timezone_offset_minutes
+    clock_check = _core.indi_service.mount_time_status(
+        reference_utc=timestamp_utc,
+        reference_source=time_source,
     )
 
-    # En cas de GPS disponible mais sans information
-    # de fuseau provenant d'Android, utilise le fuseau
-    # configure sur le Raspberry Pi.
-    if offset_minutes is None:
-        try:
-            value = timestamp_utc
-
-            if value.endswith("Z"):
-                value = (
-                    value[:-1]
-                    + "+00:00"
-                )
-
-            instant = _core.datetime.fromisoformat(
-                value
-            )
-
-            if instant.tzinfo is None:
-                instant = instant.replace(
-                    tzinfo=_core.timezone.utc
-                )
-
-            local_offset = (
-                instant
-                .astimezone()
-                .utcoffset()
-            )
-
-            offset_minutes = int(
-                (
-                    local_offset.total_seconds()
-                    if local_offset is not None
-                    else 0
-                )
-                / 60
-            )
-
-        except ValueError:
-            offset_minutes = 0
-
-    time_sync = _core.indi_service.sync_mount_time(
-        utc_iso=timestamp_utc,
-        timezone_offset_minutes=offset_minutes,
-    )
-
-    if time_sync.get("status") not in {
-        "ok",
-    }:
+    if clock_check.get("status") != "available":
         return {
             "status": "error",
             "detail": (
-                "Synchronisation de l'heure "
-                "OnStep impossible"
+                "État horaire OnStep indisponible : pointage bloqué"
             ),
             "time_source": time_source,
-            "time_sync": time_sync,
+            "time_check": clock_check,
         }
+
+    indi_state = str(
+        clock_check.get("indi_state") or ""
+    ).strip().lower()
+
+    if indi_state == "alert":
+        return {
+            "status": "error",
+            "detail": (
+                "TIME_UTC OnStep est en Alert : corrigez l'heure de la "
+                "monture avant le pointage"
+            ),
+            "time_source": time_source,
+            "time_check": clock_check,
+        }
+
+    expected_offset_hours = None
+    offset_minutes = _core.state.client_timezone_offset_minutes
+
+    if offset_minutes is not None:
+        expected_offset_hours = offset_minutes / 60.0
+        actual_offset_hours = clock_check.get("offset_hours")
+
+        if (
+            actual_offset_hours is not None
+            and abs(actual_offset_hours - expected_offset_hours) > 0.01
+        ):
+            return {
+                "status": "error",
+                "detail": (
+                    "Offset OnStep incohérent avec la tablette : "
+                    f"OnStep {actual_offset_hours:+.2f} h, "
+                    f"attendu {expected_offset_hours:+.2f} h"
+                ),
+                "time_source": time_source,
+                "time_check": {
+                    **clock_check,
+                    "expected_offset_hours": expected_offset_hours,
+                    "offset_matches_reference": False,
+                },
+            }
 
     result = _core.indi_service.goto(
         payload.ra,
@@ -310,14 +306,33 @@ def mount_goto(payload: TrackingGotoPayload):
     )
 
     result["time_source"] = time_source
-    result["time_sync"] = time_sync
+    result["time_check"] = {
+        **clock_check,
+        "expected_offset_hours": expected_offset_hours,
+        "offset_matches_reference": (
+            None
+            if expected_offset_hours is None
+            or clock_check.get("offset_hours") is None
+            else abs(
+                clock_check["offset_hours"] - expected_offset_hours
+            ) <= 0.01
+        ),
+    }
+    # Kept for compatibility with clients that already display time_sync.
+    result["time_sync"] = {
+        "status": "preserved",
+        "mode": "read_only",
+        "detail": (
+            "Horloge OnStep conservée ; aucune écriture TIME_UTC avant GOTO"
+        ),
+    }
 
     return result
 
 
 @app.get("/mount/time")
 def mount_time():
-    """Read the real OnStep clock through INDI and compare it to trusted time."""
+    """Read the INDI-published OnStep TIME_UTC diagnostic value."""
     gps = _core.gps_service.status()
     system = _core.system_service.status()
     reference_utc, reference_source = _core._resolve_time(
@@ -357,6 +372,7 @@ def _time_source_entry(
     trusted_reference: bool,
     available: bool,
     status: str,
+    comparison_enabled: bool = True,
     extra: dict | None = None,
 ) -> dict:
     normalized_utc = utc_value
@@ -369,14 +385,17 @@ def _time_source_entry(
         except ValueError:
             normalized_utc = utc_value
 
-    drift_seconds = _time_drift_seconds(
-        normalized_utc,
-        reference_utc,
-    )
-
+    drift_seconds = None
     synchronized = None
-    if reference_utc and available and drift_seconds is not None:
-        synchronized = drift_seconds <= 10.0
+
+    if comparison_enabled:
+        drift_seconds = _time_drift_seconds(
+            normalized_utc,
+            reference_utc,
+        )
+
+        if reference_utc and available and drift_seconds is not None:
+            synchronized = drift_seconds <= 10.0
 
     return {
         "available": available,
@@ -391,7 +410,7 @@ def _time_source_entry(
 
 @app.get("/time/synchronization")
 def time_synchronization():
-    """Compare GPS, Android, Raspberry Pi and OnStep time in one snapshot."""
+    """Compare session time sources without rewriting the OnStep clock."""
     gps = _core.gps_service.status()
     system = _core.system_service.status()
     android_utc = _core._client_time_utc()
@@ -428,6 +447,30 @@ def time_synchronization():
         reference_source=reference_source,
     )
 
+    expected_offset_hours = None
+    if _core.state.client_timezone_offset_minutes is not None:
+        expected_offset_hours = (
+            _core.state.client_timezone_offset_minutes / 60.0
+        )
+
+    onstep_offset = onstep.get("offset_hours")
+    offset_matches_reference = None
+    if expected_offset_hours is not None and onstep_offset is not None:
+        offset_matches_reference = (
+            abs(onstep_offset - expected_offset_hours) <= 0.01
+        )
+
+    onstep_state = str(
+        onstep.get("indi_state") or ""
+    ).strip().lower()
+    onstep_available = onstep.get("status") == "available"
+    onstep_control_ready = (
+        trusted_reference
+        and onstep_available
+        and onstep_state != "alert"
+        and offset_matches_reference is not False
+    )
+
     sources = {
         "gps": _time_source_entry(
             utc_value=gps_utc,
@@ -435,6 +478,7 @@ def time_synchronization():
             trusted_reference=(reference_source == "gps"),
             available=gps_available,
             status=gps.get("status", "unknown"),
+            comparison_enabled=trusted_reference,
             extra={
                 "latitude": gps.get("latitude"),
                 "longitude": gps.get("longitude"),
@@ -450,6 +494,7 @@ def time_synchronization():
                 if android_utc is not None
                 else "unavailable"
             ),
+            comparison_enabled=trusted_reference,
             extra={
                 "timezone_offset_minutes": (
                     _core.state.client_timezone_offset_minutes
@@ -466,22 +511,29 @@ def time_synchronization():
                 if system_available
                 else "unavailable"
             ),
+            comparison_enabled=trusted_reference,
             extra={
                 "authoritative": False,
             },
         ),
         "onstep": {
-            "available": onstep.get("status") == "available",
+            "available": onstep_available,
             "status": onstep.get("status", "unavailable"),
             "utc": onstep.get("utc"),
+            # TIME_UTC can be a published/cached value and is therefore kept
+            # as an advisory diagnostic instead of a GOTO readiness criterion.
             "drift_seconds": onstep.get("drift_seconds"),
-            "synchronized": onstep.get("synchronized"),
+            "synchronized": None,
             "trusted_reference": False,
-            "offset_hours": onstep.get("offset_hours"),
+            "offset_hours": onstep_offset,
+            "expected_offset_hours": expected_offset_hours,
+            "offset_matches_reference": offset_matches_reference,
+            "control_ready": onstep_control_ready,
             "indi_state": onstep.get("indi_state"),
             "indi_permission": onstep.get("indi_permission"),
             "synchronization": onstep.get("synchronization"),
             "readback_kind": "indi_published_time",
+            "drift_advisory": True,
             "detail": onstep.get("detail"),
         },
     }
@@ -489,41 +541,42 @@ def time_synchronization():
     if not trusted_reference:
         overall = "unverified"
     else:
-        available_checks = [
+        comparable_checks = [
             source.get("synchronized")
-            for source in sources.values()
-            if source.get("available")
+            for key, source in sources.items()
+            if key != "onstep"
+            and source.get("available")
             and source.get("utc") is not None
+            and source.get("synchronized") is not None
         ]
-        any_bad = any(value is False for value in available_checks)
-        any_alert = (
-            str(sources["onstep"].get("indi_state") or "")
-            .strip()
-            .lower()
-            == "alert"
-        )
-        all_available = all(
+        any_bad = any(value is False for value in comparable_checks)
+        any_alert = onstep_state == "alert"
+        offset_bad = offset_matches_reference is False
+        all_sources_available = all(
             source.get("available")
             for source in sources.values()
         )
 
-        if any_bad or any_alert:
+        if any_bad or any_alert or offset_bad:
             overall = "attention"
-        elif all_available and available_checks:
+        elif all_sources_available and onstep_control_ready:
             overall = "synchronized"
-        else:
+        elif onstep_control_ready:
             overall = "partial"
+        else:
+            overall = "attention"
 
     return {
         "status": overall,
         "tolerance_seconds": 10.0,
         "reference_source": reference_source,
         "reference_utc": normalized_reference,
+        "mount_control_ready": onstep_control_ready,
         "sources": sources,
         "note": (
-            "OnStep correspond à l'heure publiée par la propriété INDI "
-            "TIME_UTC; elle peut représenter une ancre publiée plutôt "
-            "qu'une horloge continuellement rafraîchie."
+            "TIME_UTC est une valeur diagnostic publiée par INDI. "
+            "StellarPilot ne réécrit plus l'horloge OnStep avant un GOTO ; "
+            "le pointage conserve le réglage validé directement sur la monture."
         ),
     }
 
