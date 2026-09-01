@@ -228,6 +228,11 @@ fun StatusScreen(
                             fontWeight = FontWeight.SemiBold
                         )
                     }
+
+                    OnStepClockStatusBlock(
+                        serverBaseUrl = state.serverBaseUrl,
+                        refreshKey = server.session.timestamp
+                    )
                 }
 
                 Spacer(Modifier.height(16.dp))
