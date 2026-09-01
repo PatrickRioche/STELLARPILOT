@@ -331,6 +331,197 @@ def mount_time():
     )
 
 
+def _time_drift_seconds(
+    value: str | None,
+    reference: str | None,
+) -> float | None:
+    if not value or not reference:
+        return None
+
+    try:
+        instant = _core.indi_service._utc_instant(value)
+        reference_instant = _core.indi_service._utc_instant(reference)
+    except ValueError:
+        return None
+
+    return round(
+        abs((instant - reference_instant).total_seconds()),
+        3,
+    )
+
+
+def _time_source_entry(
+    *,
+    utc_value: str | None,
+    reference_utc: str | None,
+    trusted_reference: bool,
+    available: bool,
+    status: str,
+    extra: dict | None = None,
+) -> dict:
+    normalized_utc = utc_value
+
+    if utc_value:
+        try:
+            normalized_utc = _core.indi_service._normalize_utc(
+                utc_value
+            )
+        except ValueError:
+            normalized_utc = utc_value
+
+    drift_seconds = _time_drift_seconds(
+        normalized_utc,
+        reference_utc,
+    )
+
+    synchronized = None
+    if reference_utc and available and drift_seconds is not None:
+        synchronized = drift_seconds <= 10.0
+
+    return {
+        "available": available,
+        "status": status,
+        "utc": normalized_utc,
+        "drift_seconds": drift_seconds,
+        "synchronized": synchronized,
+        "trusted_reference": trusted_reference,
+        **(extra or {}),
+    }
+
+
+@app.get("/time/synchronization")
+def time_synchronization():
+    """Compare GPS, Android, Raspberry Pi and OnStep time in one snapshot."""
+    gps = _core.gps_service.status()
+    system = _core.system_service.status()
+    android_utc = _core._client_time_utc()
+    reference_utc, reference_source = _core._resolve_time(
+        gps,
+        system,
+    )
+
+    trusted_reference = (
+        reference_source in {"gps", "android"}
+        and reference_utc is not None
+    )
+
+    normalized_reference = reference_utc
+    if reference_utc:
+        try:
+            normalized_reference = _core.indi_service._normalize_utc(
+                reference_utc
+            )
+        except ValueError:
+            pass
+
+    gps_utc = gps.get("time_utc")
+    gps_available = (
+        gps.get("status") == "fix"
+        and bool(gps_utc)
+    )
+
+    system_utc = system.get("datetime")
+    system_available = bool(system_utc)
+
+    onstep = _core.indi_service.mount_time_status(
+        reference_utc=normalized_reference,
+        reference_source=reference_source,
+    )
+
+    sources = {
+        "gps": _time_source_entry(
+            utc_value=gps_utc,
+            reference_utc=normalized_reference,
+            trusted_reference=(reference_source == "gps"),
+            available=gps_available,
+            status=gps.get("status", "unknown"),
+            extra={
+                "latitude": gps.get("latitude"),
+                "longitude": gps.get("longitude"),
+            },
+        ),
+        "android": _time_source_entry(
+            utc_value=android_utc,
+            reference_utc=normalized_reference,
+            trusted_reference=(reference_source == "android"),
+            available=android_utc is not None,
+            status=(
+                "available"
+                if android_utc is not None
+                else "unavailable"
+            ),
+            extra={
+                "timezone_offset_minutes": (
+                    _core.state.client_timezone_offset_minutes
+                ),
+            },
+        ),
+        "raspberry_pi": _time_source_entry(
+            utc_value=system_utc,
+            reference_utc=normalized_reference,
+            trusted_reference=False,
+            available=system_available,
+            status=(
+                "available"
+                if system_available
+                else "unavailable"
+            ),
+            extra={
+                "authoritative": False,
+            },
+        ),
+        "onstep": {
+            "available": onstep.get("status") == "available",
+            "status": onstep.get("status", "unavailable"),
+            "utc": onstep.get("utc"),
+            "drift_seconds": onstep.get("drift_seconds"),
+            "synchronized": onstep.get("synchronized"),
+            "trusted_reference": False,
+            "offset_hours": onstep.get("offset_hours"),
+            "indi_state": onstep.get("indi_state"),
+            "indi_permission": onstep.get("indi_permission"),
+            "synchronization": onstep.get("synchronization"),
+            "readback_kind": "indi_published_time",
+            "detail": onstep.get("detail"),
+        },
+    }
+
+    if not trusted_reference:
+        overall = "unverified"
+    else:
+        available_checks = [
+            source.get("synchronized")
+            for source in sources.values()
+            if source.get("available")
+            and source.get("utc") is not None
+        ]
+        any_bad = any(value is False for value in available_checks)
+        all_available = all(
+            source.get("available")
+            for source in sources.values()
+        )
+
+        if any_bad:
+            overall = "attention"
+        elif all_available and available_checks:
+            overall = "synchronized"
+        else:
+            overall = "partial"
+
+    return {
+        "status": overall,
+        "tolerance_seconds": 10.0,
+        "reference_source": reference_source,
+        "reference_utc": normalized_reference,
+        "sources": sources,
+        "note": (
+            "OnStep correspond à l'heure publiée par la propriété INDI "
+            "TIME_UTC; elle peut représenter une ancre publiée plutôt "
+            "qu'une horloge continuellement rafraîchie."
+        ),
+    }
+
+
 @app.post("/capture/sessions")
 def create_capture_session(payload: CaptureSessionPayload):
     return capture_session_service.create_session(
