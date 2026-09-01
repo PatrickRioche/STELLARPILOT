@@ -2,7 +2,6 @@ package fr.stellarpilot.app.feature.status
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -117,14 +116,16 @@ fun OnStepClockStatusBlock(
             ?: "Non disponible"
     )
 
+    val referenceSource = clock?.referenceSource
+
     ClockInfoLine(
         label = "Référence",
-        value = when (clock?.referenceSource) {
+        value = when (referenceSource) {
             "gps" -> "GPS"
             "android" -> "Tablette Android"
             "system_untrusted" -> "Système Pi non fiable"
             null -> "Non disponible"
-            else -> clock.referenceSource.uppercase(Locale.ROOT)
+            else -> referenceSource.uppercase(Locale.ROOT)
         }
     )
 
