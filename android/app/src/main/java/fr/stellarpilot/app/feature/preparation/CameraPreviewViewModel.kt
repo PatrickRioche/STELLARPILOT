@@ -8,14 +8,24 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import fr.stellarpilot.app.R
 import fr.stellarpilot.app.data.remote.CameraPreviewApiClient
+import fr.stellarpilot.app.data.remote.CameraQualityResult
 import fr.stellarpilot.app.data.remote.DetectedStar
 import kotlinx.coroutines.launch
+import kotlin.math.roundToInt
+
 
 data class CameraPreviewUiState(
     val isLoading: Boolean = false,
     val imageBytes: ByteArray? = null,
     val capturePath: String? = null,
     val exposureSeconds: Double? = null,
+    val qualityScore: Int? = null,
+    val qualityLabel: String? = null,
+    val qualityClassification: String? = null,
+    val qualityStarCount: Int? = null,
+    val qualitySaturatedPercent: Double? = null,
+    val recommendedExposureFactor: Double? = null,
+    val suggestedExposureMs: List<Int> = emptyList(),
     val solveStatus: String? = null,
     val solver: String? = null,
     val ra: Double? = null,
@@ -27,6 +37,7 @@ data class CameraPreviewUiState(
     val solveDetail: String? = null,
     val error: String? = null
 )
+
 
 data class DemoM103UiState(
     val isLoading: Boolean = false,
@@ -65,16 +76,6 @@ class CameraPreviewViewModel(
     fun runDemoM103(
         serverBaseUrl: String
     ) {
-        /*
-         * Mode D?mo 100 % local :
-         * - aucune connexion au Raspberry Pi
-         * - aucun appel HTTP
-         * - aucun appel INDI
-         * - aucun plate solving r?el
-         *
-         * L'image et le r?sultat astrom?trique de r?f?rence
-         * sont embarqu?s directement dans l'APK.
-         */
         val imageBytes =
             try {
                 getApplication<Application>()
@@ -93,7 +94,7 @@ class CameraPreviewViewModel(
                         solveStatus = "error",
                         error =
                             "Image M103 locale indisponible: " +
-                            error.message
+                                error.message
                     )
 
                 return
@@ -132,6 +133,13 @@ class CameraPreviewViewModel(
             imageBytes = null,
             capturePath = null,
             exposureSeconds = exposureSeconds,
+            qualityScore = null,
+            qualityLabel = null,
+            qualityClassification = null,
+            qualityStarCount = null,
+            qualitySaturatedPercent = null,
+            recommendedExposureFactor = null,
+            suggestedExposureMs = emptyList(),
             solveStatus = null,
             solver = null,
             ra = null,
@@ -163,15 +171,59 @@ class CameraPreviewViewModel(
                     imageBytes = image,
                     capturePath = capture.imagePath,
                     exposureSeconds = capture.exposureSeconds,
-                    solveStatus = "solving",
-                    solver = "astrometry.net",
+                    solveStatus = "quality_check",
                     error = null
                 )
 
-                /*
-                 * Laisser Compose afficher la capture avant
-                 * de lancer la résolution astrométrique longue.
-                 */
+                kotlinx.coroutines.yield()
+                kotlinx.coroutines.delay(100)
+
+                val quality =
+                    api.analyzeQuality(
+                        serverBaseUrl,
+                        capture.imagePath
+                    )
+
+                val suggestions =
+                    suggestedExposures(
+                        currentExposureSeconds =
+                            capture.exposureSeconds,
+                        quality = quality
+                    )
+
+                uiState = uiState.copy(
+                    qualityScore = quality.score,
+                    qualityLabel = quality.qualityLabel,
+                    qualityClassification = quality.classification,
+                    qualityStarCount = quality.starCount,
+                    qualitySaturatedPercent =
+                        quality.saturatedPercent,
+                    recommendedExposureFactor =
+                        quality.recommendedExposureFactor,
+                    suggestedExposureMs = suggestions,
+                    solveStatus =
+                        if (quality.astrometryReady) {
+                            "solving"
+                        } else {
+                            "quality_insufficient"
+                        },
+                    solveDetail =
+                        if (quality.astrometryReady) {
+                            null
+                        } else {
+                            "Qualité insuffisante pour lancer automatiquement astrometry.net"
+                        }
+                )
+
+                if (!quality.astrometryReady) {
+                    uiState = uiState.copy(
+                        isLoading = false,
+                        solver = null,
+                        error = null
+                    )
+                    return@launch
+                }
+
                 kotlinx.coroutines.yield()
                 kotlinx.coroutines.delay(100)
 
@@ -204,5 +256,51 @@ class CameraPreviewViewModel(
                 )
             }
         }
+    }
+
+    private fun suggestedExposures(
+        currentExposureSeconds: Double,
+        quality: CameraQualityResult
+    ): List<Int> {
+        val currentMs =
+            (currentExposureSeconds * 1000.0)
+                .roundToInt()
+                .coerceIn(1, 10_000)
+
+        val factor =
+            quality.recommendedExposureFactor
+                ?.coerceIn(0.1, 8.0)
+                ?: 1.0
+
+        val targetMs =
+            (currentMs * factor)
+                .roundToInt()
+                .coerceIn(1, 10_000)
+
+        val candidates =
+            if (factor < 1.0) {
+                listOf(
+                    (targetMs * 0.5).roundToInt(),
+                    targetMs,
+                    currentMs
+                )
+            } else if (factor > 1.0) {
+                listOf(
+                    currentMs,
+                    targetMs,
+                    (targetMs * 2.0).roundToInt()
+                )
+            } else {
+                listOf(
+                    (currentMs * 0.5).roundToInt(),
+                    currentMs,
+                    (currentMs * 2.0).roundToInt()
+                )
+            }
+
+        return candidates
+            .map { it.coerceIn(1, 10_000) }
+            .distinct()
+            .sorted()
     }
 }
