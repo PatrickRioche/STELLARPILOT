@@ -57,7 +57,7 @@ data class CaptureSessionStatus(
     val rejectedFrames: Int,
     val integrationSeconds: Double,
     val centering: CaptureCenteringStatus,
-    val centeringQuality: CaptureQualityStatus?,
+    val centeringQuality: CaptureQualityStatus? = null,
     val stacking: CaptureStackingStatus,
     val hasPreview: Boolean,
     val hasStackPreview: Boolean,
