@@ -1,6 +1,7 @@
 import shutil
 import subprocess
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 from app.indi._service_core import IndiService as _CoreIndiService
@@ -182,6 +183,139 @@ class IndiService(_CoreIndiService):
             "Le mode de suivi INDI n'a pas ete confirme: "
             f"{normalized}"
         )
+
+    @staticmethod
+    def _normalize_utc(value: str) -> str:
+        """Normalize an INDI TIME_UTC.UTC value as an explicit UTC ISO time."""
+        normalized = value.strip()
+
+        if normalized.endswith("Z"):
+            normalized = normalized[:-1] + "+00:00"
+
+        instant = datetime.fromisoformat(normalized)
+
+        if instant.tzinfo is None:
+            instant = instant.replace(tzinfo=timezone.utc)
+
+        return (
+            instant.astimezone(timezone.utc)
+            .isoformat(timespec="seconds")
+            .replace("+00:00", "Z")
+        )
+
+    def mount_time_status(
+        self,
+        mount_name: str | None = None,
+    ) -> dict:
+        """Read the OnStep/LX200 clock directly from INDI.
+
+        This deliberately does not reuse the Android, GPS or Raspberry Pi
+        clock.  It is a real readback of the mount ``TIME_UTC`` property so
+        the Status screen can compare two independent time sources.
+        """
+        unavailable = {
+            "status": "unavailable",
+            "source": "indi",
+            "mount": mount_name,
+            "utc": None,
+            "offset_hours": None,
+            "indi_state": None,
+            "detail": None,
+        }
+
+        if mount_name is None:
+            mount_name = self._find_connected_mount()
+            unavailable["mount"] = mount_name
+
+        if mount_name is None:
+            unavailable["detail"] = "Aucune monture INDI connectee"
+            return unavailable
+
+        try:
+            result = subprocess.run(
+                [
+                    "indi_getprop",
+                    "-h",
+                    "127.0.0.1",
+                    "-p",
+                    "7624",
+                    "-t",
+                    "2",
+                    f"{mount_name}.TIME_UTC.*",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=4,
+                check=False,
+            )
+        except (
+            OSError,
+            subprocess.SubprocessError,
+        ) as exc:
+            unavailable["detail"] = str(exc)
+            return unavailable
+
+        values: dict[str, str] = {}
+        prefix = f"{mount_name}.TIME_UTC."
+
+        for line in result.stdout.splitlines():
+            if "=" not in line:
+                continue
+
+            key, value = line.split("=", 1)
+            key = key.strip()
+
+            if key.startswith(prefix):
+                values[key[len(prefix):]] = value.strip()
+
+        utc_raw = values.get("UTC")
+
+        if not utc_raw:
+            unavailable["detail"] = (
+                result.stderr.strip()
+                or "Propriete INDI TIME_UTC.UTC indisponible"
+            )
+            return unavailable
+
+        try:
+            utc_value = self._normalize_utc(utc_raw)
+        except ValueError as exc:
+            return {
+                **unavailable,
+                "status": "invalid",
+                "utc_raw": utc_raw,
+                "detail": f"Heure OnStep invalide: {exc}",
+            }
+
+        offset_hours = None
+        offset_raw = values.get("OFFSET")
+
+        if offset_raw is not None:
+            try:
+                offset_hours = float(offset_raw)
+            except ValueError:
+                offset_hours = None
+
+        return {
+            "status": "available",
+            "source": "indi",
+            "mount": mount_name,
+            "utc": utc_value,
+            "utc_raw": utc_raw,
+            "offset_hours": offset_hours,
+            "indi_state": values.get("_STATE"),
+            "detail": None,
+        }
+
+    def status_snapshot(self) -> dict:
+        """Add an independent OnStep clock readback to the normal snapshot."""
+        snapshot = super().status_snapshot()
+        mount = dict(snapshot.get("mount") or {})
+        mount["time"] = self.mount_time_status(
+            mount.get("name")
+        )
+        snapshot["mount"] = mount
+        return snapshot
 
     def capture(
         self,
