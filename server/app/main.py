@@ -1,3 +1,4 @@
+from pathlib import Path
 from typing import Literal
 
 from fastapi import HTTPException
@@ -13,7 +14,9 @@ from app.imaging.centering_capture import (
 from app.imaging.preparation_astrometry import (
     preparation_astrometry_archive,
 )
-from app.imaging.sessions import capture_session_service
+from app.imaging.preview import preview_headers, render_fits_preview
+from app.imaging.quality import analyze_fits
+from app.imaging.sessions import CaptureSessionService, capture_session_service
 
 
 app = _core.app
@@ -60,6 +63,23 @@ class CaptureSessionPayload(BaseModel):
     )
 
 
+class CameraQualityPayload(BaseModel):
+    image: str
+
+
+# CaptureSessionService historically had its own, simpler FITS -> JPEG path.
+# Route every Capture/Stack/Gallery preview through the same renderer as
+# Preparation Assistant 3 without duplicating processing logic.
+def _unified_session_preview_bytes(path: Path) -> bytes:
+    content, _diagnostics = render_fits_preview(path)
+    return content
+
+
+CaptureSessionService._fits_preview_bytes = staticmethod(
+    _unified_session_preview_bytes
+)
+
+
 # Replace the routes that need behavior layered on top of _main_core.
 _OVERRIDDEN_ROUTES = {
     ("/mount/goto", "POST"),
@@ -88,19 +108,23 @@ def capture(payload: _core.CapturePayload):
     if result.get("status") != "captured":
         return result
 
-    try:
-        archive = preparation_astrometry_archive.archive_capture(result)
-    except Exception as exc:
-        _core.logger.exception(
-            "Unable to persist Preparation Assistant 3 astrometry capture"
-        )
-        raise HTTPException(
-            status_code=500,
-            detail=(
-                "Capture réalisée mais archivage persistant "
-                f"Assistant 3 impossible : {exc}"
-            ),
-        ) from exc
+    # The INDI facade may already have persisted the frame. Keep this route as
+    # the authoritative Assistant 3 boundary while avoiding duplicate archives.
+    archive = result.get("persistent_astrometry")
+    if not isinstance(archive, dict):
+        try:
+            archive = preparation_astrometry_archive.archive_capture(result)
+        except Exception as exc:
+            _core.logger.exception(
+                "Unable to persist Preparation Assistant 3 astrometry capture"
+            )
+            raise HTTPException(
+                status_code=500,
+                detail=(
+                    "Capture réalisée mais archivage persistant "
+                    f"Assistant 3 impossible : {exc}"
+                ),
+            ) from exc
 
     enriched = dict(result)
     enriched["persistent_archive"] = archive
@@ -109,24 +133,69 @@ def capture(payload: _core.CapturePayload):
 
 @app.get("/camera/preview.jpg")
 def camera_preview():
-    """Return legacy preview and persist its JPEG beside the FITS."""
-    response = _core.camera_preview()
-    source = response.headers.get("X-StellarPilot-Source")
+    """Return the canonical StellarPilot preview for Assistant 3."""
+    capture_dir = Path("/tmp/stellarpilot-captures")
 
-    if source:
-        try:
-            preparation_astrometry_archive.record_preview(
-                source,
-                bytes(response.body),
-                headers=dict(response.headers),
-            )
-        except Exception:
-            # initial.fits is already safe; a JPEG can always be regenerated.
-            _core.logger.exception(
-                "Unable to persist Preparation Assistant 3 preview"
-            )
+    if not capture_dir.exists():
+        raise HTTPException(
+            status_code=404,
+            detail="No FITS capture available",
+        )
 
-    return response
+    candidates = [
+        item
+        for item in capture_dir.iterdir()
+        if item.is_file()
+        and item.suffix.lower() in {".fits", ".fit", ".fts"}
+    ]
+    if not candidates:
+        raise HTTPException(
+            status_code=404,
+            detail="No FITS capture available",
+        )
+
+    latest = max(candidates, key=lambda item: item.stat().st_mtime)
+
+    try:
+        content, diagnostics = render_fits_preview(latest)
+    except Exception as exc:
+        _core.logger.exception("Unable to generate unified camera preview")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Camera preview generation error: {exc}",
+        ) from exc
+
+    headers = preview_headers(latest.name, diagnostics)
+
+    try:
+        preparation_astrometry_archive.record_preview(
+            latest.name,
+            content,
+            headers=headers,
+        )
+    except Exception:
+        # initial.fits is already safe; a JPEG can always be regenerated.
+        _core.logger.exception(
+            "Unable to persist Preparation Assistant 3 preview"
+        )
+
+    return Response(
+        content=content,
+        media_type="image/jpeg",
+        headers=headers,
+    )
+
+
+@app.post("/camera/quality")
+def camera_quality(payload: CameraQualityPayload):
+    """Score whether one FITS frame is suitable for plate solving."""
+    result = analyze_fits(payload.image)
+    if result.get("status") != "ok":
+        raise HTTPException(
+            status_code=422,
+            detail=result.get("detail", "Analyse qualité impossible"),
+        )
+    return result
 
 
 @app.post("/solve")
