@@ -315,6 +315,22 @@ def mount_goto(payload: TrackingGotoPayload):
     return result
 
 
+@app.get("/mount/time")
+def mount_time():
+    """Read the real OnStep clock through INDI and compare it to trusted time."""
+    gps = _core.gps_service.status()
+    system = _core.system_service.status()
+    reference_utc, reference_source = _core._resolve_time(
+        gps,
+        system,
+    )
+
+    return _core.indi_service.mount_time_status(
+        reference_utc=reference_utc,
+        reference_source=reference_source,
+    )
+
+
 @app.post("/capture/sessions")
 def create_capture_session(payload: CaptureSessionPayload):
     return capture_session_service.create_session(
