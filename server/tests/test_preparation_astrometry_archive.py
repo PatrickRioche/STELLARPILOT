@@ -46,7 +46,7 @@ def test_assistant_3_fits_is_persisted_before_preview_and_solve(tmp_path):
     assert metadata["camera"] == "Fake CCD"
     assert metadata["files"]["preview"] is None
     assert metadata["solver"]["status"] is None
-    assert metadata["archive_verification"]["verified"] is True
+    assert metadata["archive"]["verified"] is True
 
 
 def test_assistant_3_preview_and_solve_enrich_same_archive(tmp_path):
