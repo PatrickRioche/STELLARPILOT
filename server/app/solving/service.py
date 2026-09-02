@@ -6,12 +6,56 @@ from pathlib import Path
 
 class PlateSolverService:
     """
-    R?solution astrom?trique locale avec astrometry.net.
+    Résolution astrométrique locale avec astrometry.net.
 
-    Aucun acc?s Internet n'est n?cessaire :
-    solve-field utilise les index install?s localement
-    dans /usr/share/astrometry.
+    Aucun accès Internet n'est nécessaire : solve-field utilise les index
+    installés localement dans /usr/share/astrometry.
+
+    Pour l'Assistant 3, StellarPilot essaie d'abord d'utiliser la position
+    équatoriale réellement publiée par la monture INDI comme centre de
+    recherche. La RA INDI est exprimée en heures et est convertie en degrés
+    avant d'être transmise à solve-field. Un blind solve reste toujours le
+    dernier recours.
     """
+
+    @staticmethod
+    def _current_mount_position_hint() -> dict | None:
+        """Return a safe astrometry.net position hint from the connected mount.
+
+        INDI telescope RA values are in hours while astrometry.net --ra expects
+        degrees. The hint is advisory only: if it is unavailable or invalid,
+        solve_robust continues with scale-only/blind strategies.
+        """
+        try:
+            # Lazy import avoids coupling the module import graph to INDI.
+            from app.indi.service import indi_service
+
+            status = indi_service.mount_status()
+        except Exception:
+            return None
+
+        try:
+            ra_hours = float(status.get("ra"))
+            dec_deg = float(status.get("dec"))
+        except (TypeError, ValueError):
+            return None
+
+        if not 0.0 <= ra_hours < 24.0:
+            return None
+
+        if not -90.0 <= dec_deg <= 90.0:
+            return None
+
+        return {
+            "source": "indi_mount_readback",
+            "mount": status.get("mount"),
+            "coordinate_property": status.get("coordinate_property"),
+            "ra_hours": ra_hours,
+            "ra_deg": ra_hours * 15.0,
+            "dec_deg": dec_deg,
+            "mount_status": status.get("status"),
+            "indi_state": status.get("indi_state"),
+        }
 
     def solve(
         self,
@@ -24,6 +68,11 @@ class PlateSolverService:
         scale_high_arcsec: float | None = None,
         timeout_s: int = 90,
     ) -> dict:
+        """Run one solve-field attempt.
+
+        ``ra_hint`` is expressed in degrees, matching astrometry.net --ra.
+        ``dec_hint`` and ``radius_deg`` are also expressed in degrees.
+        """
         image_path = Path(image)
 
         if not image_path.exists():
@@ -98,6 +147,7 @@ class PlateSolverService:
                         "--downsample",
                         str(downsample),
                     ]
+
                 if (
                     scale_low_arcsec is not None
                     and scale_high_arcsec is not None
@@ -128,11 +178,10 @@ class PlateSolverService:
                     output = (
                         result.stdout.strip()
                         or result.stderr.strip()
-                        or "Aucune solution astrom?trique"
+                        or "Aucune solution astrométrique"
                     )
 
-                    # On ?vite de renvoyer plusieurs dizaines
-                    # de kilo-octets de logs dans l'API.
+                    # Avoid returning very large solve-field logs through API.
                     detail = output[-2000:]
 
                     return {
@@ -222,8 +271,8 @@ class PlateSolverService:
                 "solver": "astrometry.net",
                 "image": str(image_path),
                 "detail": (
-                    "R?solution astrom?trique interrompue "
-                    f"apr?s {timeout_s} secondes"
+                    "Résolution astrométrique interrompue "
+                    f"après {timeout_s} secondes"
                 ),
             }
 
@@ -235,7 +284,6 @@ class PlateSolverService:
                 "detail": str(exc),
             }
 
-
     def solve_robust(
         self,
         image: str,
@@ -243,7 +291,28 @@ class PlateSolverService:
         dec_hint: float | None = None,
         expected_scale_arcsec: float = 1.22,
     ) -> dict:
+        """Solve with mount-assisted searches followed by a blind fallback.
+
+        When no explicit position is supplied, the current INDI mount
+        coordinates are used automatically for the two fast constrained
+        attempts. The final ``scale_broad`` strategy deliberately ignores the
+        position hint, so an inaccurate mount cannot prevent a blind solve.
+        """
         attempts = []
+        position_hint = None
+
+        if ra_hint is None and dec_hint is None:
+            position_hint = self._current_mount_position_hint()
+
+            if position_hint is not None:
+                ra_hint = position_hint["ra_deg"]
+                dec_hint = position_hint["dec_deg"]
+        elif ra_hint is not None and dec_hint is not None:
+            position_hint = {
+                "source": "caller",
+                "ra_deg": ra_hint,
+                "dec_deg": dec_hint,
+            }
 
         strategies = [
             {
@@ -310,12 +379,20 @@ class PlateSolverService:
                     "scale_low_arcsec": strategy["scale_low"],
                     "scale_high_arcsec": strategy["scale_high"],
                     "position_hint_used": use_position,
+                    "ra_hint_deg": ra_hint if use_position else None,
+                    "dec_hint_deg": dec_hint if use_position else None,
+                    "radius_deg": (
+                        strategy["radius"]
+                        if use_position
+                        else None
+                    ),
                 }
             )
 
             if result.get("status") == "solved":
                 result["strategy"] = strategy["name"]
                 result["attempts"] = attempts
+                result["position_hint"] = position_hint
                 result["total_duration_s"] = round(
                     perf_counter() - total_start,
                     3,
@@ -325,6 +402,7 @@ class PlateSolverService:
             if result.get("status") == "error":
                 result["strategy"] = strategy["name"]
                 result["attempts"] = attempts
+                result["position_hint"] = position_hint
                 result["total_duration_s"] = round(
                     perf_counter() - total_start,
                     3,
@@ -337,11 +415,12 @@ class PlateSolverService:
             "image": image,
             "strategy": "exhausted",
             "attempts": attempts,
+            "position_hint": position_hint,
             "total_duration_s": round(
                 perf_counter() - total_start,
                 3,
             ),
-            "detail": "Toutes les strategies ont echoue",
+            "detail": "Toutes les stratégies ont échoué",
         }
 
 

@@ -5,6 +5,33 @@ from astropy.io import fits
 from scipy.ndimage import gaussian_filter, maximum_filter
 
 
+def _quality_label(score: int) -> str:
+    if score >= 75:
+        return "Bonne"
+    if score >= 50:
+        return "Correcte"
+    if score >= 25:
+        return "Faible"
+    return "Insuffisante"
+
+
+def _recommended_exposure_factor(
+    *,
+    classification: str,
+    star_count: int,
+    score: int,
+) -> float:
+    if classification == "overexposed":
+        return 0.5
+    if star_count < 8:
+        return 4.0
+    if star_count < 25:
+        return 2.0
+    if score < 75:
+        return 1.5
+    return 1.0
+
+
 def analyze_fits(image: str) -> dict:
     path = Path(image)
 
@@ -114,8 +141,7 @@ def analyze_fits(image: str) -> dict:
                 (p999 - median) / max(sigma, 1.0)
             )
 
-            # Seuils provisoires : ils seront calibres sur de vraies
-            # captures du ciel avant activation de l auto-exposition.
+            # Seuils provisoires, a calibrer sur les captures reelles du setup.
             if (
                 saturated_percent >= 1.0
                 or median_percent_full_scale >= 70.0
@@ -128,6 +154,44 @@ def analyze_fits(image: str) -> dict:
                 classification = "astrometry_ready"
             else:
                 classification = "insufficient_stars"
+
+            # Score exclusivement destine a juger l'aptitude au plate solving,
+            # et non la qualite esthetique de la photographie.
+            star_component = min(star_count / 60.0, 1.0) * 55.0
+            signal_component = (
+                min(max((p999_excess_sigma - 3.0) / 12.0, 0.0), 1.0)
+                * 30.0
+            )
+            saturation_penalty = min(saturated_percent / 1.0, 1.0) * 40.0
+            background_penalty = (
+                min(
+                    max((median_percent_full_scale - 50.0) / 20.0, 0.0),
+                    1.0,
+                )
+                * 20.0
+            )
+            raw_score = (
+                15.0
+                + star_component
+                + signal_component
+                - saturation_penalty
+                - background_penalty
+            )
+            score = int(round(min(100.0, max(0.0, raw_score))))
+
+            if classification == "overexposed":
+                score = min(score, 24)
+            elif classification == "insufficient_stars":
+                score = min(score, 49)
+            else:
+                score = max(score, 50)
+
+            quality_label = _quality_label(score)
+            recommended_factor = _recommended_exposure_factor(
+                classification=classification,
+                star_count=star_count,
+                score=score,
+            )
 
             return {
                 "status": "ok",
@@ -156,6 +220,10 @@ def analyze_fits(image: str) -> dict:
                     3,
                 ),
                 "classification": classification,
+                "astrometry_score": score,
+                "quality_label": quality_label,
+                "recommended_exposure_factor": recommended_factor,
+                "astrometry_ready": score >= 50,
             }
 
     except Exception as exc:

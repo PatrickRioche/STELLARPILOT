@@ -38,7 +38,7 @@ def test_mount_type():
     assert response.json()["mount_type"] == "EQ"
 
 
-def test_mount_goto_device(monkeypatch):
+def test_mount_goto_device_preserves_validated_onstep_clock(monkeypatch):
     response = client.post(
         "/system/time",
         json={
@@ -75,15 +75,29 @@ def test_mount_goto_device(monkeypatch):
 
     monkeypatch.setattr(
         main_module.indi_service,
-        "sync_mount_time",
-        lambda utc_iso, timezone_offset_minutes: {
-            "status": "ok",
-            "mode": "device",
-            "utc": utc_iso,
-            "timezone_offset_minutes": (
-                timezone_offset_minutes
-            ),
+        "mount_time_status",
+        lambda reference_utc=None, reference_source=None: {
+            "status": "available",
+            "source": "indi",
+            "mount": "LX200 OnStep",
+            "utc": "2026-08-29T07:30:00Z",
+            "offset_hours": 2.0,
+            "indi_state": "Ok",
+            "reference_utc": reference_utc,
+            "reference_source": reference_source,
+            "drift_seconds": 0.0,
+            "synchronized": True,
+            "synchronization": "synchronized",
         },
+    )
+
+    def forbidden_sync(*args, **kwargs):
+        raise AssertionError("GOTO must not rewrite OnStep TIME_UTC")
+
+    monkeypatch.setattr(
+        main_module.indi_service,
+        "sync_mount_time",
+        forbidden_sync,
     )
 
     monkeypatch.setattr(
@@ -116,7 +130,126 @@ def test_mount_goto_device(monkeypatch):
     assert body["mode"] == "device"
     assert body["tracking_mode"] == "solar"
     assert body["time_source"] == "android"
-    assert body["time_sync"]["status"] == "ok"
+    assert body["time_sync"]["status"] == "preserved"
+    assert body["time_sync"]["mode"] == "read_only"
+    assert body["time_check"]["indi_state"] == "Ok"
+    assert body["time_check"]["offset_matches_reference"] is True
+
+
+def test_mount_goto_blocks_indi_time_alert(monkeypatch):
+    response = client.post(
+        "/system/time",
+        json={
+            "utc_epoch_ms": 1787988600000,
+            "timezone_offset_minutes": 120,
+        },
+    )
+    assert response.status_code == 200
+
+    monkeypatch.setattr(
+        main_module.gps_service,
+        "status",
+        lambda: {
+            "status": "no_fix",
+            "time_utc": None,
+        },
+    )
+    monkeypatch.setattr(
+        main_module.system_service,
+        "status",
+        lambda: {
+            "datetime": "2026-08-29T09:30:00+02:00",
+        },
+    )
+    monkeypatch.setattr(
+        main_module.indi_service,
+        "mount_time_status",
+        lambda reference_utc=None, reference_source=None: {
+            "status": "available",
+            "utc": "2026-08-29T07:30:00Z",
+            "offset_hours": 2.0,
+            "indi_state": "Alert",
+            "reference_utc": reference_utc,
+            "reference_source": reference_source,
+        },
+    )
+
+    def forbidden_goto(*args, **kwargs):
+        raise AssertionError("GOTO must be blocked while TIME_UTC is Alert")
+
+    monkeypatch.setattr(
+        main_module.indi_service,
+        "goto",
+        forbidden_goto,
+    )
+
+    response = client.post(
+        "/mount/goto",
+        json={
+            "ra": 5.5,
+            "dec": 22.0,
+            "tracking_mode": "solar",
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "error"
+    assert "Alert" in body["detail"]
+
+
+def test_mount_goto_blocks_wrong_onstep_offset(monkeypatch):
+    response = client.post(
+        "/system/time",
+        json={
+            "utc_epoch_ms": 1787988600000,
+            "timezone_offset_minutes": 120,
+        },
+    )
+    assert response.status_code == 200
+
+    monkeypatch.setattr(
+        main_module.gps_service,
+        "status",
+        lambda: {
+            "status": "no_fix",
+            "time_utc": None,
+        },
+    )
+    monkeypatch.setattr(
+        main_module.system_service,
+        "status",
+        lambda: {
+            "datetime": "2026-08-29T09:30:00+02:00",
+        },
+    )
+    monkeypatch.setattr(
+        main_module.indi_service,
+        "mount_time_status",
+        lambda reference_utc=None, reference_source=None: {
+            "status": "available",
+            "utc": "2026-08-29T07:30:00Z",
+            "offset_hours": 1.0,
+            "indi_state": "Ok",
+            "reference_utc": reference_utc,
+            "reference_source": reference_source,
+        },
+    )
+
+    response = client.post(
+        "/mount/goto",
+        json={
+            "ra": 5.5,
+            "dec": 22.0,
+            "tracking_mode": "solar",
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "error"
+    assert "Offset OnStep incohérent" in body["detail"]
+    assert body["time_check"]["offset_matches_reference"] is False
 
 
 def test_mount_status_device(monkeypatch):

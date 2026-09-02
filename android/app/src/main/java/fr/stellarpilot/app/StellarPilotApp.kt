@@ -17,11 +17,12 @@ import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.painterResource
-import fr.stellarpilot.app.feature.sky.SkyScreen
-import fr.stellarpilot.app.feature.connection.ConnectionViewModel
 import androidx.lifecycle.viewmodel.compose.viewModel
-import fr.stellarpilot.app.feature.placeholder.PlaceholderScreen
+import fr.stellarpilot.app.feature.capture.CaptureScreen
+import fr.stellarpilot.app.feature.connection.ConnectionViewModel
+import fr.stellarpilot.app.feature.galleries.GalleriesScreen
 import fr.stellarpilot.app.feature.preparation.PreparationScreen
+import fr.stellarpilot.app.feature.sky.SkyScreen
 import fr.stellarpilot.app.feature.status.StatusScreen
 import fr.stellarpilot.app.ui.theme.StellarBackground
 import fr.stellarpilot.app.ui.theme.StellarMuted
@@ -147,17 +148,19 @@ fun StellarPilotApp() {
                                 .serverBaseUrl
                     )
 
-                    else -> {
-                        val tab =
-                            tabs[selectedTab]
+                    3 -> CaptureScreen(
+                        serverBaseUrl =
+                            connectionViewModel
+                                .uiState
+                                .serverBaseUrl
+                    )
 
-                        PlaceholderScreen(
-                            title = tab.title,
-                            subtitle = tab.subtitle,
-                            sectionNumber =
-                                selectedTab + 1
-                        )
-                    }
+                    4 -> GalleriesScreen(
+                        serverBaseUrl =
+                            connectionViewModel
+                                .uiState
+                                .serverBaseUrl
+                    )
                 }
             }
         }

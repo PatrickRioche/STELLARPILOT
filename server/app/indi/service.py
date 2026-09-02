@@ -1,7 +1,11 @@
+import shutil
 import subprocess
 import time
+from datetime import datetime, timezone
+from pathlib import Path
 
 from app.indi._service_core import IndiService as _CoreIndiService
+from app.imaging.preparation_astrometry import preparation_astrometry_archive
 
 
 _TRACKING_MODE_ELEMENTS = {
@@ -12,7 +16,7 @@ _TRACKING_MODE_ELEMENTS = {
 
 
 class IndiService(_CoreIndiService):
-    """Facade INDI ajoutant le choix portable du mode de suivi."""
+    """Facade INDI ajoutant le suivi portable et le stockage de session."""
 
     _mount_cache_ttl_s = 5.0
 
@@ -179,6 +183,282 @@ class IndiService(_CoreIndiService):
             "Le mode de suivi INDI n'a pas ete confirme: "
             f"{normalized}"
         )
+
+    @staticmethod
+    def _normalize_utc(value: str) -> str:
+        """Normalize an INDI TIME_UTC.UTC value as an explicit UTC ISO time."""
+        normalized = value.strip()
+
+        if normalized.endswith("Z"):
+            normalized = normalized[:-1] + "+00:00"
+
+        instant = datetime.fromisoformat(normalized)
+
+        if instant.tzinfo is None:
+            instant = instant.replace(tzinfo=timezone.utc)
+
+        return (
+            instant.astimezone(timezone.utc)
+            .isoformat(timespec="seconds")
+            .replace("+00:00", "Z")
+        )
+
+    @staticmethod
+    def _utc_instant(value: str) -> datetime:
+        normalized = value.strip()
+
+        if normalized.endswith("Z"):
+            normalized = normalized[:-1] + "+00:00"
+
+        instant = datetime.fromisoformat(normalized)
+
+        if instant.tzinfo is None:
+            instant = instant.replace(tzinfo=timezone.utc)
+
+        return instant.astimezone(timezone.utc)
+
+    def mount_time_status(
+        self,
+        mount_name: str | None = None,
+        reference_utc: str | None = None,
+        reference_source: str | None = None,
+    ) -> dict:
+        """Read the OnStep/LX200 clock directly from INDI.
+
+        The clock readback is independent from Android/GPS/Raspberry Pi.
+        When a trusted StellarPilot reference is provided, the response also
+        reports the measured clock drift.  A difference <= 10 seconds is
+        considered synchronized; larger differences are reported as drift.
+        """
+        unavailable = {
+            "status": "unavailable",
+            "source": "indi",
+            "mount": mount_name,
+            "utc": None,
+            "offset_hours": None,
+            "indi_state": None,
+            "indi_permission": None,
+            "reference_utc": reference_utc,
+            "reference_source": reference_source,
+            "drift_seconds": None,
+            "synchronized": None,
+            "synchronization": "unverified",
+            "detail": None,
+        }
+
+        if mount_name is None:
+            mount_name = self._find_connected_mount()
+            unavailable["mount"] = mount_name
+
+        if mount_name is None:
+            unavailable["detail"] = "Aucune monture INDI connectee"
+            return unavailable
+
+        try:
+            result = subprocess.run(
+                [
+                    "indi_getprop",
+                    "-h",
+                    "127.0.0.1",
+                    "-p",
+                    "7624",
+                    "-t",
+                    "2",
+                    f"{mount_name}.TIME_UTC.*",
+                    f"{mount_name}.TIME_UTC._STATE",
+                    f"{mount_name}.TIME_UTC._PERM",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=4,
+                check=False,
+            )
+        except (
+            OSError,
+            subprocess.SubprocessError,
+        ) as exc:
+            unavailable["detail"] = str(exc)
+            return unavailable
+
+        values: dict[str, str] = {}
+        prefix = f"{mount_name}.TIME_UTC."
+
+        for line in result.stdout.splitlines():
+            if "=" not in line:
+                continue
+
+            key, value = line.split("=", 1)
+            key = key.strip()
+
+            if key.startswith(prefix):
+                values[key[len(prefix):]] = value.strip()
+
+        utc_raw = values.get("UTC")
+
+        if not utc_raw:
+            unavailable["detail"] = (
+                result.stderr.strip()
+                or "Propriete INDI TIME_UTC.UTC indisponible"
+            )
+            return unavailable
+
+        try:
+            utc_value = self._normalize_utc(utc_raw)
+        except ValueError as exc:
+            return {
+                **unavailable,
+                "status": "invalid",
+                "utc_raw": utc_raw,
+                "detail": f"Heure OnStep invalide: {exc}",
+            }
+
+        offset_hours = None
+        offset_raw = values.get("OFFSET")
+
+        if offset_raw is not None:
+            try:
+                offset_hours = float(offset_raw)
+            except ValueError:
+                offset_hours = None
+
+        indi_state = values.get("_STATE")
+        indi_permission = values.get("_PERM")
+        drift_seconds = None
+        synchronized = None
+        synchronization = "unverified"
+        normalized_reference = reference_utc
+
+        if (
+            reference_utc
+            and reference_source in {"gps", "android"}
+        ):
+            try:
+                normalized_reference = self._normalize_utc(reference_utc)
+                mount_instant = self._utc_instant(utc_value)
+                reference_instant = self._utc_instant(normalized_reference)
+                drift_seconds = abs(
+                    (mount_instant - reference_instant).total_seconds()
+                )
+                state_is_alert = (
+                    (indi_state or "").strip().lower() == "alert"
+                )
+                synchronized = (
+                    drift_seconds <= 10.0
+                    and not state_is_alert
+                )
+                synchronization = (
+                    "synchronized"
+                    if synchronized
+                    else (
+                        "alert"
+                        if state_is_alert
+                        else "drift"
+                    )
+                )
+            except ValueError:
+                synchronization = "unverified"
+
+        return {
+            "status": "available",
+            "source": "indi",
+            "mount": mount_name,
+            "utc": utc_value,
+            "utc_raw": utc_raw,
+            "offset_hours": offset_hours,
+            "indi_state": indi_state,
+            "indi_permission": indi_permission,
+            "reference_utc": normalized_reference,
+            "reference_source": reference_source,
+            "drift_seconds": (
+                round(drift_seconds, 3)
+                if drift_seconds is not None
+                else None
+            ),
+            "synchronized": synchronized,
+            "synchronization": synchronization,
+            "detail": None,
+        }
+
+    def status_snapshot(self) -> dict:
+        """Add an independent OnStep clock readback to the normal snapshot."""
+        snapshot = super().status_snapshot()
+        mount = dict(snapshot.get("mount") or {})
+        mount["time"] = self.mount_time_status(
+            mount.get("name")
+        )
+        snapshot["mount"] = mount
+        return snapshot
+
+    def capture(
+        self,
+        exposure_s: float,
+        output_dir: str | Path | None = None,
+        prefix: str | None = None,
+    ) -> dict:
+        """Capture a FITS and persist or relocate it according to its caller.
+
+        ``/camera/capture`` (Preparation Assistant 3) calls this method
+        without ``output_dir``. Its completed FITS is therefore copied
+        immediately to persistent application data below
+        ``server/data/astrometry/assistant-3`` before the API returns.
+
+        Capture sessions pass ``output_dir`` and keep their existing runtime
+        workflow below ``stellarpilot-server/tmp``. ``shutil.move`` supports
+        Linux /tmp being a separate tmpfs/filesystem.
+        """
+        result = super().capture(exposure_s)
+
+        if result.get("status") != "captured" or not result.get("image"):
+            return result
+
+        # Historical /camera/capture = Preparation / Assistant 3.
+        # Persist the scientific FITS before Android can request preview/solve.
+        if output_dir is None:
+            try:
+                archive = preparation_astrometry_archive.archive_capture(
+                    result
+                )
+            except Exception as exc:
+                return {
+                    **result,
+                    "status": "error",
+                    "detail": (
+                        "Capture FITS recue mais archivage persistant "
+                        f"Assistant 3 impossible : {exc}"
+                    ),
+                }
+
+            result["persistent_astrometry"] = archive
+            result["storage"] = "assistant-3-persistent"
+            return result
+
+        source = Path(result["image"])
+        destination_dir = Path(output_dir)
+        destination_dir.mkdir(parents=True, exist_ok=True)
+
+        suffix = source.suffix.lower() or ".fits"
+        destination_name = (
+            f"{prefix}{suffix}"
+            if prefix
+            else source.name
+        )
+        destination = destination_dir / destination_name
+
+        try:
+            shutil.move(str(source), str(destination))
+        except OSError as exc:
+            return {
+                **result,
+                "status": "error",
+                "detail": (
+                    "Capture FITS recue mais impossible a deplacer "
+                    f"dans la session: {exc}"
+                ),
+            }
+
+        result["image"] = str(destination)
+        result["storage"] = "session"
+        return result
 
     def goto(
         self,

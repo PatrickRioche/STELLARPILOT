@@ -39,6 +39,11 @@ Thumbs.db
 *.tmp
 *.swp
 
+# StellarPilot runtime imaging data
+server/tmp/
+server/data/galleries/
+server/data/astrometry/
+
 # StellarPilot astronomical catalog - generated data
 server/data/catalog.sqlite3
 server/data/openngc/*.csv
