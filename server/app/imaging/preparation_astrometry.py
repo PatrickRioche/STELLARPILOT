@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import shutil
 import threading
@@ -14,6 +15,7 @@ SERVER_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_ARCHIVE_ROOT = (
     SERVER_ROOT / "data" / "astrometry" / "assistant-3"
 )
+logger = logging.getLogger("uvicorn.error")
 
 
 class PreparationAstrometryArchive:
@@ -23,6 +25,10 @@ class PreparationAstrometryArchive:
     /camera/capture endpoint, whose working file is stored below the OS /tmp.
     This service copies every successful Assistant 3 acquisition immediately
     to application data, before preview generation and before plate solving.
+
+    A capture is not considered archived until the persistent FITS has been
+    verified on disk. Any verification failure is propagated to the API so the
+    Android client cannot silently continue with a non-persistent capture.
     """
 
     def __init__(self, root: Path | str | None = None):
@@ -75,6 +81,42 @@ class PreparationAstrometryArchive:
         temporary.write_bytes(content)
         temporary.replace(destination)
 
+    @staticmethod
+    def _verify_persisted_fits(
+        source: Path,
+        destination: Path,
+    ) -> dict[str, int | bool]:
+        if not destination.is_file():
+            raise RuntimeError(
+                f"FITS persistant absent après copie: {destination}"
+            )
+
+        source_size = source.stat().st_size
+        destination_size = destination.stat().st_size
+
+        if source_size <= 0:
+            raise RuntimeError("FITS source vide")
+
+        if destination_size != source_size:
+            raise RuntimeError(
+                "Taille FITS persistante incohérente: "
+                f"source={source_size}, archive={destination_size}"
+            )
+
+        with destination.open("rb") as handle:
+            header = handle.read(9)
+
+        if header != b"SIMPLE  =":
+            raise RuntimeError(
+                "FITS persistant invalide: en-tête SIMPLE absent"
+            )
+
+        return {
+            "verified": True,
+            "source_size_bytes": source_size,
+            "fits_size_bytes": destination_size,
+        }
+
     def archive_capture(
         self,
         result: dict[str, Any],
@@ -106,10 +148,16 @@ class PreparationAstrometryArchive:
         fits_path = archive_dir / "initial.fits"
         preview_path = archive_dir / "initial.jpg"
         metadata_path = archive_dir / "metadata.json"
+        solve_path = archive_dir / "solve.json"
 
         # The scientific FITS is secured first. Nothing else in the Assistant
-        # 3 workflow is allowed to start before this copy has completed.
+        # 3 workflow is allowed to start before this copy has completed and the
+        # persistent file has been verified byte-for-byte by size and FITS magic.
         self._copy_atomic(source, fits_path)
+        verification = self._verify_persisted_fits(
+            source,
+            fits_path,
+        )
 
         metadata = {
             "workflow": "preparation_assistant_3_first_astrometry",
@@ -121,9 +169,11 @@ class PreparationAstrometryArchive:
             "source_name": source.name,
             "exposure_s": result.get("exposure_s"),
             "camera": result.get("camera"),
+            "archive": verification,
             "files": {
                 "fits": "initial.fits",
                 "preview": None,
+                "solve": None,
             },
             "preview": {
                 "status": None,
@@ -149,12 +199,21 @@ class PreparationAstrometryArchive:
             self._by_source[str(source)] = archive_dir
             self._by_name[source.name] = archive_dir
 
+        logger.info(
+            "ASSISTANT3 ARCHIVED capture_id=%s size=%s fits=%s",
+            capture_id,
+            verification["fits_size_bytes"],
+            fits_path,
+        )
+
         return {
             "directory": str(archive_dir),
             "fits": str(fits_path),
             "preview": str(preview_path),
             "metadata": str(metadata_path),
+            "solve": str(solve_path),
             "capture_id": capture_id,
+            **verification,
         }
 
     def _find_archive(self, source: str) -> Path | None:
@@ -248,6 +307,7 @@ class PreparationAstrometryArchive:
             return
 
         metadata_path = archive_dir / "metadata.json"
+        solve_path = archive_dir / "solve.json"
         try:
             metadata = json.loads(
                 metadata_path.read_text(encoding="utf-8")
@@ -255,6 +315,10 @@ class PreparationAstrometryArchive:
         except (OSError, json.JSONDecodeError):
             return
 
+        # Keep the complete solver response for post-session diagnostics. This
+        # includes robust-solver attempts, position hint, radii and timings.
+        self._write_json_atomic(solve_path, solution)
+        metadata.setdefault("files", {})["solve"] = "solve.json"
         metadata["solver"] = {
             "status": solution.get("status"),
             "solver": solution.get("solver"),
@@ -264,8 +328,20 @@ class PreparationAstrometryArchive:
             "orientation_deg": solution.get("orientation_deg"),
             "pixel_scale_arcsec": solution.get("pixel_scale_arcsec"),
             "stars_detected": solution.get("stars_detected"),
+            "strategy": solution.get("strategy"),
+            "total_duration_s": solution.get("total_duration_s"),
+            "position_hint": solution.get("position_hint"),
+            "attempts": solution.get("attempts"),
         }
         self._write_json_atomic(metadata_path, metadata)
+
+        logger.info(
+            "ASSISTANT3 SOLVE capture=%s status=%s strategy=%s duration_s=%s",
+            archive_dir.name,
+            solution.get("status"),
+            solution.get("strategy"),
+            solution.get("total_duration_s"),
+        )
 
 
 preparation_astrometry_archive = PreparationAstrometryArchive()
