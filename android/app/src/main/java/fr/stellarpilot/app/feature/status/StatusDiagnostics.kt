@@ -5,6 +5,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -201,7 +202,7 @@ class StatusDiagnosticsViewModel : ViewModel() {
             staticError = null
         )
 
-        viewModelScope.launch {
+        viewModelScope.launch(Dispatchers.IO) {
             try {
                 val api = StatusDiagnosticsApiClient(serverBaseUrl)
                 val storage = api.storage()
@@ -235,7 +236,7 @@ class StatusDiagnosticsViewModel : ViewModel() {
             mountError = null
         )
 
-        viewModelScope.launch {
+        viewModelScope.launch(Dispatchers.IO) {
             try {
                 val mount = StatusDiagnosticsApiClient(serverBaseUrl).mount()
 
