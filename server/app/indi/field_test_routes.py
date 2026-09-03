@@ -7,6 +7,11 @@ from pydantic import BaseModel, Field
 from app import _main_core as _core
 
 
+# The core app is shared with the previous POC generation. The V0.6 extension
+# is loaded by app.main, so expose the effective API version here as well.
+_core.app.version = "0.6.0-poc"
+
+
 class MountFrameGotoPayload(BaseModel):
     """Coordinates already expressed in the frame published by the mount."""
 
