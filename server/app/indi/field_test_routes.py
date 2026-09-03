@@ -158,7 +158,6 @@ def _trusted_mount_clock() -> tuple[dict | None, str | None, dict | None]:
             else abs(clock_check["offset_hours"] - expected_offset_hours) <= 0.01
         ),
         "time_sync_verification": verification,
-        # Raw drift is only the age of the static INDI setpoint after sync.
         "raw_drift_advisory": True,
     }
 
@@ -189,10 +188,7 @@ def _validate_small_field_move(payload: MountFrameGotoPayload) -> dict:
             "Position RA/DEC OnStep indisponible : diagnostic moteur bloqué"
         )
 
-    ra_delta_deg = _signed_hour_delta(
-        float(start_ra),
-        payload.ra,
-    ) * 15.0
+    ra_delta_deg = _signed_hour_delta(float(start_ra), payload.ra) * 15.0
     dec_delta_deg = payload.dec - float(start_dec)
 
     ra_moves = abs(ra_delta_deg) > _MAX_OTHER_AXIS_DRIFT_DEG
@@ -222,13 +218,7 @@ def _validate_small_field_move(payload: MountFrameGotoPayload) -> dict:
 
 @_core.app.post("/mount/time/sync")
 def mount_time_sync():
-    """Synchronize OnStep once from a trusted GPS/Android reference.
-
-    This is deliberately explicit and separate from GOTO. StellarPilot never
-    rewrites TIME_UTC before every movement. The write is immediately checked
-    against the INDI readback, then that verified setpoint is trusted for the
-    current observing session because TIME_UTC itself is static after writing.
-    """
+    """Synchronize OnStep once from a trusted GPS/Android reference."""
     timestamp_utc, time_source = _trusted_reference_time()
 
     if timestamp_utc is None or time_source not in {"gps", "android"}:
@@ -246,9 +236,6 @@ def mount_time_sync():
     offset_minutes = _core.state.client_timezone_offset_minutes
     offset_source = "android"
 
-    # A direct PC call may happen before Android has published its timezone.
-    # In that case preserve the currently published OnStep offset instead of
-    # blocking a safe GPS-based synchronization.
     if offset_minutes is None:
         existing_offset_hours = before.get("offset_hours")
         if existing_offset_hours is None:
@@ -303,7 +290,6 @@ def mount_time_sync():
             "readback": readback,
         }
 
-    # Persist the verified write/readback pair for this running server session.
     _core.state.mount_time_sync_reference_utc = timestamp_utc
     _core.state.mount_time_sync_mount_utc = readback.get("utc")
     _core.state.mount_time_sync_source = time_source
@@ -330,15 +316,44 @@ def mount_time_sync():
     }
 
 
+@_core.app.get("/mount/time/verification")
+def mount_time_verification():
+    """Verify session time safety without commanding any mount movement."""
+    timestamp_utc, time_source = _trusted_reference_time()
+
+    clock_check = _core.indi_service.mount_time_status(
+        reference_utc=timestamp_utc,
+        reference_source=time_source,
+    )
+    verification = _verified_time_sync(clock_check)
+    indi_state = str(clock_check.get("indi_state") or "").strip().lower()
+    trusted_reference = (
+        timestamp_utc is not None and time_source in {"gps", "android"}
+    )
+    control_ready = (
+        trusted_reference
+        and clock_check.get("status") == "available"
+        and indi_state != "alert"
+        and verification["verified"]
+    )
+
+    return {
+        "status": "verified" if control_ready else "required",
+        "control_ready": control_ready,
+        "reference_source": time_source,
+        "reference_utc": timestamp_utc,
+        "raw_readback": clock_check,
+        "verification": verification,
+        "note": (
+            "Le drift_seconds brut augmente normalement car TIME_UTC est un "
+            "point de consigne INDI statique ; il n'est pas utilise comme horloge temps reel."
+        ),
+    }
+
+
 @_core.app.post("/mount/goto-mount-frame")
 def mount_goto_mount_frame(payload: MountFrameGotoPayload):
-    """Small diagnostic GOTO without J2000/JNow conversion.
-
-    This endpoint is intentionally separate from `/mount/goto`. It is only for
-    relative field tests that start from coordinates just read from
-    `/mount/status`. Those coordinates already use the mount's own INDI frame,
-    so precessing them again would corrupt the requested motor displacement.
-    """
+    """Small diagnostic GOTO without J2000/JNow conversion."""
     clock_check, time_source_or_detail, clock_error = _trusted_mount_clock()
 
     if clock_check is None:
