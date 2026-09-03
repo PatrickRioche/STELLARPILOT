@@ -1,4 +1,5 @@
 import app.main as main_module
+import pytest
 
 from fastapi.testclient import TestClient
 
@@ -94,8 +95,14 @@ def test_mount_frame_goto_uses_exact_mount_coordinates(monkeypatch):
         "ra_hours": 12.345678,
         "dec_deg": 44.25,
     }
-    assert body["diagnostic_safety"]["requested_ra_delta_deg"] == 0.45
-    assert body["diagnostic_safety"]["requested_dec_delta_deg"] == 0.0
+    assert body["diagnostic_safety"]["requested_ra_delta_deg"] == pytest.approx(
+        0.45,
+        abs=1e-9,
+    )
+    assert body["diagnostic_safety"]["requested_dec_delta_deg"] == pytest.approx(
+        0.0,
+        abs=1e-9,
+    )
     assert called == {
         "ra": 12.345678,
         "dec": 44.25,
