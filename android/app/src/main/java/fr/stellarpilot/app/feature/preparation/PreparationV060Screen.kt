@@ -627,9 +627,10 @@ private fun BahtinovV060Step(
     onPrevious: () -> Unit,
     onContinue: () -> Unit
 ) {
-    val trackingOk =
-        mountState.status?.status?.lowercase() == "tracking" &&
-            mountState.status.trackingMode?.lowercase() == "sidereal"
+    val trackingOk = mountState.status?.let { mount ->
+        mount.status.lowercase() == "tracking" &&
+            mount.trackingMode?.lowercase() == "sidereal"
+    } == true
 
     V060Card(
         title = "Calibration Bahtinov",
