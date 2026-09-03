@@ -168,7 +168,7 @@ class MountDiagnosticsViewModel : ViewModel() {
                     delay(700)
                     lastStatus = MountDiagnosticsApiClient().status(base)
 
-                    val state = lastStatus.status.lowercase()
+                    val state = lastStatus?.status?.lowercase()
                     if (state == "tracking" || state == "idle") {
                         break
                     }
