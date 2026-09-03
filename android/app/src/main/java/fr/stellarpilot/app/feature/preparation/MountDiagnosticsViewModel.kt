@@ -1,5 +1,6 @@
 package fr.stellarpilot.app.feature.preparation
 
+import android.util.Log
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -46,6 +47,10 @@ data class MountDiagnosticsUiState(
 
 
 class MountDiagnosticsViewModel : ViewModel() {
+
+    companion object {
+        private const val TAG = "StellarMountTest"
+    }
 
     var uiState by mutableStateOf(MountDiagnosticsUiState())
         private set
@@ -179,6 +184,17 @@ class MountDiagnosticsViewModel : ViewModel() {
                         request = it,
                         label = label,
                         end = lastStatus
+                    )
+                }
+
+                testResult?.let { test ->
+                    Log.i(
+                        TAG,
+                        "axis=${test.axis} label=${test.label} " +
+                            "passed=${test.passed} requested_deg=${test.requestedDeltaDeg} " +
+                            "measured_deg=${test.measuredDeltaDeg} " +
+                            "start_ra_h=${test.startRaHours} start_dec_deg=${test.startDecDeg} " +
+                            "end_ra_h=${test.endRaHours} end_dec_deg=${test.endDecDeg}"
                     )
                 }
 
