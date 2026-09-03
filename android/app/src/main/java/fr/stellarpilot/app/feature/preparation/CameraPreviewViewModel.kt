@@ -10,6 +10,7 @@ import fr.stellarpilot.app.R
 import fr.stellarpilot.app.data.remote.CameraPreviewApiClient
 import fr.stellarpilot.app.data.remote.CameraQualityResult
 import fr.stellarpilot.app.data.remote.DetectedStar
+import fr.stellarpilot.app.data.remote.MountSyncApiClient
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
@@ -35,6 +36,8 @@ data class CameraPreviewUiState(
     val detectedStarCount: Int? = null,
     val detectedStars: List<DetectedStar> = emptyList(),
     val solveDetail: String? = null,
+    val mountSyncStatus: String? = null,
+    val mountSyncDetail: String? = null,
     val error: String? = null
 )
 
@@ -149,6 +152,8 @@ class CameraPreviewViewModel(
             detectedStarCount = null,
             detectedStars = emptyList(),
             solveDetail = null,
+            mountSyncStatus = null,
+            mountSyncDetail = null,
             error = null
         )
 
@@ -234,7 +239,6 @@ class CameraPreviewViewModel(
                     )
 
                 uiState = uiState.copy(
-                    isLoading = false,
                     solveStatus = solution.status,
                     solver = solution.solver,
                     ra = solution.ra,
@@ -247,12 +251,72 @@ class CameraPreviewViewModel(
                     error = null
                 )
 
+                if (
+                    solution.status == "solved" &&
+                    solution.ra != null &&
+                    solution.dec != null
+                ) {
+                    uiState = uiState.copy(
+                        mountSyncStatus = "syncing",
+                        mountSyncDetail =
+                            "Synchronisation OnStep sur le centre astrométrique…"
+                    )
+
+                    val sync = MountSyncApiClient().sync(
+                        serverBaseUrl = serverBaseUrl,
+                        raDeg = solution.ra,
+                        decDeg = solution.dec
+                    )
+
+                    if (sync.status == "synced") {
+                        val frame = sync.targetFrame ?: "monture"
+                        val property = sync.coordinateProperty ?: "INDI"
+
+                        uiState = uiState.copy(
+                            isLoading = false,
+                            mountSyncStatus = "synced",
+                            mountSyncDetail =
+                                "Monture synchronisée • $property • $frame",
+                            error = null
+                        )
+                    } else {
+                        uiState = uiState.copy(
+                            isLoading = false,
+                            mountSyncStatus = "error",
+                            mountSyncDetail = sync.detail
+                                ?: "Synchronisation OnStep refusée",
+                            error = null
+                        )
+                    }
+                } else {
+                    uiState = uiState.copy(
+                        isLoading = false
+                    )
+                }
+
             } catch (error: Exception) {
                 uiState = uiState.copy(
                     isLoading = false,
-                    solveStatus = "error",
+                    solveStatus =
+                        uiState.solveStatus ?: "error",
+                    mountSyncStatus =
+                        if (uiState.solveStatus == "solved") {
+                            "error"
+                        } else {
+                            uiState.mountSyncStatus
+                        },
+                    mountSyncDetail =
+                        if (uiState.solveStatus == "solved") {
+                            "SYNC OnStep impossible : ${error.message}"
+                        } else {
+                            uiState.mountSyncDetail
+                        },
                     error =
-                        "${error::class.java.simpleName}: ${error.message}"
+                        if (uiState.solveStatus == "solved") {
+                            null
+                        } else {
+                            "${error::class.java.simpleName}: ${error.message}"
+                        }
                 )
             }
         }
