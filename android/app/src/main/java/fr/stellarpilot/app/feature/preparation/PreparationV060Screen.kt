@@ -54,11 +54,23 @@ import java.util.Locale
 
 private val preparationV060Steps = listOf(
     "Connexion",
+    "Orientation",
     "Moteurs",
     "Astrométrie",
     "Étoile",
     "Bahtinov",
     "Prêt"
+)
+
+private val orientationChoices = listOf(
+    "N" to "Nord",
+    "NE" to "Nord-Est",
+    "E" to "Est",
+    "SE" to "Sud-Est",
+    "S" to "Sud",
+    "SO" to "Sud-Ouest",
+    "O" to "Ouest",
+    "NO" to "Nord-Ouest"
 )
 
 
@@ -68,11 +80,11 @@ fun PreparationV060Screen(
     connectionViewModel: ConnectionViewModel = viewModel()
 ) {
     var currentStep by rememberSaveable { mutableIntStateOf(0) }
+    var selectedOrientation by rememberSaveable { mutableStateOf<String?>(null) }
     var selectedStarId by rememberSaveable { mutableStateOf<String?>(null) }
 
     val connectionState = connectionViewModel.uiState
     val baseUrl = connectionState.serverBaseUrl
-    val server = connectionState.server
 
     val mountViewModel: MountDiagnosticsViewModel = viewModel()
     val mountState = mountViewModel.uiState
@@ -92,8 +104,8 @@ fun PreparationV060Screen(
 
     LaunchedEffect(currentStep, baseUrl) {
         when (currentStep) {
-            1 -> mountViewModel.refresh(baseUrl)
-            3 -> skyViewModel.load(baseUrl)
+            2 -> mountViewModel.refresh(baseUrl)
+            4 -> skyViewModel.load(baseUrl)
         }
     }
 
@@ -147,8 +159,16 @@ fun PreparationV060Screen(
                     onContinue = { currentStep = 1 }
                 )
 
-                1 -> MotorV060Step(
+                1 -> OrientationV060Step(
+                    selectedOrientation = selectedOrientation,
+                    onSelect = { selectedOrientation = it },
+                    onPrevious = { currentStep = 0 },
+                    onContinue = { currentStep = 2 }
+                )
+
+                2 -> MotorV060Step(
                     state = mountState,
+                    orientation = selectedOrientation ?: "—",
                     serverBaseUrl = baseUrl,
                     onRefresh = { mountViewModel.refresh(baseUrl) },
                     onNudgeRaPlus = {
@@ -179,11 +199,11 @@ fun PreparationV060Screen(
                             label = "Test moteur DEC-"
                         )
                     },
-                    onPrevious = { currentStep = 0 },
-                    onContinue = { currentStep = 2 }
+                    onPrevious = { currentStep = 1 },
+                    onContinue = { currentStep = 3 }
                 )
 
-                2 -> AstrometryV060Step(
+                3 -> AstrometryV060Step(
                     state = astrometryState,
                     onCapture = {
                         astrometryViewModel.load(
@@ -191,11 +211,11 @@ fun PreparationV060Screen(
                             exposureSeconds = 4.0
                         )
                     },
-                    onPrevious = { currentStep = 1 },
-                    onContinue = { currentStep = 3 }
+                    onPrevious = { currentStep = 2 },
+                    onContinue = { currentStep = 4 }
                 )
 
-                3 -> StarV060Step(
+                4 -> StarV060Step(
                     stars = skyState.sky?.stars.orEmpty(),
                     selectedStar = selectedStar,
                     isLoading = skyState.isLoading || mountState.isLoading,
@@ -209,11 +229,11 @@ fun PreparationV060Screen(
                             mountViewModel.gotoStar(baseUrl, it)
                         }
                     },
-                    onPrevious = { currentStep = 2 },
-                    onContinue = { currentStep = 4 }
+                    onPrevious = { currentStep = 3 },
+                    onContinue = { currentStep = 5 }
                 )
 
-                4 -> BahtinovV060Step(
+                5 -> BahtinovV060Step(
                     star = selectedStar,
                     mountState = mountState,
                     state = bahtinovState,
@@ -228,8 +248,8 @@ fun PreparationV060Screen(
                         )
                     },
                     onRefreshMount = { mountViewModel.refresh(baseUrl) },
-                    onPrevious = { currentStep = 3 },
-                    onContinue = { currentStep = 5 }
+                    onPrevious = { currentStep = 4 },
+                    onContinue = { currentStep = 6 }
                 )
 
                 else -> ReadyV060Step(
@@ -237,7 +257,7 @@ fun PreparationV060Screen(
                     raValidated = mountState.raValidated,
                     decValidated = mountState.decValidated,
                     mountSyncValidated = astrometryState.mountSyncStatus == "synced",
-                    onPrevious = { currentStep = 4 },
+                    onPrevious = { currentStep = 5 },
                     onOpenSky = onOpenSky
                 )
             }
@@ -288,8 +308,63 @@ private fun ConnectionV060Step(
                 contentColor = StellarBackground
             )
         ) {
-            Text("Tester la motorisation", fontWeight = FontWeight.Bold)
+            Text("Choisir l'orientation", fontWeight = FontWeight.Bold)
         }
+    }
+}
+
+
+@Composable
+private fun OrientationV060Step(
+    selectedOrientation: String?,
+    onSelect: (String) -> Unit,
+    onPrevious: () -> Unit,
+    onContinue: () -> Unit
+) {
+    V060Card(
+        title = "Orientation initiale",
+        subtitle = "Direction approximative du tube avant l'astrométrie"
+    ) {
+        Text(
+            "Choisissez le secteur du ciel vers lequel pointe approximativement le tube. " +
+                "Ce repère décrit la position de départ ; l'astrométrie déterminera ensuite les coordonnées exactes.",
+            color = StellarText
+        )
+        Spacer(Modifier.height(14.dp))
+
+        orientationChoices.forEach { (code, label) ->
+            val selected = selectedOrientation == code
+            if (selected) {
+                Button(
+                    onClick = { onSelect(code) },
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = StellarOrange,
+                        contentColor = StellarBackground
+                    )
+                ) {
+                    Text("✓ $code • $label", fontWeight = FontWeight.Bold)
+                }
+            } else {
+                OutlinedButton(
+                    onClick = { onSelect(code) },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("$code • $label")
+                }
+            }
+            Spacer(Modifier.height(6.dp))
+        }
+
+        Spacer(Modifier.height(8.dp))
+        V060Info("Orientation choisie", selectedOrientation ?: "À sélectionner")
+        Spacer(Modifier.height(12.dp))
+        V060Navigation(
+            onPrevious = onPrevious,
+            onContinue = onContinue,
+            continueEnabled = selectedOrientation != null,
+            continueText = "Tester la motorisation"
+        )
     }
 }
 
@@ -297,6 +372,7 @@ private fun ConnectionV060Step(
 @Composable
 private fun MotorV060Step(
     state: MountDiagnosticsUiState,
+    orientation: String,
     serverBaseUrl: String,
     onRefresh: () -> Unit,
     onNudgeRaPlus: () -> Unit,
@@ -322,6 +398,7 @@ private fun MotorV060Step(
             color = StellarText
         )
         Spacer(Modifier.height(14.dp))
+        V060Info("Orientation initiale", orientation)
         V060Info("Monture", mount?.mount ?: "En attente")
         V060Info("État", mount?.status ?: "En attente")
         V060Info(
