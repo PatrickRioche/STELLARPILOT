@@ -73,7 +73,7 @@ class MountDiagnosticsViewModel : ViewModel() {
         runGoto(
             serverBaseUrl = serverBaseUrl,
             raHours = (ra + deltaRaHours + 24.0) % 24.0,
-            decDeg = (dec + deltaDecDeg).coerceIn(-89.5, 89.5),
+            decDeg = (dec + deltaDecDeg).coerceIn(-90.0, 90.0),
             trackingMode = "sidereal",
             label = label
         )
@@ -118,13 +118,13 @@ class MountDiagnosticsViewModel : ViewModel() {
 
                 var lastStatus: MountDiagnosticsResult? = null
 
-                repeat(15) {
+                for (attempt in 0 until 15) {
                     delay(700)
                     lastStatus = MountDiagnosticsApiClient().status(base)
 
                     val state = lastStatus?.status?.lowercase()
                     if (state == "tracking" || state == "idle") {
-                        return@repeat
+                        break
                     }
                 }
 
