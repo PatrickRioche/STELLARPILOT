@@ -101,6 +101,21 @@ def test_mount_goto_device_preserves_validated_onstep_clock(monkeypatch):
     )
 
     monkeypatch.setattr(
+        main_module,
+        "prepare_j2000_for_mount",
+        lambda _service, ra, dec: {
+            "mount": "LX200 OnStep",
+            "coordinate_property": "EQUATORIAL_EOD_COORD",
+            "source_frame": "J2000",
+            "target_frame": "JNow",
+            "source_ra_hours": ra,
+            "source_dec_deg": dec,
+            "mount_ra_hours": 5.51,
+            "mount_dec_deg": 22.1,
+        },
+    )
+
+    monkeypatch.setattr(
         main_module.indi_service,
         "goto",
         lambda ra, dec, tracking_mode="sidereal": {
@@ -129,6 +144,13 @@ def test_mount_goto_device_preserves_validated_onstep_clock(monkeypatch):
     assert body["status"] == "slewing"
     assert body["mode"] == "device"
     assert body["tracking_mode"] == "solar"
+    assert body["ra"] == 5.51
+    assert body["dec"] == 22.1
+    assert body["requested_j2000"] == {
+        "ra_hours": 5.5,
+        "dec_deg": 22.0,
+    }
+    assert body["coordinate_transform"]["target_frame"] == "JNow"
     assert body["time_source"] == "android"
     assert body["time_sync"]["status"] == "preserved"
     assert body["time_sync"]["mode"] == "read_only"
