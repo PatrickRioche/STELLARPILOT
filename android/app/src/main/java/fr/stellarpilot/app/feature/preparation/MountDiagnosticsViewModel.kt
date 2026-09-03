@@ -226,13 +226,52 @@ class MountDiagnosticsViewModel : ViewModel() {
                     api = diagnosticsApi
                 )
 
+                var effectiveRaHours = raHours
+                var effectiveDecDeg = decDeg
+                var effectiveMovementTest = movementTest
+
+                if (movementTest != null) {
+                    val freshStatus = diagnosticsApi.status(base)
+                    val freshRa = freshStatus.raHours
+                        ?: throw IllegalStateException(
+                            "RA OnStep indisponible après synchronisation horaire"
+                        )
+                    val freshDec = freshStatus.decDeg
+                        ?: throw IllegalStateException(
+                            "DEC OnStep indisponible après synchronisation horaire"
+                        )
+
+                    effectiveMovementTest = movementTest.copy(
+                        startRaHours = freshRa,
+                        startDecDeg = freshDec
+                    )
+
+                    when (movementTest.axis) {
+                        MovementAxis.RA -> {
+                            effectiveRaHours = (
+                                freshRa + movementTest.requestedDeltaDeg / 15.0 + 24.0
+                            ) % 24.0
+                            effectiveDecDeg = freshDec
+                        }
+
+                        MovementAxis.DEC -> {
+                            effectiveRaHours = freshRa
+                            effectiveDecDeg = (
+                                freshDec + movementTest.requestedDeltaDeg
+                            ).coerceIn(-90.0, 90.0)
+                        }
+                    }
+
+                    uiState = uiState.copy(status = freshStatus)
+                }
+
                 uiState = uiState.copy(
                     actionLabel = label
                 )
 
                 MountGotoCommandClient(base).gotoMount(
-                    raHours = raHours,
-                    decDeg = decDeg,
+                    raHours = effectiveRaHours,
+                    decDeg = effectiveDecDeg,
                     trackingMode = trackingMode,
                     coordinateFrame = coordinateFrame
                 )
@@ -249,7 +288,7 @@ class MountDiagnosticsViewModel : ViewModel() {
                     }
                 }
 
-                val testResult = movementTest?.let {
+                val testResult = effectiveMovementTest?.let {
                     evaluateMovement(
                         request = it,
                         label = label,
