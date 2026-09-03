@@ -15,6 +15,7 @@ _core.app.version = "0.6.0-poc"
 _MAX_DIAGNOSTIC_AXIS_DELTA_DEG = 0.75
 _MAX_OTHER_AXIS_DRIFT_DEG = 0.08
 _MOUNT_TIME_TOLERANCE_SECONDS = 10.0
+_MOUNT_TIME_SYNC_MAX_AGE_SECONDS = 12 * 60 * 60
 
 
 class MountFrameGotoPayload(BaseModel):
@@ -35,8 +36,74 @@ def _trusted_reference_time() -> tuple[str | None, str | None]:
     return _core._resolve_time(gps, system)
 
 
+def _verified_time_sync(clock_check: dict) -> dict:
+    """Validate the last explicit TIME_UTC write for this server session.
+
+    The LX200 OnStep INDI driver publishes TIME_UTC as the last written
+    setpoint. It does not increment that property every second, so comparing
+    the published timestamp continuously with GPS creates an artificial drift.
+    A mount is therefore trusted after one successful write/readback pair,
+    provided the same setpoint and offset are still published and the
+    verification is recent enough for the observing session.
+    """
+    state = _core.state
+    synced_at = state.mount_time_sync_monotonic_s
+    recorded_mount_utc = state.mount_time_sync_mount_utc
+    recorded_offset_minutes = state.mount_time_sync_offset_minutes
+
+    if synced_at is None or recorded_mount_utc is None:
+        return {
+            "verified": False,
+            "status": "required",
+            "detail": "Aucune synchronisation TIME_UTC verifiee dans cette session",
+            "age_seconds": None,
+            "readback_matches_setpoint": None,
+            "offset_matches_sync": None,
+        }
+
+    age_seconds = max(0.0, time.monotonic() - synced_at)
+    current_mount_utc = clock_check.get("utc")
+    readback_matches = current_mount_utc == recorded_mount_utc
+
+    offset_matches_sync = None
+    current_offset = clock_check.get("offset_hours")
+    if recorded_offset_minutes is not None and current_offset is not None:
+        offset_matches_sync = (
+            abs(current_offset - recorded_offset_minutes / 60.0) <= 0.01
+        )
+
+    verified = (
+        age_seconds <= _MOUNT_TIME_SYNC_MAX_AGE_SECONDS
+        and readback_matches
+        and offset_matches_sync is not False
+    )
+
+    detail = None
+    if age_seconds > _MOUNT_TIME_SYNC_MAX_AGE_SECONDS:
+        detail = "Synchronisation TIME_UTC trop ancienne pour cette session"
+    elif not readback_matches:
+        detail = "Le readback TIME_UTC ne correspond plus au dernier point de consigne"
+    elif offset_matches_sync is False:
+        detail = "L'offset OnStep a change depuis la derniere synchronisation"
+
+    return {
+        "verified": verified,
+        "status": "verified" if verified else "required",
+        "detail": detail,
+        "age_seconds": round(age_seconds, 3),
+        "max_age_seconds": _MOUNT_TIME_SYNC_MAX_AGE_SECONDS,
+        "reference_utc": state.mount_time_sync_reference_utc,
+        "mount_setpoint_utc": recorded_mount_utc,
+        "reference_source": state.mount_time_sync_source,
+        "timezone_offset_minutes": recorded_offset_minutes,
+        "readback_matches_setpoint": readback_matches,
+        "offset_matches_sync": offset_matches_sync,
+        "readback_kind": "indi_setpoint",
+    }
+
+
 def _trusted_mount_clock() -> tuple[dict | None, str | None, dict | None]:
-    """Require a trusted reference and a genuinely synchronized OnStep clock."""
+    """Require trusted session time and a verified OnStep TIME_UTC setpoint."""
     timestamp_utc, time_source = _trusted_reference_time()
 
     if timestamp_utc is None or time_source not in {"gps", "android"}:
@@ -80,6 +147,7 @@ def _trusted_mount_clock() -> tuple[dict | None, str | None, dict | None]:
                 f"attendu {expected_offset_hours:+.2f} h"
             ), enriched
 
+    verification = _verified_time_sync(clock_check)
     enriched = {
         **clock_check,
         "expected_offset_hours": expected_offset_hours,
@@ -89,23 +157,15 @@ def _trusted_mount_clock() -> tuple[dict | None, str | None, dict | None]:
             or clock_check.get("offset_hours") is None
             else abs(clock_check["offset_hours"] - expected_offset_hours) <= 0.01
         ),
+        "time_sync_verification": verification,
+        # Raw drift is only the age of the static INDI setpoint after sync.
+        "raw_drift_advisory": True,
     }
 
-    if clock_check.get("synchronized") is False:
-        drift = clock_check.get("drift_seconds")
-        drift_text = (
-            f"{float(drift):.1f} s"
-            if drift is not None
-            else "inconnue"
-        )
+    if not verification["verified"]:
         return None, (
-            "Horloge OnStep non synchronisée : dérive "
-            f"{drift_text}. Lancez /mount/time/sync avant les mouvements."
-        ), enriched
-
-    if clock_check.get("synchronized") is not True:
-        return None, (
-            "Synchronisation horaire OnStep non vérifiée : diagnostic monture bloqué"
+            "Synchronisation horaire OnStep requise : lancez /mount/time/sync "
+            "avant les mouvements"
         ), enriched
 
     return enriched, time_source, None
@@ -165,8 +225,9 @@ def mount_time_sync():
     """Synchronize OnStep once from a trusted GPS/Android reference.
 
     This is deliberately explicit and separate from GOTO. StellarPilot never
-    rewrites TIME_UTC before every movement; the operator synchronizes once,
-    then the readback must pass the 10-second tolerance before motor tests.
+    rewrites TIME_UTC before every movement. The write is immediately checked
+    against the INDI readback, then that verified setpoint is trusted for the
+    current observing session because TIME_UTC itself is static after writing.
     """
     timestamp_utc, time_source = _trusted_reference_time()
 
@@ -185,23 +246,23 @@ def mount_time_sync():
     offset_minutes = _core.state.client_timezone_offset_minutes
     offset_source = "android"
 
+    # A direct PC call may happen before Android has published its timezone.
+    # In that case preserve the currently published OnStep offset instead of
+    # blocking a safe GPS-based synchronization.
     if offset_minutes is None:
-        published_offset = before.get("offset_hours")
-        if published_offset is not None:
-            offset_minutes = int(round(float(published_offset) * 60.0))
-            offset_source = "onstep_readback"
-
-    if offset_minutes is None:
-        return {
-            "status": "error",
-            "detail": (
-                "Fuseau horaire indisponible : reconnectez l'application "
-                "ou configurez l'offset OnStep avant la synchronisation"
-            ),
-            "reference_source": time_source,
-            "reference_utc": timestamp_utc,
-            "before": before,
-        }
+        existing_offset_hours = before.get("offset_hours")
+        if existing_offset_hours is None:
+            return {
+                "status": "error",
+                "detail": (
+                    "Fuseau inconnu : ni la tablette ni OnStep ne publient "
+                    "un offset exploitable"
+                ),
+                "reference_source": time_source,
+                "reference_utc": timestamp_utc,
+            }
+        offset_minutes = int(round(float(existing_offset_hours) * 60.0))
+        offset_source = "onstep_readback"
 
     write_result = _core.indi_service.sync_mount_time(
         utc_iso=timestamp_utc,
@@ -242,6 +303,15 @@ def mount_time_sync():
             "readback": readback,
         }
 
+    # Persist the verified write/readback pair for this running server session.
+    _core.state.mount_time_sync_reference_utc = timestamp_utc
+    _core.state.mount_time_sync_mount_utc = readback.get("utc")
+    _core.state.mount_time_sync_source = time_source
+    _core.state.mount_time_sync_offset_minutes = offset_minutes
+    _core.state.mount_time_sync_monotonic_s = time.monotonic()
+
+    verification = _verified_time_sync(readback)
+
     return {
         "status": "synced",
         "reference_source": time_source,
@@ -251,7 +321,12 @@ def mount_time_sync():
         "before": before,
         "write": write_result,
         "readback": readback,
+        "verification": verification,
         "tolerance_seconds": _MOUNT_TIME_TOLERANCE_SECONDS,
+        "note": (
+            "TIME_UTC INDI est un point de consigne statique. La validation "
+            "repose sur l'ecriture suivie du readback, pas sur son avance seconde par seconde."
+        ),
     }
 
 
@@ -307,10 +382,10 @@ def mount_goto_mount_frame(payload: MountFrameGotoPayload):
     result["time_source"] = time_source_or_detail
     result["time_check"] = clock_check
     result["time_sync"] = {
-        "status": "preserved",
-        "mode": "read_only",
+        "status": "verified",
+        "mode": "explicit_write_readback",
         "detail": (
-            "Horloge OnStep validée puis conservée pendant le test moteur"
+            "Point de consigne TIME_UTC verifie et conserve pendant la session"
         ),
     }
     return result
