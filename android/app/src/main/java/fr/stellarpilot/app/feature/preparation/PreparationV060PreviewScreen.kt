@@ -41,6 +41,7 @@ import fr.stellarpilot.app.ui.theme.StellarText
 
 private val previewSteps = listOf(
     "Connexion",
+    "Orientation",
     "Moteurs",
     "Astrométrie",
     "Étoile",
@@ -48,14 +49,28 @@ private val previewSteps = listOf(
     "Prêt"
 )
 
+private val previewOrientations = listOf(
+    "N" to "Nord",
+    "NE" to "Nord-Est",
+    "E" to "Est",
+    "SE" to "Sud-Est",
+    "S" to "Sud",
+    "SO" to "Sud-Ouest",
+    "O" to "Ouest",
+    "NO" to "Nord-Ouest"
+)
+
 @Composable
 fun PreparationV060PreviewScreen(
     onOpenSky: () -> Unit
 ) {
     var currentStep by rememberSaveable { mutableIntStateOf(0) }
+    var selectedOrientation by rememberSaveable { mutableStateOf<String?>(null) }
     var selectedStar by rememberSaveable { mutableStateOf("Véga") }
     var exposure by rememberSaveable { mutableStateOf(0.50) }
     var referenceCount by rememberSaveable { mutableIntStateOf(0) }
+
+    val canAdvance = currentStep != 1 || selectedOrientation != null
 
     Surface(
         modifier = Modifier.fillMaxSize(),
@@ -120,13 +135,17 @@ fun PreparationV060PreviewScreen(
 
             when (currentStep) {
                 0 -> PreviewConnectionStep()
-                1 -> PreviewMotorsStep()
-                2 -> PreviewAstrometryStep()
-                3 -> PreviewStarStep(
+                1 -> PreviewOrientationStep(
+                    selectedOrientation = selectedOrientation,
+                    onSelect = { selectedOrientation = it }
+                )
+                2 -> PreviewMotorsStep(selectedOrientation ?: "—")
+                3 -> PreviewAstrometryStep()
+                4 -> PreviewStarStep(
                     selectedStar = selectedStar,
                     onSelect = { selectedStar = it }
                 )
-                4 -> PreviewBahtinovStep(
+                5 -> PreviewBahtinovStep(
                     star = selectedStar,
                     exposure = exposure,
                     referenceCount = referenceCount,
@@ -135,6 +154,7 @@ fun PreparationV060PreviewScreen(
                 )
                 else -> PreviewReadyStep(
                     referenceCount = referenceCount,
+                    orientation = selectedOrientation ?: "—",
                     onOpenSky = onOpenSky
                 )
             }
@@ -157,7 +177,7 @@ fun PreparationV060PreviewScreen(
                             currentStep += 1
                         }
                     },
-                    enabled = currentStep < previewSteps.lastIndex,
+                    enabled = currentStep < previewSteps.lastIndex && canAdvance,
                     modifier = Modifier.weight(1f),
                     colors = ButtonDefaults.buttonColors(
                         containerColor = StellarOrange,
@@ -195,16 +215,53 @@ private fun PreviewConnectionStep() {
             onClick = {},
             enabled = false,
             modifier = Modifier.fillMaxWidth()
-        ) { Text("Tester la motorisation") }
+        ) { Text("Choisir l'orientation") }
     }
 }
 
 @Composable
-private fun PreviewMotorsStep() {
+private fun PreviewOrientationStep(
+    selectedOrientation: String?,
+    onSelect: (String) -> Unit
+) {
+    PreviewCard(
+        title = "Orientation initiale",
+        subtitle = "Direction approximative du tube"
+    ) {
+        Text(
+            "Choisissez le secteur du ciel vers lequel pointe approximativement le tube avant l'astrométrie.",
+            color = StellarText
+        )
+        Spacer(Modifier.height(12.dp))
+        previewOrientations.forEach { (code, label) ->
+            if (selectedOrientation == code) {
+                Button(
+                    onClick = { onSelect(code) },
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = StellarOrange,
+                        contentColor = StellarBackground
+                    )
+                ) { Text("✓ $code • $label", fontWeight = FontWeight.Bold) }
+            } else {
+                OutlinedButton(
+                    onClick = { onSelect(code) },
+                    modifier = Modifier.fillMaxWidth()
+                ) { Text("$code • $label") }
+            }
+            Spacer(Modifier.height(6.dp))
+        }
+        PreviewInfo("Orientation choisie", selectedOrientation ?: "À sélectionner")
+    }
+}
+
+@Composable
+private fun PreviewMotorsStep(orientation: String) {
     PreviewCard(
         title = "Diagnostic moteurs EQ",
         subtitle = "RA et DEC validés pendant les tests terrain"
     ) {
+        PreviewInfo("Orientation initiale", orientation)
         PreviewInfo("Monture", "LX200 OnStep")
         PreviewInfo("État", "tracking")
         PreviewInfo("RA", "5,94639 h")
@@ -363,6 +420,7 @@ private fun PreviewBahtinovStep(
 @Composable
 private fun PreviewReadyStep(
     referenceCount: Int,
+    orientation: String,
     onOpenSky: () -> Unit
 ) {
     PreviewCard(
@@ -370,7 +428,8 @@ private fun PreviewReadyStep(
         subtitle = "Aperçu du compte rendu final"
     ) {
         Text(
-            "✓ Axe RA mesuré\n" +
+            "✓ Orientation initiale : $orientation\n" +
+                "✓ Axe RA mesuré\n" +
                 "✓ Axe DEC mesuré\n" +
                 "○ Astrométrie + SYNC à réaliser ce soir\n" +
                 "○ GOTO étoile + tracking à réaliser ce soir\n" +
