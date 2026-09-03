@@ -282,8 +282,29 @@ class MountDiagnosticsViewModel : ViewModel() {
                     delay(700)
                     lastStatus = diagnosticsApi.status(base)
 
-                    val state = lastStatus?.status?.lowercase()
-                    if (state == "tracking" || state == "idle") {
+                    val state = lastStatus.status.lowercase()
+
+                    if (effectiveMovementTest != null) {
+                        val probe = evaluateMovement(
+                            request = effectiveMovementTest,
+                            label = label,
+                            end = lastStatus
+                        )
+
+                        val movementObserved = probe.passed
+
+                        if (
+                            movementObserved &&
+                            (state == "tracking" || state == "idle")
+                        ) {
+                            // OnStep can publish tracking before the coordinate
+                            // property has completely settled. Give INDI one
+                            // final refresh window before recording the result.
+                            delay(500)
+                            lastStatus = diagnosticsApi.status(base)
+                            break
+                        }
+                    } else if (state == "tracking" || state == "idle") {
                         break
                     }
                 }
