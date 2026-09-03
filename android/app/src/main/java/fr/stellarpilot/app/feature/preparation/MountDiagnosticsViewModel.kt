@@ -11,12 +11,36 @@ import fr.stellarpilot.app.data.remote.MountGotoCommandClient
 import fr.stellarpilot.app.domain.model.SkyStar
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlin.math.abs
+
+
+enum class MovementAxis {
+    RA,
+    DEC
+}
+
+
+data class MovementTestResult(
+    val axis: MovementAxis,
+    val label: String,
+    val requestedDeltaDeg: Double,
+    val measuredDeltaDeg: Double,
+    val startRaHours: Double,
+    val startDecDeg: Double,
+    val endRaHours: Double?,
+    val endDecDeg: Double?,
+    val passed: Boolean,
+    val detail: String
+)
 
 
 data class MountDiagnosticsUiState(
     val isLoading: Boolean = false,
     val status: MountDiagnosticsResult? = null,
     val actionLabel: String? = null,
+    val lastMovementTest: MovementTestResult? = null,
+    val raValidated: Boolean = false,
+    val decValidated: Boolean = false,
     val error: String? = null
 )
 
@@ -70,12 +94,24 @@ class MountDiagnosticsViewModel : ViewModel() {
             return
         }
 
+        val axis =
+            if (abs(deltaRaHours) > 0.0) MovementAxis.RA
+            else MovementAxis.DEC
+
         runGoto(
             serverBaseUrl = serverBaseUrl,
             raHours = (ra + deltaRaHours + 24.0) % 24.0,
             decDeg = (dec + deltaDecDeg).coerceIn(-90.0, 90.0),
             trackingMode = "sidereal",
-            label = label
+            label = label,
+            movementTest = MovementTestRequest(
+                axis = axis,
+                startRaHours = ra,
+                startDecDeg = dec,
+                requestedDeltaDeg =
+                    if (axis == MovementAxis.RA) deltaRaHours * 15.0
+                    else deltaDecDeg
+            )
         )
     }
 
@@ -88,22 +124,32 @@ class MountDiagnosticsViewModel : ViewModel() {
             raHours = star.raHours,
             decDeg = star.decDeg,
             trackingMode = "sidereal",
-            label = "Pointage ${star.name}"
+            label = "Pointage ${star.name}",
+            movementTest = null
         )
     }
+
+    private data class MovementTestRequest(
+        val axis: MovementAxis,
+        val startRaHours: Double,
+        val startDecDeg: Double,
+        val requestedDeltaDeg: Double
+    )
 
     private fun runGoto(
         serverBaseUrl: String,
         raHours: Double,
         decDeg: Double,
         trackingMode: String,
-        label: String
+        label: String,
+        movementTest: MovementTestRequest?
     ) {
         if (uiState.isLoading) return
 
         uiState = uiState.copy(
             isLoading = true,
             actionLabel = label,
+            lastMovementTest = if (movementTest != null) null else uiState.lastMovementTest,
             error = null
         )
 
@@ -118,20 +164,33 @@ class MountDiagnosticsViewModel : ViewModel() {
 
                 var lastStatus: MountDiagnosticsResult? = null
 
-                for (attempt in 0 until 15) {
+                for (attempt in 0 until 25) {
                     delay(700)
                     lastStatus = MountDiagnosticsApiClient().status(base)
 
-                    val state = lastStatus?.status?.lowercase()
+                    val state = lastStatus.status.lowercase()
                     if (state == "tracking" || state == "idle") {
                         break
                     }
+                }
+
+                val testResult = movementTest?.let {
+                    evaluateMovement(
+                        request = it,
+                        label = label,
+                        end = lastStatus
+                    )
                 }
 
                 uiState = uiState.copy(
                     isLoading = false,
                     status = lastStatus,
                     actionLabel = null,
+                    lastMovementTest = testResult ?: uiState.lastMovementTest,
+                    raValidated = uiState.raValidated ||
+                        (testResult?.axis == MovementAxis.RA && testResult.passed),
+                    decValidated = uiState.decValidated ||
+                        (testResult?.axis == MovementAxis.DEC && testResult.passed),
                     error = null
                 )
             } catch (error: Exception) {
@@ -143,4 +202,65 @@ class MountDiagnosticsViewModel : ViewModel() {
             }
         }
     }
+
+    private fun evaluateMovement(
+        request: MovementTestRequest,
+        label: String,
+        end: MountDiagnosticsResult?
+    ): MovementTestResult {
+        val endRa = end?.raHours
+        val endDec = end?.decDeg
+
+        val measured = when (request.axis) {
+            MovementAxis.RA -> {
+                if (endRa == null) 0.0
+                else signedHourDelta(request.startRaHours, endRa) * 15.0
+            }
+            MovementAxis.DEC -> {
+                if (endDec == null) 0.0
+                else endDec - request.startDecDeg
+            }
+        }
+
+        val threshold = maxOf(
+            0.03,
+            abs(request.requestedDeltaDeg) * 0.25
+        )
+        val directionOk =
+            measured == 0.0 || request.requestedDeltaDeg == 0.0 ||
+                measured * request.requestedDeltaDeg > 0.0
+        val passed =
+            endRa != null && endDec != null &&
+                abs(measured) >= threshold && directionOk
+
+        val detail = if (passed) {
+            "PASS • déplacement mesuré ${formatDelta(measured)}°"
+        } else {
+            "FAIL • demandé ${formatDelta(request.requestedDeltaDeg)}° ; " +
+                "mesuré ${formatDelta(measured)}°"
+        }
+
+        return MovementTestResult(
+            axis = request.axis,
+            label = label,
+            requestedDeltaDeg = request.requestedDeltaDeg,
+            measuredDeltaDeg = measured,
+            startRaHours = request.startRaHours,
+            startDecDeg = request.startDecDeg,
+            endRaHours = endRa,
+            endDecDeg = endDec,
+            passed = passed,
+            detail = detail
+        )
+    }
+
+    private fun signedHourDelta(startHours: Double, endHours: Double): Double {
+        var delta = (endHours - startHours) % 24.0
+        if (delta > 12.0) delta -= 24.0
+        if (delta < -12.0) delta += 24.0
+        return delta
+    }
+
+    private fun formatDelta(value: Double): String =
+        if (value >= 0.0) "+%.3f".format(value) else "%.3f".format(value)
 }
