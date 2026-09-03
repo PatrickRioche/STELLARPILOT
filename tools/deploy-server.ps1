@@ -113,19 +113,57 @@ log "Updating Python dependencies"
 .venv/bin/python -m pip install --upgrade pip
 .venv/bin/pip install -r requirements.txt
 
-log "Checking Python dependency consistency"
-.venv/bin/pip check
-
-log "Checking Python imports"
+# Astroberry intentionally exposes selected system Python packages to this
+# environment. A global `pip check` therefore reports unrelated OS packages
+# (types-*, apt-listchanges, h2, gevent, ...). Validate only the dependencies
+# that StellarPilot actually relies on.
+log "Checking StellarPilot Python dependencies"
 .venv/bin/python - <<'PY'
+from importlib.metadata import PackageNotFoundError, distribution, version
+from packaging.requirements import Requirement
+from packaging.version import Version
+
+expected_exact = {
+    "fastapi": "0.116.1",
+    "uvicorn": "0.35.0",
+    "pydantic": "2.11.7",
+    "pytest": "8.4.1",
+    "httpx": "0.28.1",
+}
+
+for package, expected in expected_exact.items():
+    actual = version(package)
+    if actual != expected:
+        raise SystemExit(f"{package}: expected {expected}, found {actual}")
+    print(f"{package}={actual}")
+
+requests_version = version("requests")
+if Version(requests_version) < Version("2.32.4"):
+    raise SystemExit(f"requests>=2.32.4 required, found {requests_version}")
+print(f"requests={requests_version}")
+
+# If indiweb is installed, also enforce its declared requests constraint.
+try:
+    indiweb = distribution("indiweb")
+except PackageNotFoundError:
+    print("indiweb=not-installed (not required by StellarPilot server)")
+else:
+    print(f"indiweb={indiweb.version}")
+    for raw_requirement in indiweb.requires or []:
+        requirement = Requirement(raw_requirement)
+        if requirement.name.lower() == "requests" and requests_version not in requirement.specifier:
+            raise SystemExit(
+                f"indiweb requires {requirement}, requests={requests_version}"
+            )
+
+import astropy
 import fastapi
 import numpy
-import astropy
 import PIL
-import scipy
 import requests
-print("Python imports OK")
-print("requests=", requests.__version__)
+import scipy
+
+print("StellarPilot dependency check OK")
 PY
 
 log "Updating systemd service"
