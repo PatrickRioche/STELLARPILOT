@@ -21,6 +21,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import fr.stellarpilot.app.feature.capture.CaptureScreen
 import fr.stellarpilot.app.feature.connection.ConnectionViewModel
 import fr.stellarpilot.app.feature.galleries.GalleriesScreen
+import fr.stellarpilot.app.feature.preparation.PreparationV060PreviewScreen
 import fr.stellarpilot.app.feature.preparation.PreparationV060Screen
 import fr.stellarpilot.app.feature.sky.SkyScreen
 import fr.stellarpilot.app.feature.status.StatusScreen
@@ -67,6 +68,12 @@ private val tabs = listOf(
         R.drawable.ic_nav_results,
         "Galeries",
         "Images et captures de vos sessions"
+    ),
+    StellarTab(
+        "Test UI",
+        R.drawable.ic_nav_preparation,
+        "Test interface",
+        "Parcours V0.6 sans commande mat\u00E9rielle"
     )
 )
 
@@ -160,6 +167,12 @@ fun StellarPilotApp() {
                             connectionViewModel
                                 .uiState
                                 .serverBaseUrl
+                    )
+
+                    5 -> PreparationV060PreviewScreen(
+                        onOpenSky = {
+                            selectedTab = 2
+                        }
                     )
                 }
             }
