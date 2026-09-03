@@ -119,7 +119,7 @@ fun PreparationV060Screen(
             )
             Spacer(Modifier.height(6.dp))
             Text(
-                text = "Assistant StellarPilot 0.6",
+                text = "Assistant StellarPilot 0.6 • test terrain",
                 style = MaterialTheme.typography.headlineMedium,
                 color = StellarText,
                 fontWeight = FontWeight.Bold
@@ -234,6 +234,9 @@ fun PreparationV060Screen(
 
                 else -> ReadyV060Step(
                     bahtinovCount = bahtinovState.referenceCount,
+                    raValidated = mountState.raValidated,
+                    decValidated = mountState.decValidated,
+                    mountSyncValidated = astrometryState.mountSyncStatus == "synced",
                     onPrevious = { currentStep = 4 },
                     onOpenSky = onOpenSky
                 )
@@ -307,14 +310,15 @@ private fun MotorV060Step(
     val usable = mount != null &&
         mount.status.lowercase() != "error" &&
         !mount.virtualPosition
+    val motorsValidated = usable && state.raValidated && state.decValidated
 
     V060Card(
         title = "Diagnostic moteurs EQ",
-        subtitle = "Petits déplacements contrôlés avant la séance"
+        subtitle = "Mesure réelle avant/après chaque déplacement"
     ) {
         Text(
             "Les boutons lancent de petits GOTO de test : ±0,03 h en RA ou ±0,30° en DEC. " +
-                "Après chaque ordre, StellarPilot relit les coordonnées publiées par OnStep.",
+                "StellarPilot compare ensuite les coordonnées OnStep avant/après et valide automatiquement l'axe.",
             color = StellarText
         )
         Spacer(Modifier.height(14.dp))
@@ -332,6 +336,27 @@ private fun MotorV060Step(
         )
         V060Info("Tracking", mount?.trackingMode ?: "—")
         V060Info("INDI", mount?.indiState ?: "—")
+        V060Info("Axe RA", if (state.raValidated) "✓ validé" else "à tester")
+        V060Info("Axe DEC", if (state.decValidated) "✓ validé" else "à tester")
+
+        state.lastMovementTest?.let { test ->
+            Spacer(Modifier.height(10.dp))
+            Text(
+                "${test.label} • ${test.detail}",
+                color = if (test.passed) StellarGreen else StellarRed,
+                fontWeight = FontWeight.Bold
+            )
+            Text(
+                "Départ RA ${String.format(Locale.FRANCE, "%.5f", test.startRaHours)} h / " +
+                    "DEC ${String.format(Locale.FRANCE, "%+.4f", test.startDecDeg)}°",
+                color = StellarMuted
+            )
+            Text(
+                "Arrivée RA ${test.endRaHours?.let { String.format(Locale.FRANCE, "%.5f", it) } ?: "—"} h / " +
+                    "DEC ${test.endDecDeg?.let { String.format(Locale.FRANCE, "%+.4f", it) } ?: "—"}°",
+                color = StellarMuted
+            )
+        }
 
         state.actionLabel?.let {
             Spacer(Modifier.height(8.dp))
@@ -378,8 +403,7 @@ private fun MotorV060Step(
         if (mount?.decDeg == 90.0 || mount?.decDeg == -90.0) {
             Spacer(Modifier.height(10.dp))
             Text(
-                "DEC est exactement à ${mount.decDeg}°. Après un test DEC, vérifiez impérativement qu'elle change : " +
-                    "une valeur figée ne doit pas être utilisée comme hint astrométrique.",
+                "DEC est exactement à ${mount.decDeg}°. Le passage à l'astrométrie reste bloqué tant qu'un déplacement DEC mesurable n'a pas été validé.",
                 color = StellarOrange
             )
         }
@@ -388,7 +412,7 @@ private fun MotorV060Step(
         V060Navigation(
             onPrevious = onPrevious,
             onContinue = onContinue,
-            continueEnabled = usable,
+            continueEnabled = motorsValidated,
             continueText = "Première astrométrie"
         )
     }
@@ -403,6 +427,8 @@ private fun AstrometryV060Step(
     onContinue: () -> Unit
 ) {
     val solved = state.solveStatus == "solved"
+    val synced = state.mountSyncStatus == "synced"
+    val validated = solved && synced
 
     V060Card(
         title = "Première astrométrie",
@@ -424,7 +450,7 @@ private fun AstrometryV060Step(
             )
         ) {
             Text(
-                if (state.isLoading) "Capture / résolution…" else "Capturer à 4 s et résoudre",
+                if (state.isLoading) "Capture / résolution / SYNC…" else "Capturer à 4 s, résoudre et synchroniser",
                 fontWeight = FontWeight.Bold
             )
         }
@@ -450,25 +476,39 @@ private fun AstrometryV060Step(
         V060Info("Qualité", state.qualityLabel ?: "—")
         V060Info("Étoiles", state.qualityStarCount?.toString() ?: "—")
         V060Info("Solve", state.solveStatus ?: "—")
+        V060Info("SYNC OnStep", state.mountSyncStatus ?: "—")
         V060Info(
             "Échelle",
             state.pixelScaleArcsec?.let {
                 String.format(Locale.FRANCE, "%.4f ″/px", it)
             } ?: "—"
         )
-        if (solved) {
-            Text("✓ Astrométrie validée", color = StellarGreen, fontWeight = FontWeight.Bold)
+        if (validated) {
+            Text(
+                "✓ Astrométrie résolue et monture synchronisée",
+                color = StellarGreen,
+                fontWeight = FontWeight.Bold
+            )
+        } else if (solved && !synced) {
+            Text(
+                "Astrométrie résolue, mais SYNC OnStep non validé : progression bloquée.",
+                color = StellarOrange
+            )
+        }
+        state.mountSyncDetail?.let {
+            Spacer(Modifier.height(6.dp))
+            Text(it, color = if (synced) StellarGreen else StellarOrange)
         }
         (state.error ?: state.solveDetail)?.let {
             Spacer(Modifier.height(8.dp))
-            Text(it, color = if (solved) StellarMuted else StellarOrange)
+            Text(it, color = if (validated) StellarMuted else StellarOrange)
         }
 
         Spacer(Modifier.height(18.dp))
         V060Navigation(
             onPrevious = onPrevious,
             onContinue = onContinue,
-            continueEnabled = solved,
+            continueEnabled = validated,
             continueText = "Choisir l'étoile de focus"
         )
     }
@@ -558,12 +598,18 @@ private fun StarV060Step(
             if (tracking) "✓ Monture en tracking" else "État monture : ${mountStatus ?: "—"}",
             color = if (tracking) StellarGreen else StellarMuted
         )
+        if (!tracking && selectedStar != null) {
+            Text(
+                "Le passage au Bahtinov reste bloqué jusqu'au retour explicite de l'état tracking.",
+                color = StellarOrange
+            )
+        }
 
         Spacer(Modifier.height(18.dp))
         V060Navigation(
             onPrevious = onPrevious,
             onContinue = onContinue,
-            continueEnabled = selectedStar != null && !isLoading,
+            continueEnabled = selectedStar != null && tracking && !isLoading,
             continueText = "Installer le Bahtinov"
         )
     }
@@ -581,6 +627,10 @@ private fun BahtinovV060Step(
     onPrevious: () -> Unit,
     onContinue: () -> Unit
 ) {
+    val trackingOk =
+        mountState.status?.status?.lowercase() == "tracking" &&
+            mountState.status.trackingMode?.lowercase() == "sidereal"
+
     V060Card(
         title = "Calibration Bahtinov",
         subtitle = star?.let { "${it.name} • tracking sidéral" }
@@ -595,6 +645,15 @@ private fun BahtinovV060Step(
         V060Info("Monture", mountState.status?.status ?: "—")
         V060Info("Tracking", mountState.status?.trackingMode ?: "—")
         V060Info("Références", state.referenceCount.toString())
+
+        if (!trackingOk) {
+            Spacer(Modifier.height(8.dp))
+            Text(
+                "Capture Bahtinov bloquée : tracking sidéral non confirmé.",
+                color = StellarOrange,
+                fontWeight = FontWeight.Bold
+            )
+        }
 
         Spacer(Modifier.height(12.dp))
         Text("Temps de pose Bahtinov", color = StellarMuted)
@@ -654,7 +713,7 @@ private fun BahtinovV060Step(
         ).forEach { label ->
             Button(
                 onClick = { onReference(label) },
-                enabled = !state.isLoading && star != null,
+                enabled = !state.isLoading && star != null && trackingOk,
                 modifier = Modifier.fillMaxWidth(),
                 colors = ButtonDefaults.buttonColors(
                     containerColor =
@@ -672,7 +731,7 @@ private fun BahtinovV060Step(
         }
         OutlinedButton(
             onClick = { onReference(BahtinovReferenceLabel.IGNORE) },
-            enabled = !state.isLoading && star != null,
+            enabled = !state.isLoading && star != null && trackingOk,
             modifier = Modifier.fillMaxWidth()
         ) { Text("Mauvaise capture / ignorer") }
 
@@ -695,7 +754,7 @@ private fun BahtinovV060Step(
         V060Navigation(
             onPrevious = onPrevious,
             onContinue = onContinue,
-            continueEnabled = state.referenceCount > 0,
+            continueEnabled = state.referenceCount > 0 && trackingOk,
             continueText = "Terminer les tests"
         )
     }
@@ -705,24 +764,27 @@ private fun BahtinovV060Step(
 @Composable
 private fun ReadyV060Step(
     bahtinovCount: Int,
+    raValidated: Boolean,
+    decValidated: Boolean,
+    mountSyncValidated: Boolean,
     onPrevious: () -> Unit,
     onOpenSky: () -> Unit
 ) {
     V060Card(
         title = "Tests préparatoires terminés",
-        subtitle = "Motorisation et Bahtinov V0.6"
+        subtitle = "Compte rendu terrain StellarPilot 0.6"
     ) {
         Text(
-            "✓ Motorisation testable via OnStep\n" +
-                "✓ Astrométrie de référence à 4 s\n" +
+            (if (raValidated) "✓" else "✗") + " Axe RA mesuré\n" +
+                (if (decValidated) "✓" else "✗") + " Axe DEC mesuré\n" +
+                (if (mountSyncValidated) "✓" else "✗") + " Astrométrie + SYNC OnStep\n" +
                 "✓ GOTO étoile + tracking\n" +
                 "✓ $bahtinovCount références Bahtinov étiquetées",
-            color = StellarGreen
+            color = if (raValidated && decValidated && mountSyncValidated) StellarGreen else StellarOrange
         )
         Spacer(Modifier.height(14.dp))
         Text(
-            "Les darks restent volontairement hors de cette version de test. " +
-                "Le centrage deviendra ensuite une fonction automatique interne aux GOTO.",
+            "Pour la séance de ce soir, ne considérez la chaîne validée que si les deux axes, le SYNC et le tracking ont tous été confirmés par l'application.",
             color = StellarMuted
         )
         Spacer(Modifier.height(16.dp))
