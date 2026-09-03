@@ -37,6 +37,7 @@ data class BahtinovUiState(
     val exposureSeconds: Double = 1.0,
     val lastLabel: BahtinovReferenceLabel? = null,
     val referenceCount: Int = 0,
+    val journalPath: String? = null,
     val message: String? = null,
     val error: String? = null
 )
@@ -83,6 +84,12 @@ class BahtinovViewModel(
                     exposureSeconds = exposure
                 )
                 val preview = api.getPreview(serverBaseUrl)
+                val quality = runCatching {
+                    api.analyzeQuality(
+                        serverBaseUrl = serverBaseUrl,
+                        imagePath = capture.imagePath
+                    )
+                }.getOrNull()
 
                 val timestamp = Instant.now().toString()
                 val record = JSONObject()
@@ -99,14 +106,24 @@ class BahtinovViewModel(
                     .put("mount_ra_hours", mountRaHours)
                     .put("mount_dec_deg", mountDecDeg)
                     .put("tracking_mode", "sidereal")
+                    .put("quality_status", quality?.status)
+                    .put("quality_classification", quality?.classification)
+                    .put("quality_score", quality?.score)
+                    .put("quality_label", quality?.qualityLabel)
+                    .put("star_count", quality?.starCount)
+                    .put("saturated_percent", quality?.saturatedPercent)
+                    .put(
+                        "recommended_exposure_factor",
+                        quality?.recommendedExposureFactor
+                    )
 
-                persistReference(record)
+                val journal = persistReference(record)
 
                 Log.i(
                     TAG,
                     "REFERENCE label=${label.storageValue} " +
                         "capture=${capture.imagePath} exposure=$exposure " +
-                        "star=${star?.name ?: "unknown"}"
+                        "star=${star?.name ?: "unknown"} journal=${journal.absolutePath}"
                 )
 
                 uiState = uiState.copy(
@@ -116,6 +133,7 @@ class BahtinovViewModel(
                     lastLabel = label,
                     referenceCount = uiState.referenceCount +
                         if (label == BahtinovReferenceLabel.IGNORE) 0 else 1,
+                    journalPath = journal.absolutePath,
                     message =
                         if (label == BahtinovReferenceLabel.IGNORE) {
                             "Capture marquée à ignorer"
@@ -133,9 +151,12 @@ class BahtinovViewModel(
         }
     }
 
-    private fun persistReference(record: JSONObject) {
+    private fun persistReference(record: JSONObject): File {
+        val application = getApplication<Application>()
+        val rootParent = application.getExternalFilesDir(null)
+            ?: application.filesDir
         val root = File(
-            getApplication<Application>().filesDir,
+            rootParent,
             "bahtinov-references"
         )
         root.mkdirs()
@@ -149,5 +170,7 @@ class BahtinovViewModel(
             record.toString() + "\n",
             Charsets.UTF_8
         )
+
+        return file
     }
 }
