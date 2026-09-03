@@ -1,5 +1,5 @@
 param(
-    [string]$PiHost = "astroberry@10.42.0.1",
+    [string]$PiHost = "astroberry@192.168.1.46",
     [string]$DeployDir = "/home/astroberry/stellarpilot-server"
 )
 
