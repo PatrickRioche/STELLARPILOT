@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from typing import Literal
 
 from pydantic import BaseModel, Field
@@ -13,6 +14,7 @@ _core.app.version = "0.6.0-poc"
 
 _MAX_DIAGNOSTIC_AXIS_DELTA_DEG = 0.75
 _MAX_OTHER_AXIS_DRIFT_DEG = 0.08
+_MOUNT_TIME_TOLERANCE_SECONDS = 10.0
 
 
 class MountFrameGotoPayload(BaseModel):
@@ -27,11 +29,15 @@ class MountFrameGotoPayload(BaseModel):
     ] = "sidereal"
 
 
-def _trusted_mount_clock() -> tuple[dict | None, str | None, dict | None]:
-    """Apply the same read-only clock safeguards as the public GOTO route."""
+def _trusted_reference_time() -> tuple[str | None, str | None]:
     gps = _core.gps_service.status()
     system = _core.system_service.status()
-    timestamp_utc, time_source = _core._resolve_time(gps, system)
+    return _core._resolve_time(gps, system)
+
+
+def _trusted_mount_clock() -> tuple[dict | None, str | None, dict | None]:
+    """Require a trusted reference and a genuinely synchronized OnStep clock."""
+    timestamp_utc, time_source = _trusted_reference_time()
 
     if timestamp_utc is None or time_source not in {"gps", "android"}:
         return None, (
@@ -84,6 +90,24 @@ def _trusted_mount_clock() -> tuple[dict | None, str | None, dict | None]:
             else abs(clock_check["offset_hours"] - expected_offset_hours) <= 0.01
         ),
     }
+
+    if clock_check.get("synchronized") is False:
+        drift = clock_check.get("drift_seconds")
+        drift_text = (
+            f"{float(drift):.1f} s"
+            if drift is not None
+            else "inconnue"
+        )
+        return None, (
+            "Horloge OnStep non synchronisée : dérive "
+            f"{drift_text}. Lancez /mount/time/sync avant les mouvements."
+        ), enriched
+
+    if clock_check.get("synchronized") is not True:
+        return None, (
+            "Synchronisation horaire OnStep non vérifiée : diagnostic monture bloqué"
+        ), enriched
+
     return enriched, time_source, None
 
 
@@ -133,6 +157,91 @@ def _validate_small_field_move(payload: MountFrameGotoPayload) -> dict:
         "requested_ra_delta_deg": ra_delta_deg,
         "requested_dec_delta_deg": dec_delta_deg,
         "max_axis_delta_deg": _MAX_DIAGNOSTIC_AXIS_DELTA_DEG,
+    }
+
+
+@_core.app.post("/mount/time/sync")
+def mount_time_sync():
+    """Synchronize OnStep once from a trusted GPS/Android reference.
+
+    This is deliberately explicit and separate from GOTO. StellarPilot never
+    rewrites TIME_UTC before every movement; the operator synchronizes once,
+    then the readback must pass the 10-second tolerance before motor tests.
+    """
+    timestamp_utc, time_source = _trusted_reference_time()
+
+    if timestamp_utc is None or time_source not in {"gps", "android"}:
+        return {
+            "status": "error",
+            "detail": "Aucune source d'heure GPS/Android fiable disponible",
+            "reference_source": time_source,
+        }
+
+    offset_minutes = _core.state.client_timezone_offset_minutes
+    if offset_minutes is None:
+        return {
+            "status": "error",
+            "detail": (
+                "Fuseau de la tablette inconnu : reconnectez l'application "
+                "avant de synchroniser OnStep"
+            ),
+            "reference_source": time_source,
+            "reference_utc": timestamp_utc,
+        }
+
+    before = _core.indi_service.mount_time_status(
+        reference_utc=timestamp_utc,
+        reference_source=time_source,
+    )
+
+    write_result = _core.indi_service.sync_mount_time(
+        utc_iso=timestamp_utc,
+        timezone_offset_minutes=offset_minutes,
+    )
+
+    if write_result.get("status") != "ok":
+        return {
+            "status": "error",
+            "detail": write_result.get(
+                "detail",
+                "Écriture TIME_UTC OnStep impossible",
+            ),
+            "before": before,
+            "write": write_result,
+        }
+
+    readback = None
+    for delay_s in (0.15, 0.35, 0.75):
+        time.sleep(delay_s)
+        current_reference_utc, current_source = _trusted_reference_time()
+        readback = _core.indi_service.mount_time_status(
+            reference_utc=current_reference_utc or timestamp_utc,
+            reference_source=current_source or time_source,
+        )
+        if readback.get("synchronized") is True:
+            break
+
+    if readback is None or readback.get("synchronized") is not True:
+        return {
+            "status": "error",
+            "detail": (
+                "TIME_UTC a été écrit mais le readback OnStep reste hors "
+                f"tolérance ({_MOUNT_TIME_TOLERANCE_SECONDS:.0f} s)"
+            ),
+            "before": before,
+            "write": write_result,
+            "readback": readback,
+        }
+
+    return {
+        "status": "synced",
+        "reference_source": time_source,
+        "reference_utc": timestamp_utc,
+        "timezone_offset_minutes": offset_minutes,
+        "before": before,
+        "write": write_result,
+        "readback": readback,
+        "tolerance_seconds": _MOUNT_TIME_TOLERANCE_SECONDS,
     }
 
 
@@ -191,7 +300,7 @@ def mount_goto_mount_frame(payload: MountFrameGotoPayload):
         "status": "preserved",
         "mode": "read_only",
         "detail": (
-            "Horloge OnStep conservée ; aucune écriture TIME_UTC pendant le test"
+            "Horloge OnStep validée puis conservée pendant le test moteur"
         ),
     }
     return result
