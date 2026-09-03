@@ -113,6 +113,9 @@ log "Updating Python dependencies"
 .venv/bin/python -m pip install --upgrade pip
 .venv/bin/pip install -r requirements.txt
 
+log "Checking Python dependency consistency"
+.venv/bin/pip check
+
 log "Checking Python imports"
 .venv/bin/python - <<'PY'
 import fastapi
@@ -120,7 +123,9 @@ import numpy
 import astropy
 import PIL
 import scipy
+import requests
 print("Python imports OK")
+print("requests=", requests.__version__)
 PY
 
 log "Updating systemd service"
