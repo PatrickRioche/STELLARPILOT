@@ -21,7 +21,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import fr.stellarpilot.app.feature.capture.CaptureScreen
 import fr.stellarpilot.app.feature.connection.ConnectionViewModel
 import fr.stellarpilot.app.feature.galleries.GalleriesScreen
-import fr.stellarpilot.app.feature.preparation.PreparationScreen
+import fr.stellarpilot.app.feature.preparation.PreparationV060Screen
 import fr.stellarpilot.app.feature.sky.SkyScreen
 import fr.stellarpilot.app.feature.status.StatusScreen
 import fr.stellarpilot.app.ui.theme.StellarBackground
@@ -128,11 +128,11 @@ fun StellarPilotApp() {
 
                 when (selectedTab) {
 
-                    0 -> PreparationScreen(
+                    0 -> PreparationV060Screen(
                         onOpenSky = {
                             selectedTab = 2
                         },
-                        viewModel =
+                        connectionViewModel =
                             connectionViewModel
                     )
 
