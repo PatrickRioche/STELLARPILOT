@@ -177,22 +177,31 @@ def mount_time_sync():
             "reference_source": time_source,
         }
 
-    offset_minutes = _core.state.client_timezone_offset_minutes
-    if offset_minutes is None:
-        return {
-            "status": "error",
-            "detail": (
-                "Fuseau de la tablette inconnu : reconnectez l'application "
-                "avant de synchroniser OnStep"
-            ),
-            "reference_source": time_source,
-            "reference_utc": timestamp_utc,
-        }
-
     before = _core.indi_service.mount_time_status(
         reference_utc=timestamp_utc,
         reference_source=time_source,
     )
+
+    offset_minutes = _core.state.client_timezone_offset_minutes
+    offset_source = "android"
+
+    if offset_minutes is None:
+        published_offset = before.get("offset_hours")
+        if published_offset is not None:
+            offset_minutes = int(round(float(published_offset) * 60.0))
+            offset_source = "onstep_readback"
+
+    if offset_minutes is None:
+        return {
+            "status": "error",
+            "detail": (
+                "Fuseau horaire indisponible : reconnectez l'application "
+                "ou configurez l'offset OnStep avant la synchronisation"
+            ),
+            "reference_source": time_source,
+            "reference_utc": timestamp_utc,
+            "before": before,
+        }
 
     write_result = _core.indi_service.sync_mount_time(
         utc_iso=timestamp_utc,
@@ -238,6 +247,7 @@ def mount_time_sync():
         "reference_source": time_source,
         "reference_utc": timestamp_utc,
         "timezone_offset_minutes": offset_minutes,
+        "timezone_offset_source": offset_source,
         "before": before,
         "write": write_result,
         "readback": readback,
