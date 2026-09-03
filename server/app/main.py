@@ -17,6 +17,10 @@ from app.imaging.preparation_astrometry import (
 from app.imaging.preview import preview_headers, render_fits_preview
 from app.imaging.quality import analyze_fits
 from app.imaging.sessions import CaptureSessionService, capture_session_service
+from app.indi.coordinates import (
+    prepare_j2000_for_mount,
+    sync_mount_j2000,
+)
 
 
 app = _core.app
@@ -28,6 +32,11 @@ class TrackingGotoPayload(_core.GotoPayload):
         "solar",
         "lunar",
     ] = "sidereal"
+
+
+class MountSyncPayload(BaseModel):
+    ra_deg: float = Field(ge=0, lt=360)
+    dec_deg: float = Field(ge=-90, le=90)
 
 
 class CaptureSessionPayload(BaseModel):
@@ -218,7 +227,7 @@ def solve(payload: _core.SolvePayload):
 
 @app.post("/mount/goto")
 def mount_goto(payload: TrackingGotoPayload):
-    """Point the mount without rewriting a validated OnStep clock."""
+    """Point a J2000 catalog target without rewriting the OnStep clock."""
     gps = _core.gps_service.status()
     system = _core.system_service.status()
 
@@ -229,7 +238,7 @@ def mount_goto(payload: TrackingGotoPayload):
 
     # StellarPilot still requires a trusted session time for sky calculations,
     # but hardware tests showed that rewriting TIME_UTC before every GOTO can
-    # disturb an otherwise correct OnStep configuration.  GOTO is therefore
+    # disturb an otherwise correct OnStep configuration. GOTO is therefore
     # read-only with respect to the mount clock.
     if (
         timestamp_utc is None
@@ -299,12 +308,35 @@ def mount_goto(payload: TrackingGotoPayload):
                 },
             }
 
+    # Catalog coordinates used by StellarPilot are J2000. The INDI standard
+    # distinguishes EQUATORIAL_COORD (J2000) and EQUATORIAL_EOD_COORD (JNow).
+    # The core driver prefers EOD when it is exposed, so precess the target to
+    # the same frame before sending the hardware command.
+    try:
+        prepared = prepare_j2000_for_mount(
+            _core.indi_service,
+            payload.ra,
+            payload.dec,
+        )
+    except RuntimeError as exc:
+        return {
+            "status": "error",
+            "detail": str(exc),
+            "time_source": time_source,
+            "time_check": clock_check,
+        }
+
     result = _core.indi_service.goto(
-        payload.ra,
-        payload.dec,
+        prepared["mount_ra_hours"],
+        prepared["mount_dec_deg"],
         tracking_mode=payload.tracking_mode,
     )
 
+    result["requested_j2000"] = {
+        "ra_hours": payload.ra,
+        "dec_deg": payload.dec,
+    }
+    result["coordinate_transform"] = prepared
     result["time_source"] = time_source
     result["time_check"] = {
         **clock_check,
@@ -328,6 +360,24 @@ def mount_goto(payload: TrackingGotoPayload):
     }
 
     return result
+
+
+@app.post("/mount/sync")
+def mount_sync(payload: MountSyncPayload):
+    """Sync OnStep to an astrometry.net J2000 field center."""
+    try:
+        return sync_mount_j2000(
+            _core.indi_service,
+            ra_deg=payload.ra_deg,
+            dec_deg=payload.dec_deg,
+        )
+    except RuntimeError as exc:
+        return {
+            "status": "error",
+            "detail": str(exc),
+            "ra_deg": payload.ra_deg,
+            "dec_deg": payload.dec_deg,
+        }
 
 
 @app.get("/mount/time")
