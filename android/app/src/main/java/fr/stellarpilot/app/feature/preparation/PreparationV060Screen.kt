@@ -82,6 +82,8 @@ fun PreparationV060Screen(
     var currentStep by rememberSaveable { mutableIntStateOf(0) }
     var selectedOrientation by rememberSaveable { mutableStateOf<String?>(null) }
     var selectedStarId by rememberSaveable { mutableStateOf<String?>(null) }
+    var astrometryExposureSeconds by rememberSaveable { mutableStateOf(4.0) }
+    var astrometryAssessment by rememberSaveable { mutableStateOf<String?>(null) }
 
     val connectionState = connectionViewModel.uiState
     val baseUrl = connectionState.serverBaseUrl
@@ -205,11 +207,27 @@ fun PreparationV060Screen(
 
                 3 -> AstrometryV060Step(
                     state = astrometryState,
+                    exposureSeconds = astrometryExposureSeconds,
+                    assessment = astrometryAssessment,
                     onCapture = {
+                        astrometryAssessment = null
                         astrometryViewModel.load(
                             serverBaseUrl = baseUrl,
-                            exposureSeconds = 4.0
+                            exposureSeconds = astrometryExposureSeconds
                         )
+                    },
+                    onTooDark = {
+                        astrometryAssessment = "Trop sombre"
+                        astrometryExposureSeconds =
+                            (astrometryExposureSeconds * 1.5).coerceAtMost(10.0)
+                    },
+                    onCorrect = {
+                        astrometryAssessment = "Correcte"
+                    },
+                    onTooBright = {
+                        astrometryAssessment = "Trop claire"
+                        astrometryExposureSeconds =
+                            (astrometryExposureSeconds / 1.5).coerceAtLeast(0.001)
                     },
                     onPrevious = { currentStep = 2 },
                     onContinue = { currentStep = 4 }
@@ -387,6 +405,8 @@ private fun MotorV060Step(
         mount.status.lowercase() != "error" &&
         !mount.virtualPosition
     val motorsValidated = usable && state.raValidated && state.decValidated
+    val decPlusAllowed = mount?.decDeg?.let { it < 89.95 } == true
+    val decMinusAllowed = mount?.decDeg?.let { it > -89.95 } == true
 
     V060Card(
         title = "Diagnostic moteurs EQ",
@@ -467,20 +487,26 @@ private fun MotorV060Step(
         Spacer(Modifier.height(6.dp))
         Button(
             onClick = onNudgeDecPlus,
-            enabled = usable && !state.isLoading,
+            enabled = usable && !state.isLoading && decPlusAllowed,
             modifier = Modifier.fillMaxWidth()
         ) { Text("Tester moteur DEC +") }
         Spacer(Modifier.height(6.dp))
         Button(
             onClick = onNudgeDecMinus,
-            enabled = usable && !state.isLoading,
+            enabled = usable && !state.isLoading && decMinusAllowed,
             modifier = Modifier.fillMaxWidth()
         ) { Text("Tester moteur DEC −") }
 
-        if (mount?.decDeg == 90.0 || mount?.decDeg == -90.0) {
+        if (!decPlusAllowed && mount?.decDeg != null) {
             Spacer(Modifier.height(10.dp))
             Text(
-                "DEC est exactement à ${mount.decDeg}°. Le passage à l'astrométrie reste bloqué tant qu'un déplacement DEC mesurable n'a pas été validé.",
+                "DEC proche de +90° : le test DEC+ est désactivé. Utilisez DEC− pour vous éloigner du pôle.",
+                color = StellarOrange
+            )
+        } else if (!decMinusAllowed && mount?.decDeg != null) {
+            Spacer(Modifier.height(10.dp))
+            Text(
+                "DEC proche de −90° : le test DEC− est désactivé. Utilisez DEC+ pour vous éloigner du pôle.",
                 color = StellarOrange
             )
         }
@@ -499,13 +525,19 @@ private fun MotorV060Step(
 @Composable
 private fun AstrometryV060Step(
     state: CameraPreviewUiState,
+    exposureSeconds: Double,
+    assessment: String?,
     onCapture: () -> Unit,
+    onTooDark: () -> Unit,
+    onCorrect: () -> Unit,
+    onTooBright: () -> Unit,
     onPrevious: () -> Unit,
     onContinue: () -> Unit
 ) {
     val solved = state.solveStatus == "solved"
     val synced = state.mountSyncStatus == "synced"
-    val validated = solved && synced
+    val appreciated = assessment == "Correcte"
+    val validated = solved && synced && appreciated
 
     V060Card(
         title = "Première astrométrie",
@@ -527,7 +559,11 @@ private fun AstrometryV060Step(
             )
         ) {
             Text(
-                if (state.isLoading) "Capture / résolution / SYNC…" else "Capturer à 4 s, résoudre et synchroniser",
+                if (state.isLoading) {
+                    "Capture / résolution / SYNC…"
+                } else {
+                    "Capturer à ${formatExposure(exposureSeconds)}, résoudre et synchroniser"
+                },
                 fontWeight = FontWeight.Bold
             )
         }
@@ -546,6 +582,50 @@ private fun AstrometryV060Step(
                         .height(260.dp),
                     contentScale = ContentScale.Fit
                 )
+
+                Spacer(Modifier.height(14.dp))
+                Text(
+                    "Comment appréciez-vous cette capture ?",
+                    color = StellarText,
+                    fontWeight = FontWeight.Bold
+                )
+                Spacer(Modifier.height(8.dp))
+                OutlinedButton(
+                    onClick = onTooDark,
+                    enabled = !state.isLoading,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("Trop sombre")
+                }
+                Spacer(Modifier.height(6.dp))
+                Button(
+                    onClick = onCorrect,
+                    enabled = !state.isLoading,
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = StellarGreen,
+                        contentColor = StellarBackground
+                    )
+                ) {
+                    Text("Correcte", fontWeight = FontWeight.Bold)
+                }
+                Spacer(Modifier.height(6.dp))
+                OutlinedButton(
+                    onClick = onTooBright,
+                    enabled = !state.isLoading,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("Trop claire")
+                }
+                Spacer(Modifier.height(8.dp))
+                V060Info("Appréciation", assessment ?: "À choisir")
+                if (assessment == "Trop sombre" || assessment == "Trop claire") {
+                    V060Info("Prochaine pose", formatExposure(exposureSeconds))
+                    Text(
+                        "Relancez la capture avec le nouveau temps de pose proposé.",
+                        color = StellarOrange
+                    )
+                }
             }
         }
 
@@ -560,9 +640,15 @@ private fun AstrometryV060Step(
                 String.format(Locale.FRANCE, "%.4f ″/px", it)
             } ?: "—"
         )
+        if (solved && synced && !appreciated) {
+            Text(
+                "Astrométrie résolue : indiquez maintenant si la capture vous paraît correcte.",
+                color = StellarOrange
+            )
+        }
         if (validated) {
             Text(
-                "✓ Astrométrie résolue et monture synchronisée",
+                "✓ Capture validée, astrométrie résolue et monture synchronisée",
                 color = StellarGreen,
                 fontWeight = FontWeight.Bold
             )
