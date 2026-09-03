@@ -108,6 +108,7 @@ class MountDiagnosticsViewModel : ViewModel() {
             raHours = (ra + deltaRaHours + 24.0) % 24.0,
             decDeg = (dec + deltaDecDeg).coerceIn(-90.0, 90.0),
             trackingMode = "sidereal",
+            coordinateFrame = "mount",
             label = label,
             movementTest = MovementTestRequest(
                 axis = axis,
@@ -129,6 +130,7 @@ class MountDiagnosticsViewModel : ViewModel() {
             raHours = star.raHours,
             decDeg = star.decDeg,
             trackingMode = "sidereal",
+            coordinateFrame = "j2000",
             label = "Pointage ${star.name}",
             movementTest = null
         )
@@ -146,6 +148,7 @@ class MountDiagnosticsViewModel : ViewModel() {
         raHours: Double,
         decDeg: Double,
         trackingMode: String,
+        coordinateFrame: String,
         label: String,
         movementTest: MovementTestRequest?
     ) {
@@ -164,7 +167,8 @@ class MountDiagnosticsViewModel : ViewModel() {
                 MountGotoCommandClient(base).gotoMount(
                     raHours = raHours,
                     decDeg = decDeg,
-                    trackingMode = trackingMode
+                    trackingMode = trackingMode,
+                    coordinateFrame = coordinateFrame
                 )
 
                 var lastStatus: MountDiagnosticsResult? = null
