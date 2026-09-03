@@ -42,6 +42,8 @@ data class MountDiagnosticsUiState(
     val lastMovementTest: MovementTestResult? = null,
     val raValidated: Boolean = false,
     val decValidated: Boolean = false,
+    val timeSyncVerified: Boolean = false,
+    val timeSyncDetail: String? = null,
     val error: String? = null
 )
 
@@ -65,12 +67,21 @@ class MountDiagnosticsViewModel : ViewModel() {
 
         viewModelScope.launch {
             try {
-                val status =
-                    MountDiagnosticsApiClient().status(serverBaseUrl)
+                val api = MountDiagnosticsApiClient()
+                val status = api.status(serverBaseUrl)
+                val timeVerification = try {
+                    api.timeVerification(serverBaseUrl)
+                } catch (_: Exception) {
+                    null
+                }
 
                 uiState = uiState.copy(
                     isLoading = false,
                     status = status,
+                    timeSyncVerified =
+                        timeVerification?.verified == true &&
+                            timeVerification.controlReady,
+                    timeSyncDetail = timeVerification?.detail,
                     error = null
                 )
             } catch (error: Exception) {
@@ -143,6 +154,50 @@ class MountDiagnosticsViewModel : ViewModel() {
         val requestedDeltaDeg: Double
     )
 
+    private suspend fun ensureTimeSynchronization(
+        serverBaseUrl: String,
+        api: MountDiagnosticsApiClient
+    ) {
+        val base = serverBaseUrl.trimEnd('/') + "/"
+
+        val before = try {
+            api.timeVerification(base)
+        } catch (_: Exception) {
+            null
+        }
+
+        if (before?.verified == true && before.controlReady) {
+            uiState = uiState.copy(
+                timeSyncVerified = true,
+                timeSyncDetail = before.detail
+            )
+            return
+        }
+
+        uiState = uiState.copy(
+            actionLabel = "Synchronisation horaire OnStep",
+            timeSyncVerified = false,
+            error = null
+        )
+
+        api.syncTime(base)
+
+        val after = api.timeVerification(base)
+        val ready = after.verified && after.controlReady
+
+        uiState = uiState.copy(
+            timeSyncVerified = ready,
+            timeSyncDetail = after.detail
+        )
+
+        if (!ready) {
+            throw IllegalStateException(
+                after.detail
+                    ?: "Synchronisation horaire OnStep non validée"
+            )
+        }
+    }
+
     private fun runGoto(
         serverBaseUrl: String,
         raHours: Double,
@@ -164,6 +219,17 @@ class MountDiagnosticsViewModel : ViewModel() {
         viewModelScope.launch {
             try {
                 val base = serverBaseUrl.trimEnd('/') + "/"
+                val diagnosticsApi = MountDiagnosticsApiClient()
+
+                ensureTimeSynchronization(
+                    serverBaseUrl = base,
+                    api = diagnosticsApi
+                )
+
+                uiState = uiState.copy(
+                    actionLabel = label
+                )
+
                 MountGotoCommandClient(base).gotoMount(
                     raHours = raHours,
                     decDeg = decDeg,
@@ -175,7 +241,7 @@ class MountDiagnosticsViewModel : ViewModel() {
 
                 for (attempt in 0 until 25) {
                     delay(700)
-                    lastStatus = MountDiagnosticsApiClient().status(base)
+                    lastStatus = diagnosticsApi.status(base)
 
                     val state = lastStatus?.status?.lowercase()
                     if (state == "tracking" || state == "idle") {
