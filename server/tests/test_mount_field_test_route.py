@@ -37,6 +37,9 @@ def _allow_trusted_android_time(monkeypatch):
             "offset_hours": 2.0,
             "reference_utc": reference_utc,
             "reference_source": reference_source,
+            "drift_seconds": 0.0,
+            "synchronized": True,
+            "synchronization": "synchronized",
         },
     )
 
@@ -170,6 +173,8 @@ def test_mount_frame_goto_keeps_time_alert_safety(monkeypatch):
             "status": "available",
             "indi_state": "Alert",
             "offset_hours": 2.0,
+            "synchronized": False,
+            "drift_seconds": 0.0,
         },
     )
 
@@ -196,3 +201,136 @@ def test_mount_frame_goto_keeps_time_alert_safety(monkeypatch):
     assert body["status"] == "error"
     assert body["coordinate_frame"] == "mount"
     assert "Alert" in body["detail"]
+
+
+def test_mount_frame_goto_blocks_large_time_drift(monkeypatch):
+    monkeypatch.setattr(
+        main_module._core.gps_service,
+        "status",
+        lambda: {"status": "fix", "time_utc": "2026-09-03T12:56:10Z"},
+    )
+    monkeypatch.setattr(
+        main_module._core.system_service,
+        "status",
+        lambda: {},
+    )
+    monkeypatch.setattr(
+        main_module._core,
+        "_resolve_time",
+        lambda _gps, _system: ("2026-09-03T12:56:10Z", "gps"),
+    )
+    monkeypatch.setattr(
+        main_module._core.state,
+        "client_timezone_offset_minutes",
+        120,
+    )
+    monkeypatch.setattr(
+        main_module._core.indi_service,
+        "mount_time_status",
+        lambda reference_utc=None, reference_source=None: {
+            "status": "available",
+            "indi_state": "Ok",
+            "offset_hours": 2.0,
+            "synchronized": False,
+            "drift_seconds": 213331.0,
+            "synchronization": "drift",
+        },
+    )
+
+    def forbidden_goto(*args, **kwargs):
+        raise AssertionError("GOTO must be blocked while OnStep clock drifts")
+
+    monkeypatch.setattr(
+        main_module._core.indi_service,
+        "goto",
+        forbidden_goto,
+    )
+
+    response = client.post(
+        "/mount/goto-mount-frame",
+        json={
+            "ra": 12.0,
+            "dec": 45.0,
+            "tracking_mode": "sidereal",
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "error"
+    assert "non synchronisée" in body["detail"]
+    assert "213331.0" in body["detail"]
+
+
+def test_mount_time_sync_writes_once_and_confirms_readback(monkeypatch):
+    monkeypatch.setattr(
+        main_module._core.gps_service,
+        "status",
+        lambda: {"status": "fix", "time_utc": "2026-09-03T12:56:10Z"},
+    )
+    monkeypatch.setattr(
+        main_module._core.system_service,
+        "status",
+        lambda: {},
+    )
+    monkeypatch.setattr(
+        main_module._core,
+        "_resolve_time",
+        lambda _gps, _system: ("2026-09-03T12:56:10Z", "gps"),
+    )
+    monkeypatch.setattr(
+        main_module._core.state,
+        "client_timezone_offset_minutes",
+        120,
+    )
+
+    reads = iter(
+        [
+            {
+                "status": "available",
+                "indi_state": "Ok",
+                "offset_hours": 2.0,
+                "synchronized": False,
+                "drift_seconds": 213331.0,
+            },
+            {
+                "status": "available",
+                "indi_state": "Ok",
+                "offset_hours": 2.0,
+                "synchronized": True,
+                "drift_seconds": 0.5,
+                "synchronization": "synchronized",
+            },
+        ]
+    )
+    monkeypatch.setattr(
+        main_module._core.indi_service,
+        "mount_time_status",
+        lambda reference_utc=None, reference_source=None: next(reads),
+    )
+
+    writes = []
+    monkeypatch.setattr(
+        main_module._core.indi_service,
+        "sync_mount_time",
+        lambda utc_iso, timezone_offset_minutes: (
+            writes.append((utc_iso, timezone_offset_minutes))
+            or {
+                "status": "ok",
+                "utc": utc_iso,
+                "timezone_offset_minutes": timezone_offset_minutes,
+            }
+        ),
+    )
+    monkeypatch.setattr(
+        "app.indi.field_test_routes.time.sleep",
+        lambda _seconds: None,
+    )
+
+    response = client.post("/mount/time/sync")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "synced"
+    assert body["readback"]["synchronized"] is True
+    assert writes == [("2026-09-03T12:56:10Z", 120)]
