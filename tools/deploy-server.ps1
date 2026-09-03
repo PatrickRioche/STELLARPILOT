@@ -16,7 +16,7 @@ function Invoke-Checked {
 
     & $FilePath @Arguments
     if ($LASTEXITCODE -ne 0) {
-        throw "$FilePath a échoué avec le code $LASTEXITCODE"
+        throw "$FilePath failed with exit code $LASTEXITCODE"
     }
 }
 
@@ -28,37 +28,36 @@ $RemoteScript = "/tmp/stellarpilot-remote-deploy.sh"
 
 Push-Location $RepoRoot
 try {
-    Write-Host "[StellarPilot] Déploiement serveur depuis le PC" -ForegroundColor Cyan
+    Write-Host "[StellarPilot] Server deployment from PC" -ForegroundColor Cyan
     Write-Host "[StellarPilot] Repo : $RepoRoot"
     Write-Host "[StellarPilot] Pi   : $PiHost"
 
     $branch = (git branch --show-current).Trim()
     if ($LASTEXITCODE -ne 0) {
-        throw "Impossible de lire la branche Git locale."
+        throw "Unable to read local Git branch."
     }
 
     $commit = (git rev-parse --short HEAD).Trim()
     if ($LASTEXITCODE -ne 0) {
-        throw "Impossible de lire le commit Git local."
+        throw "Unable to read local Git commit."
     }
 
-    Write-Host "[StellarPilot] Branche locale : $branch"
-    Write-Host "[StellarPilot] Commit         : $commit"
+    Write-Host "[StellarPilot] Local branch : $branch"
+    Write-Host "[StellarPilot] Commit       : $commit"
 
     Remove-Item $Package -Force -ErrorAction SilentlyContinue
     Remove-Item $RemoteScriptLocal -Force -ErrorAction SilentlyContinue
 
-    # Git n'est utilisé que sur le PC. git archive n'inclut que les fichiers
-    # suivis : jamais le .venv Windows, les caches, les captures ou les données
-    # runtime non suivies.
+    # Git is used only on the PC. git archive includes tracked files only,
+    # so Windows .venv, caches, captures and runtime data are never deployed.
     Invoke-Checked git archive --format=tar.gz --output=$Package HEAD server
 
     if (-not (Test-Path $Package)) {
-        throw "Archive de déploiement non créée : $Package"
+        throw "Deployment archive was not created: $Package"
     }
 
     $sizeMb = [math]::Round((Get-Item $Package).Length / 1MB, 2)
-    Write-Host "[StellarPilot] Archive propre : $sizeMb MB"
+    Write-Host "[StellarPilot] Clean archive : $sizeMb MB"
 
     $remoteBody = @'
 #!/usr/bin/env bash
@@ -69,31 +68,35 @@ STAGE="/tmp/stellarpilot-server-stage"
 DEPLOY="__DEPLOY_DIR__"
 
 log() { printf '[StellarPilot] %s\n' "$*"; }
-fail() { printf '[StellarPilot][ERREUR] %s\n' "$*" >&2; exit 1; }
+fail() { printf '[StellarPilot][ERROR] %s\n' "$*" >&2; exit 1; }
 
-log "Nettoyage des anciens fichiers temporaires"
-rm -rf /tmp/stellarpilot-v060 /tmp/stellarpilot-v060.tar.gz
-rm -rf "$STAGE"
+log "Cleaning legacy temporary files"
+# Some legacy deployment folders were created as root. sudo is required once
+# to remove them safely before creating a fresh user-owned staging directory.
+sudo rm -rf \
+    /tmp/stellarpilot-v060 \
+    /tmp/stellarpilot-v060.tar.gz \
+    "$STAGE"
 mkdir -p "$STAGE"
 
-test -f "$PACKAGE" || fail "Archive distante absente: $PACKAGE"
+test -f "$PACKAGE" || fail "Remote archive missing: $PACKAGE"
 
 tar -xzf "$PACKAGE" -C "$STAGE"
 
-test -f "$STAGE/server/requirements.txt" || fail "requirements.txt absent de l'archive"
-test -f "$STAGE/server/systemd/stellarpilot-server.service" || fail "service systemd absent de l'archive"
+test -f "$STAGE/server/requirements.txt" || fail "requirements.txt missing from archive"
+test -f "$STAGE/server/systemd/stellarpilot-server.service" || fail "systemd service missing from archive"
 
-command -v python3 >/dev/null || fail "python3 absent"
-command -v rsync >/dev/null || fail "rsync absent"
-command -v indi_getprop >/dev/null || fail "indi_getprop absent"
-command -v solve-field >/dev/null || fail "astrometry.net / solve-field absent"
+command -v python3 >/dev/null || fail "python3 missing"
+command -v rsync >/dev/null || fail "rsync missing"
+command -v indi_getprop >/dev/null || fail "indi_getprop missing"
+command -v solve-field >/dev/null || fail "astrometry.net / solve-field missing"
 
-log "Deploiement vers $DEPLOY"
+log "Deploying to $DEPLOY"
 mkdir -p "$DEPLOY"
 
-# .venv = environnement Python Linux persistant.
-# data  = captures scientifiques et calibrations persistantes.
-# Aucun des deux ne doit etre supprime lors d'une mise a jour.
+# .venv = persistent Linux Python environment.
+# data  = persistent scientific captures and calibration references.
+# Neither may be deleted during a normal update.
 rsync -a --delete \
     --exclude '.venv/' \
     --exclude 'data/' \
@@ -102,25 +105,25 @@ rsync -a --delete \
 cd "$DEPLOY"
 
 if [ ! -x .venv/bin/python ]; then
-    log "Creation du venv Linux"
+    log "Creating Linux venv"
     python3 -m venv .venv
 fi
 
-log "Mise a jour des dependances Python"
+log "Updating Python dependencies"
 .venv/bin/python -m pip install --upgrade pip
 .venv/bin/pip install -r requirements.txt
 
-log "Verification des imports Python"
+log "Checking Python imports"
 .venv/bin/python - <<'PY'
 import fastapi
 import numpy
 import astropy
 import PIL
 import scipy
-print("Imports Python OK")
+print("Python imports OK")
 PY
 
-log "Mise a jour du service systemd"
+log "Updating systemd service"
 sudo cp systemd/stellarpilot-server.service /etc/systemd/system/stellarpilot-server.service
 sudo mkdir -p /etc/systemd/system/stellarpilot-server.service.d
 sudo rm -f /etc/systemd/system/stellarpilot-server.service.d/device.conf
@@ -134,18 +137,18 @@ sudo systemctl enable stellarpilot-server >/dev/null
 sudo systemctl restart stellarpilot-server
 sleep 2
 
-log "Verification du service"
+log "Checking service"
 if ! systemctl is-active --quiet stellarpilot-server; then
     systemctl --no-pager -l --full status stellarpilot-server || true
     journalctl -u stellarpilot-server -n 80 --no-pager || true
-    fail "stellarpilot-server n'est pas actif"
+    fail "stellarpilot-server is not active"
 fi
 
-log "Verification /health"
+log "Checking /health"
 curl --fail --silent --show-error http://127.0.0.1:8000/health
 printf '\n'
 
-log "Verification API V0.6"
+log "Checking V0.6 API"
 curl --fail --silent --show-error http://127.0.0.1:8000/openapi.json | python3 -c '
 import json, sys
 api = json.load(sys.stdin)
@@ -155,19 +158,19 @@ paths = api.get("paths", {})
 required = ["/mount/goto-mount-frame", "/mount/sync", "/mount/status"]
 missing = [path for path in required if path not in paths]
 if version != "0.6.0-poc":
-    print("version_attendue=0.6.0-poc")
+    print("expected_version=0.6.0-poc")
     raise SystemExit(2)
 if missing:
-    print("routes_manquantes=", ",".join(missing))
+    print("missing_routes=", ",".join(missing))
     raise SystemExit(3)
 print("routes_v06=OK")
 '
 
-log "Nettoyage du staging"
+log "Cleaning staging"
 rm -rf "$STAGE"
 rm -f "$PACKAGE" "__REMOTE_SCRIPT__"
 
-log "Deploiement termine"
+log "Deployment complete"
 '@
 
     $remoteBody = $remoteBody.Replace("__REMOTE_PACKAGE__", $RemotePackage)
@@ -175,24 +178,23 @@ log "Deploiement termine"
     $remoteBody = $remoteBody.Replace("__DEPLOY_DIR__", $DeployDir)
     $remoteBody = $remoteBody -replace "`r`n", "`n"
 
-    # UTF-8 sans BOM pour Bash.
+    # UTF-8 without BOM for Bash.
     [System.IO.File]::WriteAllText(
         $RemoteScriptLocal,
         $remoteBody,
         [System.Text.UTF8Encoding]::new($false)
     )
 
-    Write-Host "[StellarPilot] Envoi des fichiers vers le Pi"
-    Invoke-Checked scp $Package "${PiHost}:$RemotePackage"
-    Invoke-Checked scp $RemoteScriptLocal "${PiHost}:$RemoteScript"
+    Write-Host "[StellarPilot] Uploading package and deploy script"
+    Invoke-Checked scp $Package $RemoteScriptLocal "${PiHost}:/tmp/"
 
-    Write-Host "[StellarPilot] Exécution distante"
+    Write-Host "[StellarPilot] Running remote deployment"
     & ssh -t $PiHost "bash $RemoteScript"
     if ($LASTEXITCODE -ne 0) {
-        throw "Le déploiement distant a échoué avec le code $LASTEXITCODE"
+        throw "Remote deployment failed with exit code $LASTEXITCODE"
     }
 
-    Write-Host "[StellarPilot] Serveur V0.6 déployé avec succès." -ForegroundColor Green
+    Write-Host "[StellarPilot] Server V0.6 deployed successfully." -ForegroundColor Green
 }
 finally {
     Pop-Location
