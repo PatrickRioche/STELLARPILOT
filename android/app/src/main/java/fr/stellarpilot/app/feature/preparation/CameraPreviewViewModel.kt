@@ -257,6 +257,7 @@ class CameraPreviewViewModel(
                     solution.dec != null
                 ) {
                     uiState = uiState.copy(
+                        solveStatus = "syncing_mount",
                         mountSyncStatus = "syncing",
                         mountSyncDetail =
                             "Synchronisation OnStep sur le centre astrométrique…"
@@ -274,6 +275,7 @@ class CameraPreviewViewModel(
 
                         uiState = uiState.copy(
                             isLoading = false,
+                            solveStatus = "solved",
                             mountSyncStatus = "synced",
                             mountSyncDetail =
                                 "Monture synchronisée • $property • $frame",
@@ -282,6 +284,7 @@ class CameraPreviewViewModel(
                     } else {
                         uiState = uiState.copy(
                             isLoading = false,
+                            solveStatus = "sync_error",
                             mountSyncStatus = "error",
                             mountSyncDetail = sync.detail
                                 ?: "Synchronisation OnStep refusée",
@@ -295,24 +298,32 @@ class CameraPreviewViewModel(
                 }
 
             } catch (error: Exception) {
+                val solvedCoordinatesAvailable =
+                    uiState.ra != null && uiState.dec != null &&
+                        uiState.solver != null
+
                 uiState = uiState.copy(
                     isLoading = false,
                     solveStatus =
-                        uiState.solveStatus ?: "error",
+                        if (solvedCoordinatesAvailable) {
+                            "sync_error"
+                        } else {
+                            "error"
+                        },
                     mountSyncStatus =
-                        if (uiState.solveStatus == "solved") {
+                        if (solvedCoordinatesAvailable) {
                             "error"
                         } else {
                             uiState.mountSyncStatus
                         },
                     mountSyncDetail =
-                        if (uiState.solveStatus == "solved") {
+                        if (solvedCoordinatesAvailable) {
                             "SYNC OnStep impossible : ${error.message}"
                         } else {
                             uiState.mountSyncDetail
                         },
                     error =
-                        if (uiState.solveStatus == "solved") {
+                        if (solvedCoordinatesAvailable) {
                             null
                         } else {
                             "${error::class.java.simpleName}: ${error.message}"
