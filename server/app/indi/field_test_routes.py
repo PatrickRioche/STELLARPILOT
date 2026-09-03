@@ -11,6 +11,9 @@ from app import _main_core as _core
 # is loaded by app.main, so expose the effective API version here as well.
 _core.app.version = "0.6.0-poc"
 
+_MAX_DIAGNOSTIC_AXIS_DELTA_DEG = 0.75
+_MAX_OTHER_AXIS_DRIFT_DEG = 0.08
+
 
 class MountFrameGotoPayload(BaseModel):
     """Coordinates already expressed in the frame published by the mount."""
@@ -84,6 +87,55 @@ def _trusted_mount_clock() -> tuple[dict | None, str | None, dict | None]:
     return enriched, time_source, None
 
 
+def _signed_hour_delta(start_hours: float, end_hours: float) -> float:
+    delta = (end_hours - start_hours) % 24.0
+    if delta > 12.0:
+        delta -= 24.0
+    return delta
+
+
+def _validate_small_field_move(payload: MountFrameGotoPayload) -> dict:
+    """Refuse any diagnostic command that is not a small single-axis move."""
+    status = _core.indi_service.mount_status()
+    start_ra = status.get("ra")
+    start_dec = status.get("dec")
+
+    if start_ra is None or start_dec is None:
+        raise RuntimeError(
+            "Position RA/DEC OnStep indisponible : diagnostic moteur bloqué"
+        )
+
+    ra_delta_deg = _signed_hour_delta(
+        float(start_ra),
+        payload.ra,
+    ) * 15.0
+    dec_delta_deg = payload.dec - float(start_dec)
+
+    ra_moves = abs(ra_delta_deg) > _MAX_OTHER_AXIS_DRIFT_DEG
+    dec_moves = abs(dec_delta_deg) > _MAX_OTHER_AXIS_DRIFT_DEG
+
+    if ra_moves and dec_moves:
+        raise RuntimeError(
+            "Diagnostic refusé : un seul axe peut être déplacé à la fois"
+        )
+
+    if (
+        abs(ra_delta_deg) > _MAX_DIAGNOSTIC_AXIS_DELTA_DEG
+        or abs(dec_delta_deg) > _MAX_DIAGNOSTIC_AXIS_DELTA_DEG
+    ):
+        raise RuntimeError(
+            "Diagnostic refusé : déplacement demandé supérieur à 0,75°"
+        )
+
+    return {
+        "start_ra_hours": float(start_ra),
+        "start_dec_deg": float(start_dec),
+        "requested_ra_delta_deg": ra_delta_deg,
+        "requested_dec_delta_deg": dec_delta_deg,
+        "max_axis_delta_deg": _MAX_DIAGNOSTIC_AXIS_DELTA_DEG,
+    }
+
+
 @_core.app.post("/mount/goto-mount-frame")
 def mount_goto_mount_frame(payload: MountFrameGotoPayload):
     """Small diagnostic GOTO without J2000/JNow conversion.
@@ -100,6 +152,17 @@ def mount_goto_mount_frame(payload: MountFrameGotoPayload):
             "status": "error",
             "detail": time_source_or_detail,
             "time_check": clock_error,
+            "coordinate_frame": "mount",
+        }
+
+    try:
+        safety = _validate_small_field_move(payload)
+    except RuntimeError as exc:
+        return {
+            "status": "error",
+            "detail": str(exc),
+            "time_source": time_source_or_detail,
+            "time_check": clock_check,
             "coordinate_frame": "mount",
         }
 
@@ -121,6 +184,7 @@ def mount_goto_mount_frame(payload: MountFrameGotoPayload):
         "mount_ra_hours": payload.ra,
         "mount_dec_deg": payload.dec,
     }
+    result["diagnostic_safety"] = safety
     result["time_source"] = time_source_or_detail
     result["time_check"] = clock_check
     result["time_sync"] = {
