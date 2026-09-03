@@ -6,7 +6,7 @@ from fastapi.testclient import TestClient
 client = TestClient(main_module.app)
 
 
-def test_mount_frame_goto_uses_exact_mount_coordinates(monkeypatch):
+def _allow_trusted_android_time(monkeypatch):
     monkeypatch.setattr(
         main_module._core.gps_service,
         "status",
@@ -36,6 +36,20 @@ def test_mount_frame_goto_uses_exact_mount_coordinates(monkeypatch):
             "offset_hours": 2.0,
             "reference_utc": reference_utc,
             "reference_source": reference_source,
+        },
+    )
+
+
+def test_mount_frame_goto_uses_exact_mount_coordinates(monkeypatch):
+    _allow_trusted_android_time(monkeypatch)
+
+    monkeypatch.setattr(
+        main_module._core.indi_service,
+        "mount_status",
+        lambda: {
+            "status": "tracking",
+            "ra": 12.315678,
+            "dec": 44.25,
         },
     )
 
@@ -80,11 +94,50 @@ def test_mount_frame_goto_uses_exact_mount_coordinates(monkeypatch):
         "ra_hours": 12.345678,
         "dec_deg": 44.25,
     }
+    assert body["diagnostic_safety"]["requested_ra_delta_deg"] == 0.45
+    assert body["diagnostic_safety"]["requested_dec_delta_deg"] == 0.0
     assert called == {
         "ra": 12.345678,
         "dec": 44.25,
         "tracking_mode": "sidereal",
     }
+
+
+def test_mount_frame_goto_rejects_large_move(monkeypatch):
+    _allow_trusted_android_time(monkeypatch)
+
+    monkeypatch.setattr(
+        main_module._core.indi_service,
+        "mount_status",
+        lambda: {
+            "status": "tracking",
+            "ra": 12.0,
+            "dec": 44.0,
+        },
+    )
+
+    def forbidden_goto(*args, **kwargs):
+        raise AssertionError("Large diagnostic movement must be blocked")
+
+    monkeypatch.setattr(
+        main_module._core.indi_service,
+        "goto",
+        forbidden_goto,
+    )
+
+    response = client.post(
+        "/mount/goto-mount-frame",
+        json={
+            "ra": 12.2,
+            "dec": 44.0,
+            "tracking_mode": "sidereal",
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "error"
+    assert "0,75" in body["detail"]
 
 
 def test_mount_frame_goto_keeps_time_alert_safety(monkeypatch):
