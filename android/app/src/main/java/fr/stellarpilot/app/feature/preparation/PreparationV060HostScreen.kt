@@ -195,7 +195,7 @@ fun PreparationV060HostScreen(
                 .fillMaxWidth()
                 .weight(1f)
         ) {
-            PreparationV060Screen(
+            AssistantFinalScreen(
                 onOpenSky = onOpenSky,
                 connectionViewModel = connectionViewModel
             )
