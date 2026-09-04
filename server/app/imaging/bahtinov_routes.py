@@ -2,7 +2,10 @@ from fastapi import HTTPException
 from pydantic import BaseModel
 
 from app import _main_core as _core
-from app.imaging.bahtinov import analyze_bahtinov, validate_reference_library
+from app.imaging.bahtinov_focus import (
+    analyze_bahtinov,
+    validate_reference_library,
+)
 
 
 class BahtinovQualityPayload(BaseModel):
