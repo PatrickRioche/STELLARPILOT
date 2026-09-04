@@ -151,6 +151,7 @@ def solve_centering_frame(
 
 
 # app.main imports this module only after app._main_core has finished creating
-# the FastAPI instance. Registering the Bahtinov router here therefore avoids
-# the circular import that would occur from app.imaging package initialization.
+# the FastAPI instance. Register Assistant extension routes at this late point
+# to avoid circular imports during INDI/imaging package initialization.
 from app.imaging import bahtinov_routes as _bahtinov_routes  # noqa: E402,F401
+from app.imaging import dark_routes as _dark_routes  # noqa: E402,F401
