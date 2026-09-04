@@ -96,7 +96,7 @@ class MountDiagnosticsApiClient {
                         virtualPosition =
                             json.optBoolean("virtual_position", false),
                         detail = json.optString("detail")
-                            .takeIf { it.isNotBlank() }
+                            .takeIf { it.isNotBlank() && !it.equals("null", ignoreCase = true) }
                     )
                 }
         }
@@ -180,12 +180,15 @@ class MountDiagnosticsApiClient {
             else -> verified
         }
 
+        fun nullableText(source: JSONObject?, key: String): String? {
+            if (source == null || !source.has(key) || source.isNull(key)) return null
+            return source.optString(key)
+                .takeIf { it.isNotBlank() && !it.equals("null", ignoreCase = true) }
+        }
+
         val detail =
-            json.optString("detail")
-                .takeIf { it.isNotBlank() }
-                ?: verification
-                    ?.optString("detail")
-                    ?.takeIf { it.isNotBlank() }
+            nullableText(json, "detail")
+                ?: nullableText(verification, "detail")
 
         return MountTimeVerificationResult(
             status = status,
