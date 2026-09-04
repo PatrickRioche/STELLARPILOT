@@ -62,6 +62,7 @@ class MountDiagnosticsViewModel : ViewModel() {
 
         uiState = uiState.copy(
             isLoading = true,
+            actionLabel = "Vérification heure OnStep",
             error = null
         )
 
@@ -69,24 +70,52 @@ class MountDiagnosticsViewModel : ViewModel() {
             try {
                 val api = MountDiagnosticsApiClient()
                 val status = api.status(serverBaseUrl)
-                val timeVerification = try {
+
+                var timeVerification = try {
                     api.timeVerification(serverBaseUrl)
                 } catch (_: Exception) {
                     null
                 }
 
+                if (
+                    timeVerification?.verified != true ||
+                    !timeVerification.controlReady
+                ) {
+                    uiState = uiState.copy(
+                        actionLabel = "Synchronisation TIME_UTC OnStep",
+                        timeSyncVerified = false,
+                        timeSyncDetail = timeVerification?.detail
+                            ?: "TIME_UTC non synchronisé",
+                        error = null
+                    )
+
+                    api.syncTime(serverBaseUrl)
+                    timeVerification = api.timeVerification(serverBaseUrl)
+                }
+
+                val ready =
+                    timeVerification?.verified == true &&
+                        timeVerification.controlReady
+
                 uiState = uiState.copy(
                     isLoading = false,
+                    actionLabel = null,
                     status = status,
-                    timeSyncVerified =
-                        timeVerification?.verified == true &&
-                            timeVerification.controlReady,
-                    timeSyncDetail = timeVerification?.detail,
-                    error = null
+                    timeSyncVerified = ready,
+                    timeSyncDetail = timeVerification?.detail
+                        ?: if (ready) "TIME_UTC synchronisé" else "TIME_UTC non vérifié",
+                    error = if (ready) {
+                        null
+                    } else {
+                        timeVerification?.detail
+                            ?: "Synchronisation TIME_UTC OnStep non validée"
+                    }
                 )
             } catch (error: Exception) {
                 uiState = uiState.copy(
                     isLoading = false,
+                    actionLabel = null,
+                    timeSyncVerified = false,
                     error = error.message ?: "État monture indisponible"
                 )
             }
@@ -297,9 +326,6 @@ class MountDiagnosticsViewModel : ViewModel() {
                             movementObserved &&
                             (state == "tracking" || state == "idle")
                         ) {
-                            // OnStep can publish tracking before the coordinate
-                            // property has completely settled. Give INDI one
-                            // final refresh window before recording the result.
                             delay(500)
                             lastStatus = diagnosticsApi.status(base)
                             break
