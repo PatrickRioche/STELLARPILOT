@@ -93,9 +93,7 @@ fun PreparationV060HostScreen(
         }
     }
 
-    Column(
-        modifier = Modifier.fillMaxSize()
-    ) {
+    Column(modifier = Modifier.fillMaxSize()) {
         Card(
             modifier = Modifier
                 .fillMaxWidth()
@@ -104,19 +102,14 @@ fun PreparationV060HostScreen(
             colors = CardDefaults.cardColors(containerColor = StellarSurface),
             border = BorderStroke(1.dp, StellarBorder)
         ) {
-            Column(
-                modifier = Modifier.padding(12.dp)
-            ) {
+            Column(modifier = Modifier.padding(12.dp)) {
                 Text(
                     "Serveur StellarPilot",
                     color = StellarText,
                     fontWeight = FontWeight.Bold
                 )
                 Spacer(Modifier.height(3.dp))
-                Text(
-                    "$profileLabel • $activeAddress",
-                    color = StellarMuted
-                )
+                Text("$profileLabel • $activeAddress", color = StellarMuted)
                 Spacer(Modifier.height(10.dp))
 
                 Row(
@@ -127,10 +120,8 @@ fun PreparationV060HostScreen(
                         onClick = { applyServer(HOME_SERVER) },
                         modifier = Modifier.weight(1f),
                         colors = ButtonDefaults.buttonColors(
-                            containerColor =
-                                if (activeAddress == HOME_SERVER) StellarOrange else StellarSurface,
-                            contentColor =
-                                if (activeAddress == HOME_SERVER) StellarBackground else StellarText
+                            containerColor = if (activeAddress == HOME_SERVER) StellarOrange else StellarSurface,
+                            contentColor = if (activeAddress == HOME_SERVER) StellarBackground else StellarText
                         ),
                         border = BorderStroke(1.dp, StellarOrange)
                     ) {
@@ -141,10 +132,8 @@ fun PreparationV060HostScreen(
                         onClick = { applyServer(FIELD_SERVER) },
                         modifier = Modifier.weight(1f),
                         colors = ButtonDefaults.buttonColors(
-                            containerColor =
-                                if (activeAddress == FIELD_SERVER) StellarOrange else StellarSurface,
-                            contentColor =
-                                if (activeAddress == FIELD_SERVER) StellarBackground else StellarText
+                            containerColor = if (activeAddress == FIELD_SERVER) StellarOrange else StellarSurface,
+                            contentColor = if (activeAddress == FIELD_SERVER) StellarBackground else StellarText
                         ),
                         border = BorderStroke(1.dp, StellarOrange)
                     ) {
@@ -195,7 +184,7 @@ fun PreparationV060HostScreen(
                 .fillMaxWidth()
                 .weight(1f)
         ) {
-            AssistantFinalScreen(
+            AssistantModeScreen(
                 onOpenSky = onOpenSky,
                 connectionViewModel = connectionViewModel
             )
