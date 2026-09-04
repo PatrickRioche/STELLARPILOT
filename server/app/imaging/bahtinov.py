@@ -7,20 +7,15 @@ from typing import Iterable
 
 import numpy as np
 from astropy.io import fits
-from fastapi import HTTPException
-from pydantic import BaseModel
 from scipy.ndimage import gaussian_filter, gaussian_filter1d
-
-from app import _main_core as _core
 
 
 REFERENCE_ROOT = Path(
     os.environ.get("STELLARPILOT_REFERENCE_ROOT", "data/reference-v2")
 )
 
-
-class BahtinovQualityPayload(BaseModel):
-    image: str
+_CALIBRATION_CACHE_KEY: tuple | None = None
+_CALIBRATION_CACHE: dict | None = None
 
 
 def _axial_distance_deg(a: float, b: float) -> float:
@@ -44,11 +39,9 @@ def _load_fits(path: Path) -> np.ndarray:
     finite = np.isfinite(array)
     if not finite.any():
         raise ValueError("Aucun pixel exploitable")
-
     if not finite.all():
         replacement = float(np.median(array[finite]))
         array = np.where(finite, array, replacement)
-
     return array
 
 
@@ -61,8 +54,7 @@ def _brightest_crop(
     background = float(np.median(data))
     work = np.clip(data - background, 0.0, None)
 
-    # A moderate blur rejects isolated hot pixels while retaining the bright
-    # stellar core that carries the Bahtinov diffraction pattern.
+    # Reject isolated hot pixels while keeping the bright stellar core.
     locator = gaussian_filter(work, sigma=2.5)
     peak_index = int(np.argmax(locator))
     peak_y, peak_x = np.unravel_index(peak_index, locator.shape)
@@ -73,11 +65,11 @@ def _brightest_crop(
     y0 = max(0, min(height - size, int(peak_y) - half))
     crop = data[y0 : y0 + size, x0 : x0 + size]
 
-    peak_in_crop = (
-        float(peak_x - x0),
-        float(peak_y - y0),
+    return (
+        crop,
+        (float(peak_x - x0), float(peak_y - y0)),
+        (x0, y0),
     )
-    return crop, peak_in_crop, (x0, y0)
 
 
 def _weighted_hough_lines(crop: np.ndarray) -> list[dict]:
@@ -88,8 +80,7 @@ def _weighted_hough_lines(crop: np.ndarray) -> list[dict]:
     if positive.size < 100:
         raise ValueError("Signal Bahtinov insuffisant")
 
-    # Work on the brightest 15% of positive pixels. Square-root weighting keeps
-    # the stellar core from drowning the long diffraction spikes.
+    # Long spikes must influence the detector more than the saturated core.
     threshold = float(np.percentile(positive, 85.0))
     ys, xs = np.nonzero(signal >= threshold)
     if xs.size < 100:
@@ -126,7 +117,10 @@ def _weighted_hough_lines(crop: np.ndarray) -> list[dict]:
     selected: list[dict] = []
     for candidate in ordered:
         if all(
-            _axial_distance_deg(candidate["normal_deg"], existing["normal_deg"]) >= 10.0
+            _axial_distance_deg(
+                candidate["normal_deg"],
+                existing["normal_deg"],
+            ) >= 10.0
             for existing in selected
         ):
             selected.append(candidate)
@@ -135,7 +129,6 @@ def _weighted_hough_lines(crop: np.ndarray) -> list[dict]:
 
     if len(selected) != 3:
         raise ValueError("Trois familles d'aigrettes Bahtinov non detectees")
-
     return selected
 
 
@@ -150,8 +143,9 @@ def _identify_geometry(lines: list[dict]) -> dict:
 
         d1 = _axial_distance_deg(central["normal_deg"], first["normal_deg"])
         d2 = _axial_distance_deg(central["normal_deg"], second["normal_deg"])
-        outer_separation = _axial_distance_deg(first["normal_deg"], second["normal_deg"])
-
+        outer_separation = _axial_distance_deg(
+            first["normal_deg"], second["normal_deg"]
+        )
         if min(d1, d2) < 8.0 or outer_separation < 16.0:
             continue
 
@@ -173,8 +167,7 @@ def _identify_geometry(lines: list[dict]) -> dict:
         return np.array([math.cos(theta), math.sin(theta)], dtype=np.float64)
 
     matrix = np.vstack([normal(first), normal(second)])
-    determinant = float(np.linalg.det(matrix))
-    if abs(determinant) < 0.08:
+    if abs(float(np.linalg.det(matrix))) < 0.08:
         raise ValueError("Aigrettes exterieures presque paralleles")
 
     intersection = np.linalg.solve(
@@ -189,7 +182,10 @@ def _identify_geometry(lines: list[dict]) -> dict:
     strength_balance = weakest / max(mean_strength, 1e-9)
     confidence = max(
         0.0,
-        min(1.0, strength_balance * max(0.0, 1.0 - symmetry_error / 12.0)),
+        min(
+            1.0,
+            strength_balance * max(0.0, 1.0 - symmetry_error / 12.0),
+        ),
     )
 
     return {
@@ -211,8 +207,7 @@ def _identify_geometry(lines: list[dict]) -> dict:
 def _analyze_geometry(path: Path) -> dict:
     data = _load_fits(path)
     crop, peak_in_crop, crop_origin = _brightest_crop(data)
-    lines = _weighted_hough_lines(crop)
-    geometry = _identify_geometry(lines)
+    geometry = _identify_geometry(_weighted_hough_lines(crop))
     geometry.update(
         {
             "image": str(path),
@@ -238,13 +233,11 @@ def _latest_reference_sets() -> tuple[Path | None, list[Path], list[Path]]:
         key=lambda item: item.name,
         reverse=True,
     )
-
     for root in dated:
         optimum = sorted((root / "bahtinov" / "optimum").glob("*.fits"))
         other = sorted((root / "bahtinov" / "other_side").glob("*.fits"))
         if optimum:
             return root, optimum, other
-
     return None, [], []
 
 
@@ -263,10 +256,35 @@ def _safe_geometry(paths: Iterable[Path]) -> list[dict]:
     return results
 
 
+def _reference_cache_key(
+    root: Path,
+    optimum_paths: list[Path],
+    other_paths: list[Path],
+) -> tuple:
+    files = optimum_paths + other_paths
+    return (
+        str(root.resolve()),
+        tuple(
+            (
+                str(path.resolve()),
+                path.stat().st_mtime_ns,
+                path.stat().st_size,
+            )
+            for path in files
+        ),
+    )
+
+
 def _calibration() -> dict | None:
+    global _CALIBRATION_CACHE_KEY, _CALIBRATION_CACHE
+
     root, optimum_paths, other_paths = _latest_reference_sets()
     if root is None or not optimum_paths:
         return None
+
+    key = _reference_cache_key(root, optimum_paths, other_paths)
+    if key == _CALIBRATION_CACHE_KEY:
+        return _CALIBRATION_CACHE
 
     optimum_results = [
         item for item in _safe_geometry(optimum_paths) if "signed_error_px" in item
@@ -293,9 +311,12 @@ def _calibration() -> dict | None:
             dtype=np.float64,
         )
         other_median = float(np.median(other_errors))
-        bad_distance = max(abs(other_median - baseline), optimum_tolerance * 2.0)
+        bad_distance = max(
+            abs(other_median - baseline),
+            optimum_tolerance * 2.0,
+        )
 
-    return {
+    result = {
         "reference_root": str(root),
         "baseline_error_px": baseline,
         "optimum_tolerance_px": optimum_tolerance,
@@ -304,11 +325,13 @@ def _calibration() -> dict | None:
         "optimum_count": len(optimum_results),
         "other_side_count": len(other_results),
     }
+    _CALIBRATION_CACHE_KEY = key
+    _CALIBRATION_CACHE = result
+    return result
 
 
 def _score_focus(error_from_optimum: float, calibration: dict | None) -> int:
     distance = abs(error_from_optimum)
-
     if calibration is None:
         return int(round(max(0.0, min(100.0, 100.0 - distance * 8.0))))
 
@@ -316,8 +339,6 @@ def _score_focus(error_from_optimum: float, calibration: dict | None) -> int:
     bad_distance = calibration.get("bad_distance_px")
 
     if distance <= tolerance:
-        # Preserve a narrow 98-100 optimum band instead of flattening every
-        # near-perfect frame to exactly 100.
         ratio = distance / max(tolerance, 1e-9)
         return int(round(100.0 - 2.0 * ratio))
 
@@ -359,7 +380,6 @@ def analyze_bahtinov(image: str) -> dict:
     try:
         geometry = _analyze_geometry(path)
         calibration = _calibration()
-
         baseline = (
             float(calibration["baseline_error_px"])
             if calibration is not None
@@ -374,7 +394,6 @@ def analyze_bahtinov(image: str) -> dict:
         if score < 98:
             side = "unknown_side"
             instruction = "Ajuster la mise au point puis refaire une pose de 4 s"
-
             if calibration is not None:
                 other_error = calibration.get("other_side_error_px")
                 if other_error is not None:
@@ -382,7 +401,9 @@ def analyze_bahtinov(image: str) -> dict:
                     if other_delta != 0.0:
                         if error_from_optimum * other_delta > 0.0:
                             side = "other_side"
-                            instruction = "Vous avez depasse l'optimum : revenir en sens inverse"
+                            instruction = (
+                                "Vous avez depasse l'optimum : revenir en sens inverse"
+                            )
                         else:
                             side = "first_side"
                             instruction = "Continuer progressivement vers l'optimum"
@@ -398,11 +419,18 @@ def analyze_bahtinov(image: str) -> dict:
             "signed_error_px": round(float(geometry["signed_error_px"]), 3),
             "error_from_optimum_px": round(error_from_optimum, 3),
             "absolute_error_px": round(abs(error_from_optimum), 3),
-            "geometry_confidence": round(float(geometry["geometry_confidence"]), 4),
-            "symmetry_error_deg": round(float(geometry["symmetry_error_deg"]), 3),
-            "central_normal_deg": round(float(geometry["central_normal_deg"]), 3),
+            "geometry_confidence": round(
+                float(geometry["geometry_confidence"]), 4
+            ),
+            "symmetry_error_deg": round(
+                float(geometry["symmetry_error_deg"]), 3
+            ),
+            "central_normal_deg": round(
+                float(geometry["central_normal_deg"]), 3
+            ),
             "outer_normal_deg": [
-                round(float(value), 3) for value in geometry["outer_normal_deg"]
+                round(float(value), 3)
+                for value in geometry["outer_normal_deg"]
             ],
             "brightest_x": geometry["brightest_x"],
             "brightest_y": geometry["brightest_y"],
@@ -429,7 +457,9 @@ def validate_reference_library() -> dict:
                 summary.append(
                     {
                         "image": item["image"],
-                        "signed_error_px": round(float(item["signed_error_px"]), 3),
+                        "signed_error_px": round(
+                            float(item["signed_error_px"]), 3
+                        ),
                         "focus_score": scored.get("focus_score"),
                         "focus_label": scored.get("focus_label"),
                         "focus_side": scored.get("focus_side"),
@@ -442,30 +472,10 @@ def validate_reference_library() -> dict:
                 summary.append(item)
         return summary
 
-    calibration = _calibration()
     return {
         "status": "ok" if root is not None else "reference_missing",
         "reference_root": str(root) if root is not None else None,
-        "calibration": calibration,
+        "calibration": _calibration(),
         "optimum": summarized(optimum),
         "other_side": summarized(other),
     }
-
-
-app = _core.app
-
-
-@app.post("/bahtinov/quality")
-def bahtinov_quality(payload: BahtinovQualityPayload):
-    result = analyze_bahtinov(payload.image)
-    if result.get("status") != "ok":
-        raise HTTPException(
-            status_code=422,
-            detail=result.get("detail", "Analyse Bahtinov impossible"),
-        )
-    return result
-
-
-@app.get("/bahtinov/reference/validate")
-def bahtinov_reference_validate():
-    return validate_reference_library()
