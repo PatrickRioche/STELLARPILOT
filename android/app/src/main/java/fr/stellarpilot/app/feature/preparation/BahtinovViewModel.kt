@@ -7,6 +7,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import fr.stellarpilot.app.data.remote.BahtinovApiClient
 import fr.stellarpilot.app.data.remote.CameraPreviewApiClient
 import fr.stellarpilot.app.domain.model.SkyStar
 import kotlinx.coroutines.launch
@@ -34,10 +35,19 @@ data class BahtinovUiState(
     val isLoading: Boolean = false,
     val imageBytes: ByteArray? = null,
     val capturePath: String? = null,
-    val exposureSeconds: Double = 1.0,
+    val exposureSeconds: Double = 4.0,
     val lastLabel: BahtinovReferenceLabel? = null,
     val referenceCount: Int = 0,
     val journalPath: String? = null,
+    val focusScore: Int? = null,
+    val focusLabel: String? = null,
+    val focusReady: Boolean = false,
+    val focusValidated: Boolean = false,
+    val focusSide: String? = null,
+    val focusErrorPx: Double? = null,
+    val focusConfidence: Double? = null,
+    val focusInstruction: String? = null,
+    val optimumStreak: Int = 0,
     val message: String? = null,
     val error: String? = null
 )
@@ -49,6 +59,7 @@ class BahtinovViewModel(
 
     companion object {
         private const val TAG = "StellarBahtinov"
+        const val FOCUS_EXPOSURE_SECONDS = 4.0
     }
 
     var uiState by mutableStateOf(BahtinovUiState())
@@ -60,6 +71,87 @@ class BahtinovViewModel(
         )
     }
 
+    /**
+     * Normal Assistant focus capture. Exposure is deliberately fixed at 4 s
+     * so scores stay comparable from one adjustment to the next.
+     */
+    fun captureFocus(serverBaseUrl: String) {
+        if (uiState.isLoading) return
+
+        uiState = uiState.copy(
+            isLoading = true,
+            exposureSeconds = FOCUS_EXPOSURE_SECONDS,
+            message = "Pose Bahtinov 4 s…",
+            error = null
+        )
+
+        viewModelScope.launch {
+            try {
+                val cameraApi = CameraPreviewApiClient()
+                val capture = cameraApi.capture(
+                    serverBaseUrl = serverBaseUrl,
+                    exposureSeconds = FOCUS_EXPOSURE_SECONDS
+                )
+                val preview = cameraApi.getPreview(serverBaseUrl)
+                val focus = BahtinovApiClient().analyze(
+                    serverBaseUrl = serverBaseUrl,
+                    imagePath = capture.imagePath
+                )
+
+                val nextStreak =
+                    if (focus.focusReady) uiState.optimumStreak + 1 else 0
+                val validated = nextStreak >= 2
+
+                val message = when {
+                    validated ->
+                        "Mise au point optimale validée sur 2 poses consécutives."
+                    focus.focusReady ->
+                        "Optimum détecté. Faites une seconde pose de 4 s pour confirmer."
+                    else ->
+                        focus.instruction
+                            ?: "Ajustez la mise au point puis recommencez."
+                }
+
+                Log.i(
+                    TAG,
+                    "FOCUS capture=${capture.imagePath} score=${focus.focusScore} " +
+                        "label=${focus.focusLabel} side=${focus.focusSide} " +
+                        "error_px=${focus.errorFromOptimumPx} streak=$nextStreak"
+                )
+
+                uiState = uiState.copy(
+                    isLoading = false,
+                    imageBytes = preview,
+                    capturePath = capture.imagePath,
+                    exposureSeconds = capture.exposureSeconds,
+                    focusScore = focus.focusScore,
+                    focusLabel = focus.focusLabel,
+                    focusReady = focus.focusReady,
+                    focusValidated = validated,
+                    focusSide = focus.focusSide,
+                    focusErrorPx = focus.errorFromOptimumPx,
+                    focusConfidence = focus.geometryConfidence,
+                    focusInstruction = focus.instruction,
+                    optimumStreak = nextStreak,
+                    message = message,
+                    error = null
+                )
+            } catch (error: Exception) {
+                uiState = uiState.copy(
+                    isLoading = false,
+                    focusReady = false,
+                    focusValidated = false,
+                    optimumStreak = 0,
+                    error = error.message ?: "Analyse Bahtinov impossible"
+                )
+            }
+        }
+    }
+
+    /**
+     * Calibration/reference capture retained for building future libraries.
+     * Unlike normal focusing, this mode can keep its chosen exposure.
+     */
     fun captureReference(
         serverBaseUrl: String,
         star: SkyStar?,
@@ -155,22 +247,17 @@ class BahtinovViewModel(
         val application = getApplication<Application>()
         val rootParent = application.getExternalFilesDir(null)
             ?: application.filesDir
-        val root = File(
-            rootParent,
-            "bahtinov-references"
-        )
+        val root = File(rootParent, "bahtinov-references")
         root.mkdirs()
 
         val file = File(
             root,
             "${LocalDate.now()}_references.jsonl"
         )
-
         file.appendText(
             record.toString() + "\n",
             Charsets.UTF_8
         )
-
         return file
     }
 }
