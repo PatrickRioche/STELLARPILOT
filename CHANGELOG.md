@@ -2,6 +2,41 @@
 
 Ce fichier suit les changements des releases publiées.
 
+## v0.6.0-poc — consolidation terrain 2026-09-06
+
+Intégration des enseignements de la soirée d'observation du 5 au 6 septembre 2026 dans la branche de convergence finale.
+
+### Astrométrie / OnStep
+
+- suppression de l'orientation initiale imposée N/NE/E/... dans l'assistant final ;
+- positionnement libre de la monture via OnStep, MLAstro Hub ou une autre console ;
+- lecture AD/DEC via INDI comme hint facultatif, avec conversion RA heures → degrés ;
+- la solution issue de l'image reste la référence ;
+- stratégie robuste : hint + fenêtre étroite, blind solve étroit, puis blind solve élargi ;
+- échelle de profil retenue : environ 1,218 arcsec/pixel, pour une moyenne mesurée de 1,217212 arcsec/pixel sur la session ;
+- fenêtre étroite autour de 0,90–1,51 arcsec/pixel ;
+- dernier fallback blind 0,50–2,50 arcsec/pixel ;
+- tests serveur alignés sur cette stratégie.
+
+### Interface tablette
+
+- aperçu caméra plein largeur en conservant le ratio 3856 × 2180 de l'Uranus-C ;
+- pinch-to-zoom jusqu'à 8× ;
+- déplacement tactile de l'image zoomée ;
+- réticule conservé au centre de l'écran ;
+- retour au centrage lorsque le zoom revient à 1×.
+
+### Documentation et exploitation
+
+- ajout du compte rendu de la session du 5 au 6 septembre 2026 dans le wiki ;
+- mise à jour de la séquence d'initialisation et du périmètre projet ;
+- rappel du modèle de distribution : le Raspberry Pi ne contient pas de dépôt Git, les mises à jour passent par le kit produit depuis le poste de développement.
+
+### Validation CI
+
+- Android simulationDebug et deviceDebug validés après suppression de l'orientation initiale ;
+- tests serveur et export OpenAPI validés après adaptation de la stratégie astrométrique.
+
 ## v0.6.0-poc — 2026-09-03
 
 Jalon de préparation des essais réels de motorisation équatoriale et de calibration Bahtinov.
@@ -117,7 +152,3 @@ Le 17 août 2026, un APK `deviceDebug` installé sur une tablette Android a comm
 - `GET /status` -> HTTP 200 ;
 - WebSocket `/ws` -> connexion acceptée ;
 - fonctionnement sur le réseau Wi-Fi/hotspot du Raspberry Pi.
-
-### Limites du jalon
-
-Cette release ne valide pas encore la chaîne complète INDI réelle, capture réelle et plate solving réel.
