@@ -2,6 +2,52 @@
 
 Ce fichier suit les changements des releases publiées.
 
+## Unreleased — suivi de la nuit du 5 au 6 septembre 2026
+
+### Validation terrain
+
+- 33 captures nocturnes de 4 s retestées ;
+- 25 champs résolus, soit 75,8 % ;
+- échelle moyenne mesurée : 1,217212 arcsec/pixel ;
+- dispersion : 0,002095 arcsec/pixel ;
+- durée médiane des solves réussis : 3,302 s ;
+- lecture de la position de la monture LX200 OnStep via INDI confirmée ;
+- `EQUATORIAL_EOD_COORD` validé comme source possible de hint AD/DEC ;
+- plusieurs échecs attribuables à des captures défocalisées, filées, quasi vides ou non stellaires plutôt qu'à une panne générale du solveur.
+
+### Serveur
+
+- utilisation automatique de la position AD/DEC INDI comme hint facultatif pour astrometry.net ;
+- conversion de l'AD lue en heures vers les degrés attendus par astrometry.net ;
+- stratégie de repli blind conservée lorsque le hint est absent ou inefficace ;
+- première fenêtre d'échelle recentrée autour du setup validé à environ 1,218 arcsec/pixel ;
+- orientation WCS conservée comme métadonnée technique mais non requise par l'interface ;
+- tests unitaires ajoutés pour le hint INDI et le fallback blind.
+
+### Android
+
+- suppression de l'étape obligatoire « Position » / orientation initiale ;
+- la monture peut être positionnée avec OnStep, un mobile Wi-Fi ou une console externe avant la première astrométrie ;
+- suppression de l'affichage de l'orientation WCS dans l'écran d'astrométrie ;
+- aperçu caméra plein largeur au ratio du capteur en mode tablette portrait ;
+- zoom tactile par pincement jusqu'à 8× ;
+- déplacement de l'image zoomée ;
+- réticule conservé fixe au centre ;
+- preview décodée avec davantage de définition pour rendre le zoom utile.
+
+### Documentation
+
+- spécification de la séquence initiale mise à jour ;
+- périmètre du projet mis à jour ;
+- compte rendu final de la soirée ajouté dans `wiki/Observation-2026-09-05-06.md`.
+
+### À valider avant fusion
+
+- build `deviceDebug` ;
+- test du zoom sur la tablette réelle en portrait ;
+- comparaison avec la version serveur actuellement déployée sur le Raspberry Pi, qui contient déjà des éléments de lecture de position INDI non encore présents dans l'ancien `main` ;
+- blocage ou attente automatique des captures destinées au solve pendant un mouvement actif de la monture.
+
 ## v0.5.0-poc — 2026-08-24
 
 Jalon POC validant la capture caméra réelle, l'aperçu couleur et l'intégration de l'astrométrie dans l'application Android.
