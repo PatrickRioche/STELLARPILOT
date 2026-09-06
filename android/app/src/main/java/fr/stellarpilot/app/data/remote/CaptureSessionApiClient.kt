@@ -366,18 +366,14 @@ class CaptureSessionApiClient(
                 .get()
                 .build()
 
-        client.newCall(requestBuilder = request)
-    }
-
-    private fun OkHttpClient.newCall(requestBuilder: Request): ByteArray {
-        newCall(requestBuilder)
+        client.newCall(request)
             .execute()
             .use { response ->
                 check(response.isSuccessful) {
-                    "HTTP ${response.code} sur ${requestBuilder.url.encodedPath}"
+                    "HTTP ${response.code} sur /$path"
                 }
                 return response.body?.bytes()
-                    ?: error("Image ${requestBuilder.url.encodedPath} vide")
+                    ?: error("Image /$path vide")
             }
     }
 
