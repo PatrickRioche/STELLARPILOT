@@ -10,6 +10,7 @@
 - [Méthode de développement](Development-Methodology)
 - [Architecture](Architecture)
 - [Calibration optique & échantillonnage](Calibration-optique-et-echantillonnage)
+- [Observation terrain 5–6 septembre 2026](Observation-2026-09-05-06)
 - [Installation serveur Astroberry](Server-Installation-Astroberry)
 - [Configuration GPS](GPS-Setup)
 - [Installation tablette Android](Android-Tablet-Installation)
