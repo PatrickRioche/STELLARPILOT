@@ -2,10 +2,7 @@ package fr.stellarpilot.app.feature.preparation
 
 import fr.stellarpilot.app.feature.connection.ConnectionState
 
-import android.graphics.BitmapFactory
-
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -33,22 +30,18 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
-import fr.stellarpilot.app.R
 import fr.stellarpilot.app.feature.connection.ConnectionViewModel
 import fr.stellarpilot.app.feature.sky.SkyUiState
 import fr.stellarpilot.app.feature.sky.SkyViewModel
@@ -65,13 +58,12 @@ import fr.stellarpilot.app.ui.theme.StellarText
 
 private val stepNames = listOf(
     "Connexion",
-    "Position",
-    "Astrom\u00E9trie",
-    "\u00C9toile",
+    "Astrométrie",
+    "Étoile",
     "Centrage",
     "Bahtinov",
     "Darks",
-    "Pr\u00EAt"
+    "Prêt"
 )
 
 @Composable
@@ -79,90 +71,47 @@ fun PreparationScreen(
     onOpenSky: () -> Unit,
     viewModel: ConnectionViewModel = viewModel()
 ) {
-    var currentStep by rememberSaveable {
-        mutableIntStateOf(0)
-    }
+    var currentStep by rememberSaveable { mutableIntStateOf(0) }
+    var demoMode by rememberSaveable { mutableStateOf(false) }
+    var selectedReferenceStarId by rememberSaveable { mutableStateOf<String?>(null) }
+    var astrometryExposureMs by rememberSaveable { mutableIntStateOf(1) }
 
-    var demoMode by rememberSaveable {
-        mutableStateOf(false)
-    }
-
-    /*
-     * Le mode D?mo appartient exclusivement ? l'application
-     * Android. Les autres ?crans peuvent ainsi interdire
-     * tout acc?s r?seau pendant une d?monstration.
-     */
     LaunchedEffect(demoMode) {
-        fr.stellarpilot.app.feature.demo
-            .DemoModeState.active = demoMode
-    }
-
-    var selectedReferenceStarId by rememberSaveable {
-        mutableStateOf<String?>(null)
-    }
-
-    /*
-     * Temps d'exposition de la première astrométrie.
-     *
-     * Valeur initiale volontairement basse pour les tests
-     * de jour avec la caméra réelle.
-     *
-     * 1 ms = 0.001 seconde.
-     */
-    var astrometryExposureMs by rememberSaveable {
-        mutableIntStateOf(1)
+        fr.stellarpilot.app.feature.demo.DemoModeState.active = demoMode
     }
 
     val state = viewModel.uiState
     val server = state.server
 
-    val skyViewModel: SkyViewModel =
-        viewModel()
+    val skyViewModel: SkyViewModel = viewModel()
+    val skyState = skyViewModel.uiState
 
-    val skyState =
-        skyViewModel.uiState
-
-    val cameraPreviewViewModel: CameraPreviewViewModel =
-        viewModel()
-
-    val cameraPreviewState =
-        cameraPreviewViewModel.uiState
+    val cameraPreviewViewModel: CameraPreviewViewModel = viewModel()
+    val cameraPreviewState = cameraPreviewViewModel.uiState
 
     LaunchedEffect(Unit) {
         viewModel.connect()
     }
 
-    LaunchedEffect(
-        currentStep,
-        demoMode
-    ) {
-        if (currentStep == 2) {
+    LaunchedEffect(currentStep, demoMode) {
+        if (currentStep == 1) {
             if (demoMode) {
-                cameraPreviewViewModel.runDemoM103(
-                    state.serverBaseUrl
-                )
+                cameraPreviewViewModel.runDemoM103(state.serverBaseUrl)
             } else {
                 cameraPreviewViewModel.resetM103()
             }
         }
     }
 
-    LaunchedEffect(
-        currentStep,
-        state.serverBaseUrl,
-        demoMode
-    ) {
-        if (currentStep == 3) {
+    LaunchedEffect(currentStep, state.serverBaseUrl, demoMode) {
+        if (currentStep == 2) {
             if (demoMode) {
                 skyViewModel.loadDemoSnapshot()
             } else {
-                skyViewModel.load(
-                    state.serverBaseUrl
-                )
+                skyViewModel.load(state.serverBaseUrl)
             }
         }
     }
-
 
     val essentialReady = remember(server) {
         server != null &&
@@ -181,9 +130,8 @@ fun PreparationScreen(
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = 24.dp, vertical = 24.dp)
         ) {
-
             Text(
-                text = "PR\u00C9PARATION DE L'OBSERVATION",
+                text = "PRÉPARATION DE L'OBSERVATION",
                 style = MaterialTheme.typography.labelLarge,
                 fontWeight = FontWeight.Bold,
                 color = StellarOrange
@@ -201,7 +149,7 @@ fun PreparationScreen(
             Spacer(Modifier.height(6.dp))
 
             Text(
-                text = "\u00C9tape ${currentStep + 1} sur ${stepNames.size} \u2022 ${stepNames[currentStep]}",
+                text = "Étape ${currentStep + 1} sur ${stepNames.size} • ${stepNames[currentStep]}",
                 style = MaterialTheme.typography.bodyMedium,
                 color = StellarMuted
             )
@@ -210,17 +158,12 @@ fun PreparationScreen(
                 Spacer(Modifier.height(12.dp))
 
                 OutlinedButton(
-                    onClick = {
-                        demoMode = true
-                    },
+                    onClick = { demoMode = true },
                     modifier = Modifier.fillMaxWidth(),
-                    border = BorderStroke(
-                        1.dp,
-                        StellarOrange
-                    )
+                    border = BorderStroke(1.dp, StellarOrange)
                 ) {
                     Text(
-                        text = "Activer le mode d\u00E9monstration",
+                        text = "Activer le mode démonstration",
                         color = StellarOrange,
                         fontWeight = FontWeight.Bold
                     )
@@ -241,13 +184,10 @@ fun PreparationScreen(
                             selectedReferenceStarId = null
                         },
                         modifier = Modifier.weight(1f),
-                        border = BorderStroke(
-                            1.dp,
-                            StellarOrange
-                        )
+                        border = BorderStroke(1.dp, StellarOrange)
                     ) {
                         Text(
-                            text = "Mode d\u00E9monstration actif",
+                            text = "Mode démonstration actif",
                             color = StellarOrange,
                             fontWeight = FontWeight.Bold
                         )
@@ -255,15 +195,9 @@ fun PreparationScreen(
 
                     Button(
                         onClick = {
-                            if (
-                                currentStep == 3 &&
-                                selectedReferenceStarId == null
-                            ) {
+                            if (currentStep == 2 && selectedReferenceStarId == null) {
                                 selectedReferenceStarId =
-                                    skyState.sky
-                                        ?.recommended
-                                        ?.id
-                                        ?: "capella"
+                                    skyState.sky?.recommended?.id ?: "capella"
                             }
 
                             if (currentStep < stepNames.lastIndex) {
@@ -278,11 +212,11 @@ fun PreparationScreen(
                         )
                     ) {
                         Text(
-                            text =
-                                if (currentStep < stepNames.lastIndex)
-                                    "\u00C9tape suivante en mode d\u00E9mo"
-                                else
-                                    "D\u00E9monstration termin\u00E9e",
+                            text = if (currentStep < stepNames.lastIndex) {
+                                "Étape suivante en mode démo"
+                            } else {
+                                "Démonstration terminée"
+                            },
                             fontWeight = FontWeight.Bold
                         )
                     }
@@ -321,7 +255,6 @@ fun PreparationScreen(
             Spacer(Modifier.height(26.dp))
 
             when (currentStep) {
-
                 0 -> ConnectionStep(
                     state = state,
                     ready = essentialReady,
@@ -331,154 +264,76 @@ fun PreparationScreen(
                     onContinue = { currentStep = 1 }
                 )
 
-                1 -> PositionStep(
+                1 -> AstrometryStep(
                     demoMode = demoMode,
-
-                    mountFamily =
-                        server?.session?.mountFamily
-                            ?: server?.devices?.mount?.family,
-
-                    startupTarget =
-                        server?.session?.startupTarget
-                            ?: server?.devices?.mount?.startupTarget,
-
-                    mountTypeLabel =
-                        server?.devices?.mount?.typeLabel,
-
-                    mountType =
-                        server?.session?.mountType
-                            ?: server?.devices?.mount?.type,
-
-                    latitude =
-                        server?.session?.latitude
-                            ?: server?.devices?.gps?.latitude,
-
-                    onPrevious = {
-                        currentStep = 0
-                    },
-
-                    onNext = {
-                        currentStep = 2
-                    }
-                )
-
-                2 -> AstrometryStep(
-                    demoMode = demoMode,
-
-                    previewState =
-                        cameraPreviewState,
-
-                    demoM103State =
-                        cameraPreviewViewModel.demoM103State,
-
-                    cameraName =
-                        server?.devices?.camera?.name,
-
-                    exposureMs =
-                        astrometryExposureMs,
-
-                    onExposureChange = {
-                        astrometryExposureMs = it
-                    },
-
+                    previewState = cameraPreviewState,
+                    demoM103State = cameraPreviewViewModel.demoM103State,
+                    cameraName = server?.devices?.camera?.name,
+                    exposureMs = astrometryExposureMs,
+                    onExposureChange = { astrometryExposureMs = it },
                     onRunDemoM103 = {
-                        if (demoMode) {
-                            cameraPreviewViewModel.runDemoM103(
-                                state.serverBaseUrl
-                            )
-                        } else {
-                            cameraPreviewViewModel.runDemoM103(
-                                state.serverBaseUrl
-                            )
-                        }
+                        cameraPreviewViewModel.runDemoM103(state.serverBaseUrl)
                     },
-
                     onRefresh = {
                         cameraPreviewViewModel.load(
-                    state.serverBaseUrl,
-                    astrometryExposureMs / 1000.0
-                )
-                    },
-
-                    onPrevious = {
-                        currentStep = 1
-                    },
-
-                    onNext = {
-                        currentStep = 3
-                    }
-                )
-                3 -> ReferenceStarStep(
-                    demoMode = demoMode,
-                    skyState = skyState,
-
-                    selectedStarId =
-                        selectedReferenceStarId,
-
-                    onSelectStar = {
-                        selectedReferenceStarId = it
-                    },
-
-                    onRefresh = {
-                        skyViewModel.load(
-                            state.serverBaseUrl
+                            state.serverBaseUrl,
+                            astrometryExposureMs / 1000.0
                         )
                     },
+                    onPrevious = { currentStep = 0 },
+                    onNext = { currentStep = 2 }
+                )
 
+                2 -> ReferenceStarStep(
+                    demoMode = demoMode,
+                    skyState = skyState,
+                    selectedStarId = selectedReferenceStarId,
+                    onSelectStar = { selectedReferenceStarId = it },
+                    onRefresh = { skyViewModel.load(state.serverBaseUrl) },
                     onOpenSky = onOpenSky,
-
                     onSetLocation = { latitude, longitude ->
                         if (demoMode) {
                             skyViewModel.loadDemoSnapshot()
                         } else {
                             skyViewModel.setManualLocation(
-                                serverBaseUrl =
-                                    state.serverBaseUrl,
-                                latitude =
-                                    latitude,
-                                longitude =
-                                    longitude
+                                serverBaseUrl = state.serverBaseUrl,
+                                latitude = latitude,
+                                longitude = longitude
                             )
                         }
                     },
-
-                    onPrevious = {
-                        currentStep = 2
-                    },
-
+                    onPrevious = { currentStep = 1 },
                     onNext = { starId ->
-                        selectedReferenceStarId =
-                            starId
-
-                        currentStep = 4
+                        selectedReferenceStarId = starId
+                        currentStep = 3
                     }
                 )
 
-                4 -> PrototypeStep(
+                3 -> PrototypeStep(
                     title = "Pointage et centrage",
                     description =
-                        "La monture effectuera le GoTo vers l'\u00E9toile choisie. " +
-                        "Une nouvelle astrom\u00E9trie permettra ensuite de corriger " +
-                        "le pointage jusqu'\u00E0 placer l'\u00E9toile au centre du capteur.",
+                        "La monture effectuera le GoTo vers l'étoile choisie. " +
+                            "Une nouvelle astrométrie permettra ensuite de corriger " +
+                            "le pointage jusqu'à placer l'étoile au centre du capteur.",
                     action = "Voir la mise au point",
+                    onPrevious = { currentStep = 2 },
+                    onNext = { currentStep = 4 }
+                )
+
+                4 -> BahtinovStep(
                     onPrevious = { currentStep = 3 },
-                    onNext = { currentStep = 5 }
+                    onKeepFocus = { currentStep = 5 },
+                    onDoFocus = { currentStep = 5 }
                 )
 
-                5 -> BahtinovStep(
-                    onPrevious = { currentStep = 4 },
-                    onKeepFocus = { currentStep = 6 },
-                    onDoFocus = { currentStep = 6 }
-                )
-
-                6 -> DarksStep(
+                5 -> DarksStep(
                     cameraName = server?.devices?.camera?.name,
-                    onPrevious = { currentStep = 5 },
-                    onContinue = { currentStep = 7 }
+                    onPrevious = { currentStep = 4 },
+                    onContinue = { currentStep = 6 }
                 )
 
-                7 -> ReadyStep(
-                    onPrevious = { currentStep = 6 },
+                6 -> ReadyStep(
+                    onPrevious = { currentStep = 5 },
                     onOpenSky = onOpenSky
                 )
             }
@@ -498,15 +353,8 @@ private fun ConnectionStep(
     onContinue: () -> Unit
 ) {
     val server = state.server
-
-    val serverReachable =
-        state.connectionState == ConnectionState.CONNECTED
-
-    val canContinue =
-        if (demoMode)
-            true
-        else
-            ready
+    val serverReachable = state.connectionState == ConnectionState.CONNECTED
+    val canContinue = demoMode || ready
 
     var serverAddress by rememberSaveable(state.serverBaseUrl) {
         mutableStateOf(
@@ -519,106 +367,62 @@ private fun ConnectionStep(
     }
 
     AssistantCard(
-        title = "Connexion & contr\u00F4les",
-        subtitle = "V\u00E9rification du serveur et du mat\u00E9riel essentiel"
+        title = "Connexion & contrôles",
+        subtitle = "Vérification du serveur et du matériel essentiel"
     ) {
-
         OutlinedTextField(
             value = serverAddress,
-            onValueChange = {
-                serverAddress = it
-            },
+            onValueChange = { serverAddress = it },
             modifier = Modifier.fillMaxWidth(),
             singleLine = true,
-            label = {
-                Text("Adresse du Raspberry Pi sous Astroberry")
-            },
-            supportingText = {
-                Text(
-                    "Ex. 192.168.1.46 ou 10.42.0.1"
-                )
-            }
+            label = { Text("Adresse du Raspberry Pi sous Astroberry") },
+            supportingText = { Text("Ex. 192.168.1.46 ou 10.42.0.1") }
         )
 
         Spacer(Modifier.height(10.dp))
 
         OutlinedButton(
-            onClick = {
-                onChangeServer(serverAddress)
-            },
+            onClick = { onChangeServer(serverAddress) },
             modifier = Modifier.fillMaxWidth()
         ) {
-            Text("Se connecter \u00E0 cette adresse")
+            Text("Se connecter à cette adresse")
         }
 
         Spacer(Modifier.height(18.dp))
 
-        Spacer(Modifier.height(8.dp))
-
         Text(
-            text =
-                if (demoMode)
-                    "Le mode d\u00E9monstration utilise des donn\u00E9es de r\u00E9f\u00E9rence embarqu\u00E9es et ne n\u00E9cessite ni serveur ni mat\u00E9riel r\u00E9el."
-                else
-                    "Activez ce mode pour d\u00E9couvrir StellarPilot sans mat\u00E9riel connect\u00E9.",
-            color =
-                if (demoMode)
-                    StellarOrange
-                else
-                    StellarMuted,
+            text = if (demoMode) {
+                "Le mode démonstration utilise des données de référence embarquées et ne nécessite ni serveur ni matériel réel."
+            } else {
+                "Activez ce mode pour découvrir StellarPilot sans matériel connecté."
+            },
+            color = if (demoMode) StellarOrange else StellarMuted,
             style = MaterialTheme.typography.bodySmall
         )
-
 
         Spacer(Modifier.height(18.dp))
 
         if (server == null) {
             Text(
-                text =
-                    when {
-                        serverReachable &&
-                            state.isConnecting ->
-                            "Serveur connect\u00E9 - lecture du mat\u00E9riel..."
-
-                        serverReachable ->
-                            "Serveur connecté • détails matériel indisponibles"
-
-                        state.connectionState == ConnectionState.RECONNECTING ->
-                            "Reconnexion au serveur StellarPilot..."
-
-                        state.isConnecting ->
-                            "Connexion au serveur StellarPilot..."
-
-                        else ->
-                            "Serveur non connect\u00E9"
-                    },
-                color =
-                    if (serverReachable)
-                        StellarGreen
-                    else
-                        StellarMuted
+                text = when {
+                    serverReachable && state.isConnecting ->
+                        "Serveur connecté - lecture du matériel..."
+                    serverReachable ->
+                        "Serveur connecté • détails matériel indisponibles"
+                    state.connectionState == ConnectionState.RECONNECTING ->
+                        "Reconnexion au serveur StellarPilot..."
+                    state.isConnecting ->
+                        "Connexion au serveur StellarPilot..."
+                    else ->
+                        "Serveur non connecté"
+                },
+                color = if (serverReachable) StellarGreen else StellarMuted
             )
         } else {
-
-            PrepStatusRow(
-                "Serveur",
-                server.devices.server.status
-            )
-
-            PrepStatusRow(
-                "Monture",
-                server.devices.mount.status
-            )
-
-            PrepStatusRow(
-                "Cam\u00E9ra",
-                server.devices.camera.status
-            )
-
-            PrepStatusRow(
-                "GPS",
-                server.devices.gps.status
-            )
+            PrepStatusRow("Serveur", server.devices.server.status)
+            PrepStatusRow("Monture", server.devices.mount.status)
+            PrepStatusRow("Caméra", server.devices.camera.status)
+            PrepStatusRow("GPS", server.devices.gps.status)
 
             Spacer(Modifier.height(12.dp))
 
@@ -652,26 +456,23 @@ private fun ConnectionStep(
                 )
             ) {
                 Text(
-                    text =
-                        if (ready)
-                            "Continuer la pr\u00E9paration"
-                        else
-                            "Mat\u00E9riel essentiel non pr\u00EAt",
+                    text = if (ready) {
+                        "Continuer vers l'astrométrie"
+                    } else {
+                        "Matériel essentiel non prêt"
+                    },
                     fontWeight = FontWeight.Bold
                 )
             }
         }
 
-        if (
-            server != null &&
-            server.devices.gps.status.lowercase() != "fix"
-        ) {
+        if (server != null && server.devices.gps.status.lowercase() != "fix") {
             Spacer(Modifier.height(12.dp))
 
             Text(
                 text =
-                    "La position GPS n'est pas fix\u00E9e. Cela ne bloque pas la connexion, " +
-                    "mais StellarPilot le prendra en compte pour l'astrom\u00E9trie.",
+                    "La position GPS n'est pas fixée. Cela ne bloque pas la première astrométrie ; " +
+                        "StellarPilot utilise les informations disponibles via INDI et conserve un solve blind en repli.",
                 color = StellarOrange,
                 style = MaterialTheme.typography.bodySmall
             )
@@ -696,836 +497,318 @@ private fun ReferenceStarStep(
     val recommendations =
         sky?.stars
             .orEmpty()
-            .filter {
-                it.alignmentCandidate &&
-                    it.alignmentScore != null
-            }
-            .sortedByDescending {
-                it.alignmentScore
-            }
+            .filter { it.alignmentCandidate && it.alignmentScore != null }
+            .sortedByDescending { it.alignmentScore }
             .take(4)
 
     val star =
-        recommendations.firstOrNull {
-            it.id == selectedStarId
-        }
+        recommendations.firstOrNull { it.id == selectedStarId }
             ?: sky?.recommended
             ?: recommendations.firstOrNull()
 
-
     var latitudeText by rememberSaveable(demoMode) {
-        mutableStateOf(
-            if (demoMode)
-                "47.4308"
-            else
-                ""
-        )
+        mutableStateOf(if (demoMode) "47.4308" else "")
     }
 
     var longitudeText by rememberSaveable(demoMode) {
-        mutableStateOf(
-            if (demoMode)
-                "-0.6271"
-            else
-                ""
-        )
+        mutableStateOf(if (demoMode) "-0.6271" else "")
     }
 
     LaunchedEffect(
         skyState.sky?.observer?.latitude,
         skyState.sky?.observer?.longitude
     ) {
-        skyState.sky
-            ?.observer
-            ?.latitude
-            ?.let { latitude ->
+        skyState.sky?.observer?.latitude?.let { latitude ->
+            latitudeText = String.format(java.util.Locale.US, "%.5f", latitude)
+        }
 
-                latitudeText =
-                    String.format(
-                        java.util.Locale.US,
-                        "%.5f",
-                        latitude
-                    )
-            }
-
-        skyState.sky
-            ?.observer
-            ?.longitude
-            ?.let { longitude ->
-
-                longitudeText =
-                    String.format(
-                        java.util.Locale.US,
-                        "%.5f",
-                        longitude
-                    )
-            }
+        skyState.sky?.observer?.longitude?.let { longitude ->
+            longitudeText = String.format(java.util.Locale.US, "%.5f", longitude)
+        }
     }
 
     val locationSourceLabel =
-        when (
-            skyState.sky
-                ?.observer
-                ?.locationSource
-                ?.lowercase()
-        ) {
-
-            "gps" ->
-                "GPS"
-
-            "query" ->
-                "Personnalisée"
-
-            "manual" ->
-                "Manuelle"
-
-            else ->
-                "En attente"
+        when (skyState.sky?.observer?.locationSource?.lowercase()) {
+            "gps" -> "GPS"
+            "query" -> "Personnalisée"
+            "manual" -> "Manuelle"
+            else -> "En attente"
         }
-    val selectedLatitude =
-        latitudeText
-            .replace(',', '.')
-            .toDoubleOrNull()
 
-    val selectedLongitude =
-        longitudeText
-            .replace(',', '.')
-            .toDoubleOrNull()
+    val selectedLatitude = latitudeText.replace(',', '.').toDoubleOrNull()
+    val selectedLongitude = longitudeText.replace(',', '.').toDoubleOrNull()
 
     val locationValid =
         selectedLatitude != null &&
-        selectedLongitude != null &&
-        selectedLatitude in -90.0..90.0 &&
-        selectedLongitude in -180.0..180.0
+            selectedLongitude != null &&
+            selectedLatitude in -90.0..90.0 &&
+            selectedLongitude in -180.0..180.0
+
     AssistantCard(
         title = "Étoile de référence",
-        subtitle =
-            "Choisis une des meilleures étoiles calculées par StellarPilot"
+        subtitle = "Choisis une des meilleures étoiles calculées par StellarPilot"
     ) {
+        Text(
+            text = "LOCALISATION UTILISÉE",
+            color = StellarOrange,
+            style = MaterialTheme.typography.labelLarge,
+            fontWeight = FontWeight.Bold
+        )
+
+        Spacer(Modifier.height(6.dp))
 
         Text(
-            text =
-                "LOCALISATION UTILIS\u00C9E",
-            color =
-                StellarOrange,
-            style =
-                MaterialTheme
-                    .typography
-                    .labelLarge,
-            fontWeight =
-                FontWeight.Bold
+            text = "Source : $locationSourceLabel",
+            color = StellarMuted,
+            style = MaterialTheme.typography.bodySmall
         )
 
-        Spacer(
-            Modifier.height(
-                6.dp
-            )
-        )
-
-        Text(
-            text =
-                "Source : $locationSourceLabel",
-            color =
-                StellarMuted,
-            style =
-                MaterialTheme
-                    .typography
-                    .bodySmall
-        )
-
-        Spacer(
-            Modifier.height(
-                10.dp
-            )
-        )
+        Spacer(Modifier.height(10.dp))
 
         Row(
-            modifier =
-                Modifier.fillMaxWidth(),
-            horizontalArrangement =
-                Arrangement.spacedBy(
-                    12.dp
-                )
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-
             OutlinedTextField(
-                value =
-                    latitudeText,
-                onValueChange = {
-                    latitudeText = it
-                },
-                modifier =
-                    Modifier.weight(
-                        1f
-                    ),
-                singleLine =
-                    true,
-                label = {
-                    Text(
-                        "Latitude"
-                    )
-                }
+                value = latitudeText,
+                onValueChange = { latitudeText = it },
+                modifier = Modifier.weight(1f),
+                singleLine = true,
+                label = { Text("Latitude") }
             )
 
             OutlinedTextField(
-                value =
-                    longitudeText,
-                onValueChange = {
-                    longitudeText = it
-                },
-                modifier =
-                    Modifier.weight(
-                        1f
-                    ),
-                singleLine =
-                    true,
-                label = {
-                    Text(
-                        "Longitude"
-                    )
-                }
+                value = longitudeText,
+                onValueChange = { longitudeText = it },
+                modifier = Modifier.weight(1f),
+                singleLine = true,
+                label = { Text("Longitude") }
             )
         }
 
-        Spacer(
-            Modifier.height(
-                10.dp
-            )
-        )
+        Spacer(Modifier.height(10.dp))
 
         Button(
             onClick = {
-
-                if (
-                    selectedLatitude != null &&
-                    selectedLongitude != null
-                ) {
-
-                    onSetLocation(
-                        selectedLatitude,
-                        selectedLongitude
-                    )
+                if (selectedLatitude != null && selectedLongitude != null) {
+                    onSetLocation(selectedLatitude, selectedLongitude)
                 }
             },
-            enabled =
-                locationValid &&
-                !skyState.isLoading,
-            modifier =
-                Modifier.fillMaxWidth(),
-            colors =
-                ButtonDefaults
-                    .buttonColors(
-                        containerColor =
-                            StellarOrange,
-                        contentColor =
-                            StellarBackground
-                    )
-        ) {
-
-            Text(
-                text =
-                    "Utiliser cette localisation",
-                fontWeight =
-                    FontWeight.Bold
+            enabled = locationValid && !skyState.isLoading,
+            modifier = Modifier.fillMaxWidth(),
+            colors = ButtonDefaults.buttonColors(
+                containerColor = StellarOrange,
+                contentColor = StellarBackground
             )
+        ) {
+            Text("Utiliser cette localisation", fontWeight = FontWeight.Bold)
         }
 
-        Spacer(
-            Modifier.height(
-                20.dp
-            )
-        )
+        Spacer(Modifier.height(20.dp))
+
         when {
-
-            skyState.isLoading &&
-                sky == null -> {
-
-                Text(
-                    text =
-                        "Calcul des meilleures étoiles...",
-                    color = StellarMuted
-                )
+            skyState.isLoading && sky == null -> {
+                Text("Calcul des meilleures étoiles...", color = StellarMuted)
             }
 
             recommendations.isNotEmpty() -> {
-
                 Text(
-                    text =
-                        "4 meilleures étoiles de référence",
+                    text = "4 meilleures étoiles de référence",
                     color = StellarText,
-                    style =
-                        MaterialTheme.typography.titleMedium,
-                    fontWeight =
-                        FontWeight.Bold
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold
                 )
 
-                Spacer(
-                    Modifier.height(12.dp)
-                )
+                Spacer(Modifier.height(12.dp))
 
-                recommendations.forEachIndexed {
-                        index,
-                        candidate ->
-
-                    val selected =
-                        candidate.id == star?.id
-
+                recommendations.forEachIndexed { index, candidate ->
+                    val selected = candidate.id == star?.id
                     val score =
-                        candidate.alignmentScore
-                            ?.let {
-                                String.format(
-                                    java.util.Locale.FRANCE,
-                                    "%.0f %%",
-                                    it * 100.0
-                                )
-                            }
-                            ?: "—"
+                        candidate.alignmentScore?.let {
+                            String.format(java.util.Locale.FRANCE, "%.0f %%", it * 100.0)
+                        } ?: "—"
 
-                    val label =
-                        buildString {
-
-                            append(
-                                if (selected)
-                                    "\u2605 "
-                                else
-                                    "\u2606 "
+                    val label = buildString {
+                        append(if (selected) "★ " else "☆ ")
+                        append(candidate.name)
+                        if (index == 0) append(" · recommandée")
+                        append("\n")
+                        append(candidate.constellation)
+                        append(" · Alt. ")
+                        append(
+                            String.format(
+                                java.util.Locale.FRANCE,
+                                "%.1f°",
+                                candidate.altitudeDeg
                             )
-
-                            append(candidate.name)
-
-                            if (index == 0) {
-                                append(
-                                    " \u00B7 recommandée"
-                                )
-                            }
-
-                            append("\n")
-                            append(
-                                candidate.constellation
-                            )
-
-                            append(" \u00B7 Alt. ")
-
-                            append(
-                                String.format(
-                                    java.util.Locale.FRANCE,
-                                    "%.1f°",
-                                    candidate.altitudeDeg
-                                )
-                            )
-
-                            append(" \u00B7 mag ")
-
-                            append(
-                                String.format(
-                                    java.util.Locale.FRANCE,
-                                    "%.2f",
-                                    candidate.magnitude
-                                )
-                            )
-
-                            append(" \u00B7 score ")
-                            append(score)
-                        }
-
-                    if (selected) {
-
-                        Button(
-                            onClick = {
-                                onSelectStar(
-                                    candidate.id
-                                )
-                            },
-                            modifier =
-                                Modifier.fillMaxWidth(),
-                            colors =
-                                ButtonDefaults.buttonColors(
-                                    containerColor =
-                                        StellarOrange,
-                                    contentColor =
-                                        StellarBackground
-                                )
-                        ) {
-                            Text(
-                                text = label,
-                                fontWeight =
-                                    FontWeight.Bold
-                            )
-                        }
-
-                    } else {
-
-                        OutlinedButton(
-                            onClick = {
-                                onSelectStar(
-                                    candidate.id
-                                )
-                            },
-                            modifier =
-                                Modifier.fillMaxWidth()
-                        ) {
-                            Text(
-                                text = label
-                            )
-                        }
-                    }
-
-                    Spacer(
-                        Modifier.height(8.dp)
-                    )
-                }
-
-                star?.let { selectedStar ->
-
-                    Spacer(
-                        Modifier.height(12.dp)
-                    )
-
-                    Text(
-                        text =
-                            "ÉTOILE SÉLECTIONNÉE",
-                        color = StellarOrange,
-                        style =
-                            MaterialTheme.typography.labelLarge,
-                        fontWeight =
-                            FontWeight.Bold
-                    )
-
-                    Spacer(
-                        Modifier.height(8.dp)
-                    )
-
-                    Text(
-                        text =
-                            "\u2605 ${selectedStar.name}",
-                        color = StellarGreen,
-                        style =
-                            MaterialTheme.typography.headlineSmall,
-                        fontWeight =
-                            FontWeight.Bold
-                    )
-
-                    Spacer(
-                        Modifier.height(4.dp)
-                    )
-
-                    Text(
-                        text =
-                            "Constellation : ${selectedStar.constellation}",
-                        color = StellarMuted
-                    )
-
-                    Spacer(
-                        Modifier.height(14.dp)
-                    )
-
-                    InfoBlock(
-                        label = "Magnitude",
-                        value =
+                        )
+                        append(" · mag ")
+                        append(
                             String.format(
                                 java.util.Locale.FRANCE,
                                 "%.2f",
-                                selectedStar.magnitude
+                                candidate.magnitude
                             )
+                        )
+                        append(" · score ")
+                        append(score)
+                    }
+
+                    if (selected) {
+                        Button(
+                            onClick = { onSelectStar(candidate.id) },
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = StellarOrange,
+                                contentColor = StellarBackground
+                            )
+                        ) {
+                            Text(label, fontWeight = FontWeight.Bold)
+                        }
+                    } else {
+                        OutlinedButton(
+                            onClick = { onSelectStar(candidate.id) },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text(label)
+                        }
+                    }
+
+                    Spacer(Modifier.height(8.dp))
+                }
+
+                star?.let { selectedStar ->
+                    Spacer(Modifier.height(12.dp))
+
+                    Text(
+                        text = "ÉTOILE SÉLECTIONNÉE",
+                        color = StellarOrange,
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.Bold
+                    )
+
+                    Spacer(Modifier.height(8.dp))
+
+                    Text(
+                        text = "★ ${selectedStar.name}",
+                        color = StellarGreen,
+                        style = MaterialTheme.typography.headlineSmall,
+                        fontWeight = FontWeight.Bold
+                    )
+
+                    Spacer(Modifier.height(4.dp))
+
+                    Text(
+                        text = "Constellation : ${selectedStar.constellation}",
+                        color = StellarMuted
+                    )
+
+                    Spacer(Modifier.height(14.dp))
+
+                    InfoBlock(
+                        label = "Magnitude",
+                        value = String.format(
+                            java.util.Locale.FRANCE,
+                            "%.2f",
+                            selectedStar.magnitude
+                        )
                     )
 
                     InfoBlock(
                         label = "Altitude",
-                        value =
-                            String.format(
-                                java.util.Locale.FRANCE,
-                                "%.1f°",
-                                selectedStar.altitudeDeg
-                            )
+                        value = String.format(
+                            java.util.Locale.FRANCE,
+                            "%.1f°",
+                            selectedStar.altitudeDeg
+                        )
                     )
 
                     InfoBlock(
                         label = "Azimut",
-                        value =
-                            String.format(
-                                java.util.Locale.FRANCE,
-                                "%.1f° %s",
-                                selectedStar.azimuthDeg,
-                                selectedStar.azimuthDirection
-                            )
+                        value = String.format(
+                            java.util.Locale.FRANCE,
+                            "%.1f° %s",
+                            selectedStar.azimuthDeg,
+                            selectedStar.azimuthDirection
+                        )
                     )
 
                     InfoBlock(
                         label = "Score",
-                        value =
-                            selectedStar.alignmentScore
-                                ?.let {
-                                    String.format(
-                                        java.util.Locale.FRANCE,
-                                        "%.0f %%",
-                                        it * 100.0
-                                    )
-                                }
-                                ?: "Non disponible"
+                        value = selectedStar.alignmentScore?.let {
+                            String.format(java.util.Locale.FRANCE, "%.0f %%", it * 100.0)
+                        } ?: "Non disponible"
                     )
                 }
             }
 
-            sky?.status ==
-                "location_required" -> {
-
+            sky?.status == "location_required" -> {
                 Text(
-                    text =
-                        "Une position est nécessaire avant de choisir " +
-                        "l'étoile de référence.",
+                    text = "Une position est nécessaire avant de choisir l'étoile de référence.",
                     color = StellarOrange
                 )
 
-                Spacer(
-                    Modifier.height(12.dp)
-                )
+                Spacer(Modifier.height(12.dp))
 
                 Button(
                     onClick = onOpenSky,
-                    modifier =
-                        Modifier.fillMaxWidth(),
-                    colors =
-                        ButtonDefaults.buttonColors(
-                            containerColor =
-                                StellarOrange,
-                            contentColor =
-                                StellarBackground
-                        )
-                ) {
-                    Text(
-                        "Renseigner la position dans Ciel"
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = StellarOrange,
+                        contentColor = StellarBackground
                     )
+                ) {
+                    Text("Renseigner la position dans Ciel")
                 }
             }
 
             else -> {
-
                 Text(
-                    text =
-                        skyState.error
-                            ?: "Aucune étoile de référence disponible actuellement.",
+                    text = skyState.error
+                        ?: "Aucune étoile de référence disponible actuellement.",
                     color = StellarOrange
                 )
             }
         }
 
-        Spacer(
-            Modifier.height(18.dp)
-        )
+        Spacer(Modifier.height(18.dp))
 
         OutlinedButton(
             onClick = onRefresh,
-            enabled =
-                !skyState.isLoading,
-            modifier =
-                Modifier.fillMaxWidth()
+            enabled = !skyState.isLoading,
+            modifier = Modifier.fillMaxWidth()
         ) {
-            Text(
-                "Recalculer les étoiles"
-            )
+            Text("Recalculer les étoiles")
         }
 
-        Spacer(
-            Modifier.height(8.dp)
-        )
-
-
-        Spacer(
-            Modifier.height(16.dp)
-        )
+        Spacer(Modifier.height(16.dp))
 
         Row(
-            modifier =
-                Modifier.fillMaxWidth(),
-            horizontalArrangement =
-                Arrangement.spacedBy(10.dp)
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-
             OutlinedButton(
                 onClick = onPrevious,
-                modifier =
-                    Modifier.weight(1f)
+                modifier = Modifier.weight(1f)
             ) {
                 Text("Retour")
             }
 
             Button(
-                onClick = {
-                    star?.let {
-                        onNext(it.id)
-                    }
-                },
-                enabled =
-                    star != null,
-                modifier =
-                    Modifier.weight(1f),
-                colors =
-                    ButtonDefaults.buttonColors(
-                        containerColor =
-                            StellarOrange,
-                        contentColor =
-                            StellarBackground
-                    )
-            ) {
-                Text(
-                    text =
-                        star?.let {
-                            "Utiliser ${it.name}"
-                        }
-                            ?: "Choisir",
-                    fontWeight =
-                        FontWeight.Bold
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun PositionStep(
-    demoMode: Boolean,
-    mountFamily: String?,
-    startupTarget: String?,
-    mountTypeLabel: String?,
-    mountType: String?,
-    latitude: Double?,
-    onPrevious: () -> Unit,
-    onNext: () -> Unit
-) {
-    val family =
-        if (demoMode)
-            "eq"
-        else
-            mountFamily?.lowercase()
-
-    val isEq = family == "eq"
-    val isAz = family == "az"
-
-    val detected = isEq || isAz
-
-    val familyTitle =
-        when {
-            demoMode ->
-                "Monture \u00E9quatoriale de d\u00E9monstration"
-
-            isEq ->
-                "Monture \u00E9quatoriale d\u00E9tect\u00E9e"
-
-            isAz ->
-                "Monture Alt-Az d\u00E9tect\u00E9e"
-
-            else ->
-                "Type de monture non d\u00E9tect\u00E9"
-        }
-
-    val familyLabel =
-        when {
-            isEq ->
-                "\u00C9quatoriale (EQ)"
-
-            isAz ->
-                "Alt-Az (AZ)"
-
-            else ->
-                "Inconnu"
-        }
-
-    val target =
-        when {
-            demoMode ->
-                "P\u00F4le c\u00E9leste Nord"
-
-            startupTarget == "zenith" || isAz ->
-                "Z\u00E9nith"
-
-            startupTarget == "celestial_pole" || isEq ->
-                when {
-                    latitude == null ->
-                        "P\u00F4le c\u00E9leste"
-
-                    latitude >= 0.0 ->
-                        "P\u00F4le c\u00E9leste Nord"
-
-                    else ->
-                        "P\u00F4le c\u00E9leste Sud"
-                }
-
-            else ->
-                "Non disponible"
-        }
-
-    val instruction =
-        when {
-            demoMode ->
-                "En mode d\u00E9monstration, StellarPilot suppose une monture " +
-                    "\u00E9quatoriale positionn\u00E9e vers le p\u00F4le c\u00E9leste Nord."
-
-            isEq && latitude == null ->
-                "Oriente la monture vers le p\u00F4le c\u00E9leste. " +
-                    "StellarPilot d\u00E9terminera automatiquement Nord ou Sud " +
-                    "d\u00E8s que la latitude sera disponible."
-
-            isEq ->
-                "Oriente la monture vers le $target avant de poursuivre."
-
-            isAz ->
-                "Oriente le tube vers le z\u00E9nith avant de poursuivre."
-
-            else ->
-                "StellarPilot n'a pas encore pu d\u00E9terminer automatiquement " +
-                    "la famille de la monture."
-        }
-
-    AssistantCard(
-        title = "Position initiale",
-        subtitle =
-            if (demoMode)
-                "Mode d\u00E9monstration \u2022 aucun mat\u00E9riel requis"
-            else
-                "D\u00E9tection automatique via INDI / OnStep"
-    ) {
-
-        Text(
-            text = familyTitle,
-            color =
-                if (detected)
-                    StellarGreen
-                else
-                    StellarOrange,
-            style = MaterialTheme.typography.titleMedium,
-            fontWeight = FontWeight.Bold
-        )
-
-        Spacer(Modifier.height(12.dp))
-
-        InfoBlock(
-            label = "Famille",
-            value = familyLabel
-        )
-
-        InfoBlock(
-            label =
-                if (demoMode)
-                    "Type"
-                else
-                    "Type d\u00E9tect\u00E9",
-            value =
-                if (demoMode)
-                    "Monture de d\u00E9monstration (EQ)"
-                else
-                    mountTypeLabel
-                        ?: mountType
-                        ?: "Non disponible"
-        )
-
-        InfoBlock(
-            label = "Position de d\u00E9part",
-            value = target
-        )
-
-        if (detected) {
-
-            Spacer(Modifier.height(18.dp))
-
-            Image(
-                painter = painterResource(
-                    id =
-                        if (isEq)
-                            R.drawable.ic_mount_eq
-                        else
-                            R.drawable.ic_mount_az
-                ),
-                contentDescription =
-                    if (isEq)
-                        "Monture \u00E9quatoriale point\u00E9e vers le p\u00F4le c\u00E9leste"
-                    else
-                        "Monture Alt-Az point\u00E9e vers le z\u00E9nith",
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(260.dp),
-                contentScale = ContentScale.Fit
-            )
-
-            Spacer(Modifier.height(18.dp))
-        }
-
-        Card(
-            modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(18.dp),
-            colors = CardDefaults.cardColors(
-                containerColor =
-                    StellarSurfaceRaised
-            ),
-            border = BorderStroke(
-                1.dp,
-                if (detected)
-                    StellarGreen.copy(alpha = 0.45f)
-                else
-                    StellarOrange.copy(alpha = 0.45f)
-            )
-        ) {
-            Column(
-                modifier = Modifier.padding(16.dp)
-            ) {
-
-                Text(
-                    text = "Consigne",
-                    color = StellarOrange,
-                    style = MaterialTheme.typography.labelLarge,
-                    fontWeight = FontWeight.Bold
-                )
-
-                Spacer(Modifier.height(6.dp))
-
-                Text(
-                    text = instruction,
-                    color = StellarText
-                )
-            }
-        }
-
-        if (
-            !demoMode &&
-            isEq &&
-            latitude == null
-        ) {
-            Spacer(Modifier.height(10.dp))
-
-            Text(
-                text =
-                    "Latitude GPS indisponible : l'h\u00E9misph\u00E8re " +
-                    "n'est pas encore d\u00E9termin\u00E9 automatiquement.",
-                color = StellarMuted,
-                style = MaterialTheme.typography.bodySmall
-            )
-        }
-
-        Spacer(Modifier.height(20.dp))
-
-        if (!demoMode) {
-            Button(
-                onClick = onNext,
-                enabled = detected,
-                modifier = Modifier.fillMaxWidth(),
+                onClick = { star?.let { onNext(it.id) } },
+                enabled = star != null,
+                modifier = Modifier.weight(1f),
                 colors = ButtonDefaults.buttonColors(
                     containerColor = StellarOrange,
                     contentColor = StellarBackground
                 )
             ) {
                 Text(
-                    text =
-                        if (detected)
-                            "J'ai positionn\u00E9 la monture"
-                        else
-                            "Type de monture requis",
+                    text = star?.let { "Utiliser ${it.name}" } ?: "Choisir",
                     fontWeight = FontWeight.Bold
                 )
             }
         }
-
-        Spacer(Modifier.height(12.dp))
-
-        PreviousButton(onPrevious)
     }
 }
 
@@ -1540,7 +823,6 @@ private fun InfoBlock(
             .padding(vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-
         Text(
             text = label,
             modifier = Modifier.weight(1f),
@@ -1568,11 +850,10 @@ private fun BahtinovStep(
         title = "Mise au point",
         subtitle = "Masque de Bahtinov"
     ) {
-
         Text(
             text =
-                "Si la mise au point a d\u00E9j\u00E0 \u00E9t\u00E9 r\u00E9alis\u00E9e et n'a pas " +
-                "boug\u00E9, cette \u00E9tape peut \u00EAtre saut\u00E9e.",
+                "Si la mise au point a déjà été réalisée et n'a pas bougé, " +
+                    "cette étape peut être sautée.",
             color = StellarText
         )
 
@@ -1586,10 +867,7 @@ private fun BahtinovStep(
                 contentColor = StellarBackground
             )
         ) {
-            Text(
-                "Faire la mise au point Bahtinov",
-                fontWeight = FontWeight.Bold
-            )
+            Text("Faire la mise au point Bahtinov", fontWeight = FontWeight.Bold)
         }
 
         Spacer(Modifier.height(10.dp))
@@ -1598,7 +876,7 @@ private fun BahtinovStep(
             onClick = onKeepFocus,
             modifier = Modifier.fillMaxWidth()
         ) {
-            Text("Conserver le r\u00E9glage actuel")
+            Text("Conserver le réglage actuel")
         }
 
         Spacer(Modifier.height(14.dp))
@@ -1615,13 +893,12 @@ private fun DarksStep(
 ) {
     AssistantCard(
         title = "Darks",
-        subtitle = cameraName ?: "Cam\u00E9ra non identifi\u00E9e"
+        subtitle = cameraName ?: "Caméra non identifiée"
     ) {
-
         Text(
             text =
-                "R\u00E8gle StellarPilot : un master dark existant pourra \u00EAtre " +
-                "r\u00E9utilis\u00E9 tant que la cam\u00E9ra n'a pas chang\u00E9.",
+                "Règle StellarPilot : un master dark existant pourra être réutilisé " +
+                    "tant que la caméra n'a pas changé.",
             color = StellarText
         )
 
@@ -1629,8 +906,8 @@ private fun DarksStep(
 
         Text(
             text =
-                "Si une autre cam\u00E9ra est d\u00E9tect\u00E9e, l'ancien master dark " +
-                "sera invalid\u00E9 et de nouveaux darks seront obligatoires.",
+                "Si une autre caméra est détectée, l'ancien master dark sera invalidé " +
+                    "et de nouveaux darks seront obligatoires.",
             color = StellarMuted,
             style = MaterialTheme.typography.bodySmall
         )
@@ -1645,10 +922,7 @@ private fun DarksStep(
                 contentColor = StellarBackground
             )
         ) {
-            Text(
-                "Cr\u00E9er / valider les darks",
-                fontWeight = FontWeight.Bold
-            )
+            Text("Créer / valider les darks", fontWeight = FontWeight.Bold)
         }
 
         Spacer(Modifier.height(10.dp))
@@ -1658,15 +932,15 @@ private fun DarksStep(
             modifier = Modifier.fillMaxWidth(),
             enabled = false
         ) {
-            Text("R\u00E9utiliser le master dark compatible")
+            Text("Réutiliser le master dark compatible")
         }
 
         Spacer(Modifier.height(8.dp))
 
         Text(
             text =
-                "La r\u00E9utilisation sera activ\u00E9e d\u00E8s que StellarPilot " +
-                "enregistrera les m\u00E9tadonn\u00E9es du premier master dark.",
+                "La réutilisation sera activée dès que StellarPilot enregistrera " +
+                    "les métadonnées du premier master dark.",
             color = StellarMuted,
             style = MaterialTheme.typography.bodySmall
         )
@@ -1683,14 +957,13 @@ private fun ReadyStep(
     onOpenSky: () -> Unit
 ) {
     AssistantCard(
-        title = "Pr\u00E9paration termin\u00E9e",
-        subtitle = "Le syst\u00E8me est pr\u00EAt pour l'observation"
+        title = "Préparation terminée",
+        subtitle = "Le système est prêt pour l'observation"
     ) {
-
         Text(
             text =
-                "Lorsque toutes les fonctions seront connect\u00E9es au serveur, " +
-                "cet \u00E9cran r\u00E9capitulera les validations de la session.",
+                "Lorsque toutes les fonctions seront connectées au serveur, " +
+                    "cet écran récapitulera les validations de la session.",
             color = StellarMuted
         )
 
@@ -1704,10 +977,7 @@ private fun ReadyStep(
                 contentColor = StellarBackground
             )
         ) {
-            Text(
-                "Passer \u00E0 Ciel & Cible",
-                fontWeight = FontWeight.Bold
-            )
+            Text("Passer à Ciel & Cible", fontWeight = FontWeight.Bold)
         }
 
         Spacer(Modifier.height(12.dp))
@@ -1726,13 +996,9 @@ private fun PrototypeStep(
 ) {
     AssistantCard(
         title = title,
-        subtitle = "Workflow pr\u00E9par\u00E9 \u2022 int\u00E9gration serveur \u00E0 venir"
+        subtitle = "Workflow préparé • intégration serveur à venir"
     ) {
-
-        Text(
-            text = description,
-            color = StellarText
-        )
+        Text(text = description, color = StellarText)
 
         Spacer(Modifier.height(20.dp))
 
@@ -1744,10 +1010,7 @@ private fun PrototypeStep(
                 contentColor = StellarBackground
             )
         ) {
-            Text(
-                action,
-                fontWeight = FontWeight.Bold
-            )
+            Text(action, fontWeight = FontWeight.Bold)
         }
 
         Spacer(Modifier.height(10.dp))
@@ -1765,17 +1028,10 @@ private fun AssistantCard(
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(22.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = StellarSurface
-        ),
-        border = BorderStroke(
-            1.dp,
-            StellarBorder
-        )
+        colors = CardDefaults.cardColors(containerColor = StellarSurface),
+        border = BorderStroke(1.dp, StellarBorder)
     ) {
-        Column(
-            modifier = Modifier.padding(20.dp)
-        ) {
+        Column(modifier = Modifier.padding(20.dp)) {
             Text(
                 text = title,
                 style = MaterialTheme.typography.titleLarge,
@@ -1807,34 +1063,20 @@ private fun StepBadge(
 ) {
     Surface(
         shape = RoundedCornerShape(50),
-        color =
-            if (active)
-                StellarOrange.copy(alpha = 0.15f)
-            else
-                StellarSurfaceRaised,
+        color = if (active) {
+            StellarOrange.copy(alpha = 0.15f)
+        } else {
+            StellarSurfaceRaised
+        },
         border = BorderStroke(
             1.dp,
-            if (active || completed)
-                StellarOrange
-            else
-                StellarBorder
+            if (active || completed) StellarOrange else StellarBorder
         )
     ) {
         Text(
-            text =
-                if (completed)
-                    "\u2713 $name"
-                else
-                    "$number $name",
-            modifier = Modifier.padding(
-                horizontal = 12.dp,
-                vertical = 7.dp
-            ),
-            color =
-                if (active || completed)
-                    StellarOrange
-                else
-                    StellarMuted,
+            text = if (completed) "✓ $name" else "$number $name",
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
+            color = if (active || completed) StellarOrange else StellarMuted,
             style = MaterialTheme.typography.labelMedium,
             fontWeight = FontWeight.Bold
         )
@@ -1852,13 +1094,9 @@ private fun PrepStatusRow(
             .padding(vertical = 7.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-
         Box(
             modifier = Modifier
-                .background(
-                    statusColor(status),
-                    CircleShape
-                )
+                .background(statusColor(status), CircleShape)
                 .padding(5.dp)
         )
 
@@ -1890,9 +1128,7 @@ private fun PreviousButton(
     }
 }
 
-private fun goodStatus(
-    value: String
-): Boolean =
+private fun goodStatus(value: String): Boolean =
     value.lowercase() in setOf(
         "online",
         "ready",
@@ -1901,9 +1137,7 @@ private fun goodStatus(
         "connected"
     )
 
-private fun statusColor(
-    value: String
-): Color =
+private fun statusColor(value: String): Color =
     when (value.lowercase()) {
         "online",
         "ready",
