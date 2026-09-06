@@ -1,9 +1,7 @@
 package fr.stellarpilot.app.feature.preparation
 
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -54,10 +52,6 @@ private val assistantSteps = listOf(
     "Bilan"
 )
 
-private val assistantDirections = listOf(
-    "N", "NE", "E", "SE", "S", "SO", "O", "NO"
-)
-
 
 @Composable
 fun AssistantFinalScreen(
@@ -65,7 +59,6 @@ fun AssistantFinalScreen(
     connectionViewModel: ConnectionViewModel = viewModel()
 ) {
     var step by rememberSaveable { mutableIntStateOf(0) }
-    var selectedOrientation by rememberSaveable { mutableStateOf<String?>(null) }
     var selectedStarId by rememberSaveable { mutableStateOf<String?>(null) }
     var maskInstalled by rememberSaveable { mutableStateOf(false) }
     var maskRemoved by rememberSaveable { mutableStateOf(false) }
@@ -152,8 +145,6 @@ fun AssistantFinalScreen(
             )
 
             1 -> AssistantAstrometryStep(
-                selectedOrientation = selectedOrientation,
-                onOrientation = { selectedOrientation = it },
                 state = astrometryState,
                 mountState = mountState,
                 onCapture = {
@@ -219,7 +210,6 @@ fun AssistantFinalScreen(
             else -> AssistantSummaryStep(
                 connectionViewModel = connectionViewModel,
                 mountState = mountState,
-                orientation = selectedOrientation,
                 astrometryState = astrometryState,
                 selectedStar = selectedStar,
                 centeringState = centeringState,
@@ -250,7 +240,6 @@ private fun AssistantConnectionStep(
     val cameraReady = camera?.status?.lowercase() in setOf("ready", "ok", "online")
     val gpsReady = gps?.status?.lowercase() in setOf("fix", "available")
     val timeReady = mountState.timeSyncVerified
-    val ready = server != null && mountReady && cameraReady && gpsReady && timeReady
 
     AssistantCard("Connexion et contrôle du setup") {
         StatusLine("Serveur StellarPilot", server?.status == "ok" || server?.status == "ready")
@@ -306,8 +295,6 @@ private fun AssistantConnectionStep(
 
 @Composable
 private fun AssistantAstrometryStep(
-    selectedOrientation: String?,
-    onOrientation: (String) -> Unit,
     state: CameraPreviewUiState,
     mountState: MountDiagnosticsUiState,
     onCapture: () -> Unit,
@@ -316,16 +303,15 @@ private fun AssistantAstrometryStep(
 ) {
     val solved = state.solveStatus == "solved"
     val synced = state.mountSyncStatus == "synced"
-    val validated = solved && synced && selectedOrientation != null
+    val validated = solved && synced
 
-    AssistantCard("Astrométrie et orientation") {
+    AssistantCard("Astrométrie") {
         Text(
-            "Indiquez la direction approximative du tube puis faites une pose de 4 s. " +
-                "StellarPilot résout le champ et synchronise OnStep.",
+            "Positionnez librement la monture avec OnStep, MLAstro Hub ou une autre commande. " +
+                "StellarPilot lit automatiquement AD/DEC via INDI comme indice facultatif, " +
+                "puis résout le champ réel de l'image. Aucun choix N/NE/E/... n'est nécessaire.",
             color = StellarText
         )
-        Spacer(Modifier.height(10.dp))
-        DirectionSelector(selectedOrientation, onOrientation)
         Spacer(Modifier.height(12.dp))
 
         StellarImagePreview(
@@ -356,15 +342,14 @@ private fun AssistantAstrometryStep(
 
         Spacer(Modifier.height(14.dp))
         Text(
-            "Déplacement manuel de la monture",
+            "Position courante de la monture",
             color = StellarText,
             fontWeight = FontWeight.Bold
         )
         Text(
-            "Pour un ajustement manuel précis, utilisez MLAstro Hub via le Wi-Fi OnStep.",
+            "Ces coordonnées servent uniquement d'indice au solveur ; la solution astrométrique de l'image reste la référence.",
             color = StellarMuted
         )
-
 
         Spacer(Modifier.height(8.dp))
         StatusValue(
@@ -703,7 +688,7 @@ private fun AssistantDarkStep(
                 ) {
                     Text("DÉMARRER 10 DARKS")
                 }
-                        } else if (!state.complete) {
+            } else if (!state.complete) {
                 val progress =
                     if (state.requestedCount > 0) {
                         state.capturedCount.toFloat() /
@@ -720,9 +705,7 @@ private fun AssistantDarkStep(
                     color = StellarOrange
                 )
 
-                Spacer(
-                    Modifier.height(8.dp)
-                )
+                Spacer(Modifier.height(8.dp))
 
                 Text(
                     "Acquisition automatique • ${state.capturedCount}/${state.requestedCount}",
@@ -730,17 +713,13 @@ private fun AssistantDarkStep(
                     fontWeight = FontWeight.Bold
                 )
 
-                Spacer(
-                    Modifier.height(3.dp)
-                )
+                Spacer(Modifier.height(3.dp))
 
                 Text(
-                    state.message
-                        ?: "Acquisition en cours…",
+                    state.message ?: "Acquisition en cours…",
                     color = StellarMuted
                 )
             }
-
 
             state.message?.let {
                 Spacer(Modifier.height(8.dp))
@@ -767,7 +746,6 @@ private fun AssistantDarkStep(
 private fun AssistantSummaryStep(
     connectionViewModel: ConnectionViewModel,
     mountState: MountDiagnosticsUiState,
-    orientation: String?,
     astrometryState: CameraPreviewUiState,
     selectedStar: SkyStar?,
     centeringState: AssistantCenteringUiState,
@@ -792,7 +770,6 @@ private fun AssistantSummaryStep(
         StatusLine("GPS", gpsOk)
         StatusLine("Heure OnStep", mountState.timeSyncVerified)
         StatusLine("Astrométrie + SYNC", astrometryOk)
-        StatusLine("Orientation", orientation != null, orientation ?: "—")
         StatusLine(
             "Étoile de focus",
             selectedStar != null && centeringState.centered,
@@ -839,42 +816,6 @@ private fun frenchDirection(value: String): String = when (value.uppercase()) {
     "W" -> "O"
     "NW" -> "NO"
     else -> value.uppercase()
-}
-
-
-@Composable
-private fun DirectionSelector(
-    selected: String?,
-    onSelect: (String) -> Unit
-) {
-    listOf(
-        listOf("NO", "N", "NE"),
-        listOf("O", "E"),
-        listOf("SO", "S", "SE")
-    ).forEach { row ->
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceEvenly
-        ) {
-            row.forEach { direction ->
-                if (selected == direction) {
-                    Button(
-                        onClick = { onSelect(direction) },
-                        colors = assistantPrimaryButtonColors()
-                    ) {
-                        Text(direction, fontWeight = FontWeight.Bold)
-                    }
-                } else {
-                    OutlinedButton(
-                        onClick = { onSelect(direction) }
-                    ) {
-                        Text(direction, fontWeight = FontWeight.Bold)
-                    }
-                }
-            }
-        }
-        Spacer(Modifier.height(4.dp))
-    }
 }
 
 
@@ -941,7 +882,7 @@ private fun NavigationButtons(
     Spacer(Modifier.height(6.dp))
     Button(
         onClick = onContinue,
-        enabled = true,
+        enabled = continueEnabled,
         modifier = Modifier.fillMaxWidth(),
         colors = assistantPrimaryButtonColors()
     ) {
