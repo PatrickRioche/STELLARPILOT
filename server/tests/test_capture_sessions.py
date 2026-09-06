@@ -30,6 +30,14 @@ class FakeIndi:
             "camera": "Fake CCD",
         }
 
+    def mount_location(self):
+        return {
+            "status": "available",
+            "latitude": 47.45,
+            "longitude": 0.616667,
+            "altitude": 70.0,
+        }
+
 
 class FakeSolver:
     def __init__(self, ra_deg, dec_deg):
@@ -73,6 +81,44 @@ def test_session_tree_is_below_server_runtime_root(tmp_path):
     assert (session_dir / "stack").exists()
     assert (session_dir / "previews").exists()
     assert (session_dir / "session.json").exists()
+
+
+def test_session_persists_onstep_location_when_gps_has_no_fix(
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        "app.imaging.sessions.gps_service.status",
+        lambda: {
+            "status": "unavailable",
+            "latitude": None,
+            "longitude": None,
+            "altitude": None,
+        },
+    )
+
+    service = CaptureSessionService(
+        runtime_root=tmp_path / "tmp",
+        galleries_root=tmp_path / "galleries",
+        indi=FakeIndi(),
+        solver=FakeSolver(75.0, 20.0),
+    )
+
+    session = service.create_session(
+        target_name="Polaris",
+        target_ra_hours=2.5,
+        target_dec_deg=89.3,
+        exposure_s=4.0,
+    )
+
+    assert session["observation"] == {
+        "latitude": 47.45,
+        "longitude": 0.616667,
+        "altitude_m": 70.0,
+        "location_source": "onstep",
+        "place_name": None,
+    }
+    assert service.get_session(session["id"])["observation"] == session["observation"]
 
 
 def test_center_step_marks_exact_target_centered(tmp_path):
