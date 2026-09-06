@@ -3,6 +3,7 @@ package fr.stellarpilot.app.ui.components
 import android.graphics.BitmapFactory
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.aspectRatio
@@ -42,7 +43,10 @@ fun StellarImagePreview(
     contentDescription: String,
     loadingText: String? = null,
     emptyText: String = "Aucune image",
-    showCrosshair: Boolean = false
+    showCrosshair: Boolean = false,
+    modifier: Modifier = Modifier,
+    fullScreen: Boolean = false,
+    onTap: (() -> Unit)? = null
 ) {
     val bitmap = remember(imageBytes) {
         imageBytes?.let { bytes ->
@@ -59,13 +63,20 @@ fun StellarImagePreview(
     var viewportWidth by remember { mutableFloatStateOf(0f) }
     var viewportHeight by remember { mutableFloatStateOf(0f) }
 
+    val viewportModifier =
+        if (fullScreen) {
+            modifier.fillMaxSize()
+        } else {
+            modifier
+                .fillMaxWidth()
+                .aspectRatio(URANUS_C_ASPECT_RATIO)
+        }
+
     Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .aspectRatio(URANUS_C_ASPECT_RATIO)
+        modifier = viewportModifier
             .background(
                 Color.Black,
-                RoundedCornerShape(12.dp)
+                RoundedCornerShape(if (fullScreen) 0.dp else 12.dp)
             )
             .onSizeChanged { size ->
                 viewportWidth = size.width.toFloat()
@@ -102,6 +113,13 @@ fun StellarImagePreview(
                                 )
                                 scale = nextScale
                             }
+                        }
+                    }
+                    .pointerInput(imageBytes, onTap) {
+                        if (onTap != null) {
+                            detectTapGestures(
+                                onTap = { onTap() }
+                            )
                         }
                     }
                     .graphicsLayer {
