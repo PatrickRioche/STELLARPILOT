@@ -10,11 +10,26 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
 import java.util.concurrent.TimeUnit
 
+
 data class CameraCaptureResult(
     val imagePath: String,
     val exposureSeconds: Double,
     val camera: String?
 )
+
+
+data class CameraQualityResult(
+    val status: String,
+    val classification: String?,
+    val score: Int?,
+    val qualityLabel: String?,
+    val starCount: Int?,
+    val saturatedPercent: Double?,
+    val recommendedExposureFactor: Double?,
+    val astrometryReady: Boolean,
+    val detail: String?
+)
+
 
 data class DetectedStar(
     val x: Double,
@@ -22,6 +37,7 @@ data class DetectedStar(
     val ra: Double? = null,
     val dec: Double? = null
 )
+
 
 data class PlateSolveResult(
     val status: String,
@@ -35,6 +51,7 @@ data class PlateSolveResult(
     val detail: String?,
     val solveDurationMs: Int? = null
 )
+
 
 class CameraPreviewApiClient {
 
@@ -67,10 +84,6 @@ class CameraPreviewApiClient {
                             .toMediaType()
                     )
 
-            /*
-             * Connexion d?di?e ? la capture.
-             * Aucun retry automatique : une requ?te = une pose cam?ra.
-             */
             val captureTimeoutMs =
                 (exposureSeconds * 1000.0).toLong() +
                     30_000L
@@ -180,13 +193,6 @@ class CameraPreviewApiClient {
                         "/camera/preview.jpg?t=" +
                         System.currentTimeMillis()
 
-                /*
-                 * La preview utilise volontairement
-                 * une connexion HTTP totalement neuve.
-                 *
-                 * Une tentative ne peut pas bloquer
-                 * plus de 10 secondes.
-                 */
                 val previewClient =
                     OkHttpClient.Builder()
                         .connectTimeout(
@@ -225,34 +231,17 @@ class CameraPreviewApiClient {
                     "PREVIEW ATTEMPT $attempt/3"
                 )
 
-                Log.i(
-                    "StellarPreview",
-                    "PREVIEW $url"
-                )
-
                 try {
-
                     val bytes =
                         previewClient
                             .newCall(request)
                             .execute()
                             .use { response ->
-
-                                Log.i(
-                                    "StellarPreview",
-                                    "PREVIEW HTTP ${response.code}"
-                                )
-
-                                check(
-                                    response.isSuccessful
-                                ) {
+                                check(response.isSuccessful) {
                                     "HTTP ${response.code} sur /camera/preview.jpg"
                                 }
-
                                 response.body?.bytes()
-                                    ?: error(
-                                        "Image camera vide"
-                                    )
+                                    ?: error("Image camera vide")
                             }
 
                     Log.i(
@@ -261,11 +250,8 @@ class CameraPreviewApiClient {
                     )
 
                     return@withContext bytes
-
                 } catch (error: Exception) {
-
                     lastError = error
-
                     Log.w(
                         "StellarPreview",
                         "PREVIEW ATTEMPT $attempt/3 FAILED: " +
@@ -278,14 +264,93 @@ class CameraPreviewApiClient {
             error(
                 "Image camera non recue apres " +
                     "3 tentatives (~30 s). " +
-                    (
-                        lastError?.message
-                            ?: "Erreur reseau inconnue"
-                    )
+                    (lastError?.message ?: "Erreur reseau inconnue")
             )
         }
 
-suspend fun solve(
+    suspend fun analyzeQuality(
+        serverBaseUrl: String,
+        imagePath: String
+    ): CameraQualityResult =
+        withContext(Dispatchers.IO) {
+            val url =
+                serverBaseUrl.trimEnd('/') +
+                    "/camera/quality"
+
+            val payload =
+                JSONObject()
+                    .put("image", imagePath)
+                    .toString()
+                    .toRequestBody(
+                        "application/json; charset=utf-8"
+                            .toMediaType()
+                    )
+
+            val request =
+                Request.Builder()
+                    .url(url)
+                    .header("Connection", "close")
+                    .post(payload)
+                    .build()
+
+            client.newCall(request)
+                .execute()
+                .use { response ->
+                    check(response.isSuccessful) {
+                        "HTTP ${response.code} sur /camera/quality"
+                    }
+                    val body = response.body?.string()
+                        ?: error("Réponse /camera/quality vide")
+                    val json = JSONObject(body)
+
+                    fun nullableDouble(key: String): Double? {
+                        if (!json.has(key) || json.isNull(key)) return null
+                        return json.optDouble(key, Double.NaN)
+                            .takeUnless { it.isNaN() }
+                    }
+
+                    CameraQualityResult(
+                        status = json.optString("status", "error"),
+                        classification =
+                            json.optString("classification")
+                                .takeIf { it.isNotBlank() },
+                        score =
+                            if (
+                                json.has("astrometry_score") &&
+                                !json.isNull("astrometry_score")
+                            ) {
+                                json.optInt("astrometry_score")
+                            } else {
+                                null
+                            },
+                        qualityLabel =
+                            json.optString("quality_label")
+                                .takeIf { it.isNotBlank() },
+                        starCount =
+                            if (
+                                json.has("star_count") &&
+                                !json.isNull("star_count")
+                            ) {
+                                json.optInt("star_count")
+                            } else {
+                                null
+                            },
+                        saturatedPercent =
+                            nullableDouble("saturated_percent"),
+                        recommendedExposureFactor =
+                            nullableDouble(
+                                "recommended_exposure_factor"
+                            ),
+                        astrometryReady =
+                            json.optBoolean("astrometry_ready", false),
+                        detail =
+                            json.optString("detail")
+                                .takeIf { it.isNotBlank() }
+                    )
+                }
+        }
+
+    suspend fun solve(
         serverBaseUrl: String,
         imagePath: String
     ): PlateSolveResult =

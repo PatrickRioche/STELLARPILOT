@@ -50,6 +50,7 @@ class CatalogService:
                 "status": "unavailable",
                 "database": str(self.database),
                 "database_name": self.database.name,
+                "database_size_bytes": None,
                 "source": None,
                 "source_version": None,
                 "language": "fr",
@@ -62,6 +63,11 @@ class CatalogService:
                 "types": {},
                 "type_details": [],
             }
+
+        try:
+            database_size_bytes = self.database.stat().st_size
+        except OSError:
+            database_size_bytes = None
 
         with self._connect() as connection:
 
@@ -137,6 +143,7 @@ class CatalogService:
             "status": "ready",
             "database": str(self.database),
             "database_name": self.database.name,
+            "database_size_bytes": database_size_bytes,
 
             "source": (
                 source_row["source"]

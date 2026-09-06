@@ -1,6 +1,10 @@
+import shutil
 import subprocess
 from datetime import datetime, timezone
+from pathlib import Path
 
+
+SERVER_ROOT = Path(__file__).resolve().parents[2]
 
 
 def run_command(args: list[str], timeout: float = 3.0) -> str:
@@ -18,6 +22,38 @@ def run_command(args: list[str], timeout: float = 3.0) -> str:
 
 
 class SystemService:
+    @staticmethod
+    def storage_status() -> dict:
+        try:
+            usage = shutil.disk_usage(SERVER_ROOT)
+        except OSError as exc:
+            return {
+                "status": "unavailable",
+                "path": str(SERVER_ROOT),
+                "total_bytes": None,
+                "used_bytes": None,
+                "available_bytes": None,
+                "used_percent": None,
+                "detail": str(exc),
+            }
+
+        usable_bytes = usage.used + usage.free
+        used_percent = (
+            round((usage.used / usable_bytes) * 100.0, 1)
+            if usable_bytes > 0
+            else None
+        )
+
+        return {
+            "status": "ready",
+            "path": str(SERVER_ROOT),
+            "total_bytes": usage.total,
+            "used_bytes": usage.used,
+            "available_bytes": usage.free,
+            "used_percent": used_percent,
+            "detail": None,
+        }
+
     def status(self) -> dict:
         now = datetime.now().astimezone()
 
@@ -52,6 +88,7 @@ class SystemService:
             "time_utc": datetime.now(timezone.utc).isoformat(),
             "time_synced": synchronized,
             "time_source": source,
+            "storage": self.storage_status(),
         }
 
 

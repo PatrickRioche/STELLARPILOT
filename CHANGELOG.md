@@ -2,6 +2,53 @@
 
 Ce fichier suit les changements des releases publiées.
 
+## v0.6.0-poc — 2026-09-03
+
+Jalon de préparation des essais réels de motorisation équatoriale et de calibration Bahtinov.
+
+### Motorisation / OnStep
+
+- nouvel écran de diagnostic de la monture dans l'assistant de préparation ;
+- lecture réelle de `/mount/status` avec RA, DEC, état INDI, tracking et cible ;
+- petits GOTO de test RA/DEC à partir de la position réellement publiée par OnStep ;
+- pointage de l'étoile de mise au point via `/mount/goto` ;
+- activation du suivi sidéral lors du GOTO ;
+- avertissement spécifique lorsque DEC reste exactement à ±90° afin d'éviter de réutiliser aveuglément un hint astrométrique figé.
+
+### Première astrométrie
+
+- pose de départ portée à 4 s dans le nouveau workflow de test ;
+- affichage du référentiel optique mesuré le 2 septembre 2026 ;
+- échelle empirique de référence : environ 1,2183 arcsec/pixel ;
+- champ associé : environ 1,305° × 0,738° ;
+- documentation wiki du calcul de l'échantillonnage et de la focale effective.
+
+### Bahtinov
+
+- nouvel écran de collecte des références de mise au point ;
+- choix d'une étoile brillante puis GOTO et tracking ;
+- poses Bahtinov rapides sélectionnables ;
+- étiquettes manuelles : très mauvais, mauvais, moyen, bon, optimum, mauvais de l'autre côté et ignorer ;
+- chaque étiquette déclenche une nouvelle capture FITS via le pipeline existant ;
+- journal JSONL Android reliant l'étiquette, la cible, l'exposition et le chemin du FITS archivé sur le Raspberry Pi ;
+- préparation du futur calcul automatique d'erreur à partir des trois aigrettes.
+
+### Workflow
+
+Le flux V0.6 de test devient :
+
+`Connexion → Moteurs → Astrométrie → Étoile → Bahtinov → Prêt`.
+
+Les darks sont volontairement différés. Le centrage doit devenir une fonction interne automatique associée aux GOTO plutôt qu'un écran utilisateur indépendant.
+
+### Validation attendue
+
+- compilation simulationDebug et deviceDebug via CI ;
+- validation matérielle avec monture EQ et moteurs connectés ;
+- validation de RA/DEC hors du pôle ;
+- GOTO + tracking vers une étoile de focus ;
+- constitution d'une série Bahtinov des deux côtés du foyer.
+
 ## v0.5.0-poc — 2026-08-24
 
 Jalon POC validant la capture caméra réelle, l'aperçu couleur et l'intégration de l'astrométrie dans l'application Android.

@@ -24,8 +24,14 @@ class MountGotoCommandClient(
     suspend fun gotoMount(
         raHours: Double,
         decDeg: Double,
-        trackingMode: String
+        trackingMode: String,
+        coordinateFrame: String = "j2000"
     ): String = withContext(Dispatchers.IO) {
+        val normalizedFrame = coordinateFrame.trim().lowercase()
+        require(normalizedFrame in setOf("j2000", "mount")) {
+            "coordinateFrame doit être j2000 ou mount"
+        }
+
         val payload =
             JSONObject()
                 .put("ra", raHours)
@@ -43,11 +49,17 @@ class MountGotoCommandClient(
                         .toMediaType()
                 )
 
+        val endpoint =
+            if (normalizedFrame == "mount") {
+                "/mount/goto-mount-frame"
+            } else {
+                "/mount/goto"
+            }
+
         val request =
             Request.Builder()
                 .url(
-                    baseUrl.trimEnd('/') +
-                        "/mount/goto"
+                    baseUrl.trimEnd('/') + endpoint
                 )
                 .post(body)
                 .build()
@@ -56,14 +68,14 @@ class MountGotoCommandClient(
             .execute()
             .use { response ->
                 check(response.isSuccessful) {
-                    "HTTP ${response.code} sur /mount/goto"
+                    "HTTP ${response.code} sur $endpoint"
                 }
 
                 val responseBody =
                     response.body
                         ?.string()
                         ?: error(
-                            "Reponse /mount/goto vide"
+                            "Reponse $endpoint vide"
                         )
 
                 val result =

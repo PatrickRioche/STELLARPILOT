@@ -36,8 +36,8 @@ android {
         minSdk = 26
         targetSdk = 36
 
-        versionCode = 5
-        versionName = "0.5.0"
+        versionCode = 6
+        versionName = "0.6.0"
 
         buildConfigField(
             "String",
@@ -77,10 +77,14 @@ android {
                 "\"DEVICE\""
             )
 
+            // Development / bench default. The Raspberry Pi is reached on the
+            // LAN at 192.168.1.46. The field hotspot remains 10.42.0.1 and can
+            // be selected again once the V0.6 connection screen exposes the
+            // server-address selector.
             buildConfigField(
                 "String",
                 "SERVER_BASE_URL",
-                "\"http://10.42.0.1:8000/\""
+                "\"http://192.168.1.46:8000/\""
             )
         }
     }

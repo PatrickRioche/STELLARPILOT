@@ -24,7 +24,15 @@ if ! find /usr/share/astrometry -type f -name 'index-*.fits' -print -quit 2>/dev
   log "ATTENTION: aucun index astrometry.net detecte dans /usr/share/astrometry."
 fi
 mkdir -p "$DEPLOY_DIR"
-rsync -a --delete --exclude '.venv' --exclude '__pycache__' "$SOURCE_SERVER/" "$DEPLOY_DIR/"
+
+# Runtime captures and calibration references live below DEPLOY_DIR/data.
+# Never let a source deployment or --delete remove those observations.
+rsync -a --delete \
+  --exclude '.venv' \
+  --exclude '__pycache__' \
+  --exclude 'data/' \
+  "$SOURCE_SERVER/" "$DEPLOY_DIR/"
+
 cd "$DEPLOY_DIR"
 [[ -x .venv/bin/python ]] || python3 -m venv .venv
 .venv/bin/python -m pip install --upgrade pip
@@ -55,4 +63,4 @@ sleep 2
 systemctl --no-pager -l status stellarpilot-server || true
 curl --fail --silent --show-error http://127.0.0.1:8000/health
 printf '\n'
-log "Installation serveur terminee."
+log "Installation serveur terminee. Les données runtime de $DEPLOY_DIR/data sont conservées."

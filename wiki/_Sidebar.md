@@ -9,6 +9,7 @@
 - [Présentation](Project-Overview)
 - [Méthode de développement](Development-Methodology)
 - [Architecture](Architecture)
+- [Calibration optique & échantillonnage](Calibration-optique-et-echantillonnage)
 - [Installation serveur Astroberry](Server-Installation-Astroberry)
 - [Configuration GPS](GPS-Setup)
 - [Installation tablette Android](Android-Tablet-Installation)
@@ -16,4 +17,4 @@
 - [Licence & contributions](License-and-Contributing)
 
 ---
-Version de référence : **v0.5.0-poc**
+Version de référence : **v0.6.0-poc**

@@ -8,6 +8,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import fr.stellarpilot.app.BuildConfig
 import fr.stellarpilot.app.data.remote.StellarPilotApiClient
+import fr.stellarpilot.app.feature.demo.DemoModeState
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -16,18 +17,11 @@ import okhttp3.WebSocket
 import okhttp3.WebSocketListener
 import org.json.JSONObject
 
+
 class ConnectionViewModel : ViewModel() {
 
     companion object {
         private const val TAG = "StellarPilotConnection"
-
-        /*
-         * D?lais de reconnexion successifs.
-         *
-         * Apr?s 30 secondes, les tentatives suivantes restent
-         * espac?es de 30 secondes afin de ne pas saturer le r?seau
-         * ni le Raspberry Pi lorsqu'il est r?ellement indisponible.
-         */
         private val RECONNECT_DELAYS_SECONDS =
             longArrayOf(1L, 2L, 3L, 5L, 8L, 10L)
     }
@@ -38,29 +32,11 @@ class ConnectionViewModel : ViewModel() {
         )
 
     private var webSocket: WebSocket? = null
-
-    /*
-     * Travail de reconnexion diff?r?e actuellement programm?.
-     * Une seule reconnexion peut ?tre planifi?e ? la fois.
-     */
     private var reconnectJob: Job? = null
-
-
     private var handshakeTimeoutJob: Job? = null
-/*
-     * Num?ro de g?n?ration du WebSocket.
-     *
-     * Il permet d'ignorer les callbacks tardifs provenant d'une
-     * ancienne socket apr?s un changement d'adresse serveur ou
-     * apr?s l'ouverture d'une nouvelle connexion.
-     */
     private var webSocketGeneration = 0L
-
-    /*
-     * Devient vrai lorsque le ViewModel est d?truit.
-     * Aucune reconnexion ne doit alors ?tre programm?e.
-     */
     private var stopped = false
+    private var destroyed = false
 
     var uiState by mutableStateOf(
         ConnectionUiState(
@@ -70,16 +46,26 @@ class ConnectionViewModel : ViewModel() {
     )
         private set
 
-    /**
-     * Change l'adresse du serveur StellarPilot.
-     *
-     * La connexion pr?c?dente est invalid?e avant d'ouvrir la
-     * nouvelle afin qu'un callback tardif de l'ancien serveur ne
-     * puisse pas d?clencher une reconnexion parasite.
-     */
+    private val demoModeListener: (Boolean) -> Unit = { active ->
+        viewModelScope.launch {
+            if (active) {
+                enterDemoMode()
+            } else {
+                leaveDemoMode()
+            }
+        }
+    }
+
+    init {
+        DemoModeState.addListener(demoModeListener)
+
+        if (DemoModeState.active) {
+            enterDemoMode()
+        }
+    }
+
     fun setServerAddress(address: String) {
-        val baseUrl =
-            normalizeServerUrl(address)
+        val baseUrl = normalizeServerUrl(address)
 
         if (baseUrl == null) {
             uiState = uiState.copy(
@@ -88,13 +74,13 @@ class ConnectionViewModel : ViewModel() {
             return
         }
 
-        stopped = false
-
         reconnectJob?.cancel()
         reconnectJob = null
+        handshakeTimeoutJob?.cancel()
+        handshakeTimeoutJob = null
 
         invalidateCurrentWebSocket(
-            reason = "Adresse serveur modifi?e"
+            reason = "Adresse serveur modifiée"
         )
 
         api = StellarPilotApiClient(baseUrl)
@@ -102,73 +88,64 @@ class ConnectionViewModel : ViewModel() {
         uiState = uiState.copy(
             serverBaseUrl = baseUrl,
             connectionState =
-                ConnectionState.DISCONNECTED,
+                if (DemoModeState.active) {
+                    ConnectionState.STOPPED
+                } else {
+                    ConnectionState.DISCONNECTED
+                },
             isConnecting = false,
             server = null,
-            restStatus = "Non connect?",
-            webSocketStatus = "Non connect?",
+            catalog = null,
+            restStatus =
+                if (DemoModeState.active) {
+                    "Mode démonstration local"
+                } else {
+                    "Non connecté"
+                },
+            webSocketStatus =
+                if (DemoModeState.active) {
+                    "Désactivé en mode démo"
+                } else {
+                    "Non connecté"
+                },
             reconnectAttempt = 0,
             reconnectDelaySeconds = null,
             error = null
         )
 
-        connect()
+        if (!DemoModeState.active) {
+            stopped = false
+            connect()
+        }
     }
 
-    /**
-     * Normalise une adresse saisie par l'utilisateur.
-     *
-     * Si aucun port n'est fourni, le port historique 8000 du
-     * serveur StellarPilot est utilis?.
-     */
     private fun normalizeServerUrl(
         address: String
     ): String? {
         var value = address.trim()
 
-        if (value.isBlank()) {
-            return null
-        }
+        if (value.isBlank()) return null
 
         value = value.trimEnd('/')
 
         if (
-            !value.startsWith(
-                "http://",
-                ignoreCase = true
-            ) &&
-            !value.startsWith(
-                "https://",
-                ignoreCase = true
-            )
+            !value.startsWith("http://", ignoreCase = true) &&
+            !value.startsWith("https://", ignoreCase = true)
         ) {
             value = "http://$value"
         }
 
         return try {
             val uri = java.net.URI(value)
+            val scheme = uri.scheme?.lowercase() ?: "http"
+            val host = uri.host ?: return null
 
-            val scheme =
-                uri.scheme?.lowercase()
-                    ?: "http"
-
-            val host =
-                uri.host
-                    ?: return null
-
-            if (
-                scheme != "http" &&
-                scheme != "https"
-            ) {
+            if (scheme != "http" && scheme != "https") {
                 return null
             }
 
             val port =
-                if (uri.port == -1) {
-                    8000
-                } else {
-                    uri.port
-                }
+                if (uri.port == -1) 8000 else uri.port
 
             "$scheme://$host:$port/"
         } catch (_: Exception) {
@@ -176,18 +153,15 @@ class ConnectionViewModel : ViewModel() {
         }
     }
 
-    /**
-     * Demande une connexion imm?diate.
-     *
-     * Une action manuelle annule l'attente ?ventuelle du backoff :
-     * l'utilisateur n'a donc jamais besoin d'attendre la prochaine
-     * tentative automatique.
-     */
     fun connect() {
-        if (stopped) {
-            stopped = false
+        if (destroyed) return
+
+        if (DemoModeState.active) {
+            enterDemoMode()
+            return
         }
 
+        stopped = false
         reconnectJob?.cancel()
         reconnectJob = null
 
@@ -196,19 +170,15 @@ class ConnectionViewModel : ViewModel() {
         )
     }
 
-    /**
-     * V?rifie d'abord la disponibilit? REST du serveur avant
-     * d'ouvrir le canal WebSocket.
-     *
-     * Cette s?paration permet de distinguer :
-     * - serveur totalement inaccessible ;
-     * - serveur accessible mais ?tat mat?riel illisible ;
-     * - canal WebSocket indisponible.
-     */
     private fun startConnection(
         reconnecting: Boolean
     ) {
-        if (stopped || uiState.isConnecting) {
+        if (
+            destroyed ||
+            stopped ||
+            DemoModeState.active ||
+            uiState.isConnecting
+        ) {
             return
         }
 
@@ -226,24 +196,26 @@ class ConnectionViewModel : ViewModel() {
 
         viewModelScope.launch {
             try {
-                // /health d?termine la disponibilit? du serveur.
                 api.checkHealth()
 
-                /*
-                 * Le serveur est joignable :
-                 * on lui transmet immediatement l'heure Android.
-                 *
-                 * Un echec de synchronisation temporelle ne doit
-                 * pas faire echouer la connexion StellarPilot.
-                 */
+                if (networkDisabled()) {
+                    return@launch
+                }
+
                 try {
                     api.syncClientTime()
                 } catch (error: Exception) {
-                    Log.w(
-                        TAG,
-                        "Synchronisation heure Android impossible",
-                        error
-                    )
+                    if (!networkDisabled()) {
+                        Log.w(
+                            TAG,
+                            "Synchronisation heure Android impossible",
+                            error
+                        )
+                    }
+                }
+
+                if (networkDisabled()) {
+                    return@launch
                 }
 
                 uiState = uiState.copy(
@@ -251,41 +223,43 @@ class ConnectionViewModel : ViewModel() {
                     restStatus = "OK"
                 )
 
-                /*
-                 * Le WebSocket est ouvert imm?diatement apr?s /health.
-                 *
-                 * La lecture du mat?riel via /status ne doit jamais
-                 * retarder la connexion temps r?el.
-                 */
                 connectWebSocket()
 
-                /*
-                 * La t?l?m?trie mat?rielle est r?cup?r?e s?par?ment.
-                 * Son ?chec ne remet pas en cause la connexion serveur.
-                 */
                 viewModelScope.launch {
                     try {
                         val status = api.getStatus()
+
+                        if (networkDisabled()) {
+                            return@launch
+                        }
 
                         uiState = uiState.copy(
                             server = status,
                             restStatus = "OK"
                         )
                     } catch (error: Exception) {
+                        if (networkDisabled()) {
+                            return@launch
+                        }
+
                         Log.e(
                             TAG,
-                            "Connexion ?tablie mais /status indisponible",
+                            "Connexion établie mais /status indisponible",
                             error
                         )
 
                         uiState = uiState.copy(
                             restStatus =
-                                "OK - t?l?m?trie indisponible"
+                                "OK - télémétrie indisponible"
                         )
                     }
                 }
 
             } catch (error: Exception) {
+                if (networkDisabled()) {
+                    return@launch
+                }
+
                 Log.w(
                     TAG,
                     "Serveur StellarPilot inaccessible",
@@ -293,13 +267,11 @@ class ConnectionViewModel : ViewModel() {
                 )
 
                 uiState = uiState.copy(
-                    connectionState =
-                        ConnectionState.DISCONNECTED,
+                    connectionState = ConnectionState.DISCONNECTED,
                     isConnecting = false,
                     server = null,
                     restStatus = "Erreur",
-                    webSocketStatus =
-                        "Serveur inaccessible",
+                    webSocketStatus = "Serveur inaccessible",
                     error =
                         error.message
                             ?: "Serveur StellarPilot inaccessible"
@@ -312,28 +284,15 @@ class ConnectionViewModel : ViewModel() {
         }
     }
 
-    /**
-     * Ouvre le WebSocket du prototype.
-     *
-     * Le heartbeat r?seau est assur? automatiquement par OkHttp.
-     * ? l'ouverture, Android envoie ?galement un message hello afin
-     * de n?gocier le protocole applicatif avec StellarPilot Server.
-     */
     private fun connectWebSocket() {
-        if (stopped) {
-            return
-        }
-
-        if (webSocket != null) {
-            return
-        }
+        if (networkDisabled()) return
+        if (webSocket != null) return
 
         uiState = uiState.copy(
             webSocketStatus = "Connexion..."
         )
 
-        val generation =
-            ++webSocketGeneration
+        val generation = ++webSocketGeneration
 
         val listener =
             object : WebSocketListener() {
@@ -344,91 +303,48 @@ class ConnectionViewModel : ViewModel() {
                 ) {
                     viewModelScope.launch {
                         if (
-                            generation !=
-                            webSocketGeneration
+                            generation != webSocketGeneration ||
+                            networkDisabled()
                         ) {
                             socket.close(
                                 1000,
-                                "Connexion obsolete"
+                                "Connexion désactivée"
                             )
                             return@launch
                         }
 
-                        Log.i(
-                            TAG,
-                            "WebSocket StellarPilot ouvert - handshake"
-                        )
-
-                        /*
-                         * Le WebSocket TCP est ouvert mais le serveur
-                         * StellarPilot n'est pas encore valide.
-                         *
-                         * CONNECTED sera positionne uniquement apres
-                         * reception de welcome avec proto-1.
-                         */
                         uiState = uiState.copy(
                             isConnecting = true,
-                            webSocketStatus =
-                                "Handshake...",
+                            webSocketStatus = "Handshake...",
                             error = null
                         )
 
                         val hello =
                             JSONObject()
-                                .put(
-                                    "type",
-                                    "hello"
-                                )
-                                .put(
-                                    "client",
-                                    "android"
-                                )
+                                .put("type", "hello")
+                                .put("client", "android")
                                 .put(
                                     "app_version",
                                     BuildConfig.VERSION_NAME
                                 )
-                                .put(
-                                    "protocol",
-                                    "proto-1"
-                                )
+                                .put("protocol", "proto-1")
 
-                        val sent =
-                            socket.send(
-                                hello.toString()
-                            )
-
-                        if (!sent) {
-                            Log.w(
-                                TAG,
-                                "Echec envoi HELLO StellarPilot"
-                            )
-
+                        if (!socket.send(hello.toString())) {
                             socket.cancel()
                             return@launch
                         }
 
-                        Log.i(
-                            TAG,
-                            "HELLO StellarPilot envoye (proto-1)"
-                        )
-
                         handshakeTimeoutJob?.cancel()
-
                         handshakeTimeoutJob =
                             viewModelScope.launch {
                                 delay(5_000L)
 
                                 if (
-                                    generation ==
-                                    webSocketGeneration &&
+                                    generation == webSocketGeneration &&
+                                    !networkDisabled() &&
                                     uiState.connectionState !=
                                     ConnectionState.CONNECTED
                                 ) {
-                                    Log.w(
-                                        TAG,
-                                        "Timeout handshake StellarPilot"
-                                    )
-
                                     socket.close(
                                         1002,
                                         "Timeout handshake"
@@ -444,13 +360,16 @@ class ConnectionViewModel : ViewModel() {
                 ) {
                     viewModelScope.launch {
                         if (
-                            generation !=
-                            webSocketGeneration
+                            generation != webSocketGeneration ||
+                            networkDisabled()
                         ) {
                             return@launch
                         }
 
-                        handleWebSocketMessage(text, socket)
+                        handleWebSocketMessage(
+                            text,
+                            socket
+                        )
                     }
                 }
 
@@ -461,28 +380,22 @@ class ConnectionViewModel : ViewModel() {
                 ) {
                     viewModelScope.launch {
                         if (
-                            generation !=
-                            webSocketGeneration
+                            generation != webSocketGeneration ||
+                            networkDisabled()
                         ) {
                             return@launch
                         }
-
-                        Log.i(
-                            TAG,
-                            "WebSocket ferm? : code=$code, raison=$reason"
-                        )
 
                         webSocket = null
 
                         uiState = uiState.copy(
                             connectionState =
                                 ConnectionState.DISCONNECTED,
-                            webSocketStatus = "Ferm\u00E9"
+                            webSocketStatus = "Fermé"
                         )
 
                         scheduleReconnect(
-                            reason =
-                                "WebSocket ferm?"
+                            reason = "WebSocket fermé"
                         )
                     }
                 }
@@ -494,15 +407,15 @@ class ConnectionViewModel : ViewModel() {
                 ) {
                     viewModelScope.launch {
                         if (
-                            generation !=
-                            webSocketGeneration
+                            generation != webSocketGeneration ||
+                            networkDisabled()
                         ) {
                             return@launch
                         }
 
                         Log.w(
                             TAG,
-                            "?chec du WebSocket StellarPilot",
+                            "Échec du WebSocket StellarPilot",
                             throwable
                         )
 
@@ -519,43 +432,28 @@ class ConnectionViewModel : ViewModel() {
                         )
 
                         scheduleReconnect(
-                            reason =
-                                "?chec WebSocket"
+                            reason = "Échec WebSocket"
                         )
                     }
                 }
             }
 
-        webSocket =
-            api.openEvents(listener)
+        webSocket = api.openEvents(listener)
     }
 
-    /**
-     * Interpr?te les messages de contr?le du serveur sans afficher
-     * le JSON brut dans l'interface.
-     */
     private fun handleWebSocketMessage(
         text: String,
         socket: WebSocket
     ) {
-        try {
-            val payload =
-                JSONObject(text)
+        if (networkDisabled()) return
 
-            when (
-                payload.optString(
-                    "event",
-                    ""
-                )
-            ) {
+        try {
+            val payload = JSONObject(text)
+
+            when (payload.optString("event", "")) {
                 "connected" -> {
-                    /*
-                     * Le serveur annonce l'ouverture du canal.
-                     * Ce message ne valide pas encore le protocole.
-                     */
                     uiState = uiState.copy(
-                        webSocketStatus =
-                            "Handshake..."
+                        webSocketStatus = "Handshake..."
                     )
                 }
 
@@ -567,11 +465,6 @@ class ConnectionViewModel : ViewModel() {
                         )
 
                     if (protocol != "proto-1") {
-                        Log.w(
-                            TAG,
-                            "Protocole StellarPilot incompatible : $protocol"
-                        )
-
                         uiState = uiState.copy(
                             connectionState =
                                 ConnectionState.DISCONNECTED,
@@ -589,7 +482,6 @@ class ConnectionViewModel : ViewModel() {
                             1002,
                             "Protocole incompatible"
                         )
-
                         return
                     }
 
@@ -597,34 +489,16 @@ class ConnectionViewModel : ViewModel() {
                     handshakeTimeoutJob = null
 
                     uiState = uiState.copy(
-                        connectionState =
-                            ConnectionState.CONNECTED,
+                        connectionState = ConnectionState.CONNECTED,
                         isConnecting = false,
-                        webSocketStatus =
-                            "Connecte ($protocol)",
+                        webSocketStatus = "Connecté ($protocol)",
                         reconnectAttempt = 0,
                         reconnectDelaySeconds = null,
                         error = null
                     )
-
-                    Log.i(
-                        TAG,
-                        "WELCOME StellarPilot recu - proto-1 valide"
-                    )
-                }
-
-                else -> {
-                    Log.d(
-                        TAG,
-                        "Message WebSocket re?u : $text"
-                    )
                 }
             }
         } catch (error: Exception) {
-            /*
-             * Une trame inconnue ne coupe jamais la connexion.
-             * Elle est seulement journalis?e pour diagnostic.
-             */
             Log.d(
                 TAG,
                 "Message WebSocket non JSON : $text",
@@ -633,19 +507,11 @@ class ConnectionViewModel : ViewModel() {
         }
     }
 
-    /**
-     * Programme une reconnexion avec backoff progressif.
-     *
-     * S?quence :
-     * 1 s -> 2 s -> 4 s -> 8 s -> 15 s -> 30 s.
-     *
-     * Les tentatives suivantes restent ensuite ? 30 secondes.
-     */
     private fun scheduleReconnect(
         reason: String
     ) {
         if (
-            stopped ||
+            networkDisabled() ||
             reconnectJob?.isActive == true
         ) {
             return
@@ -657,14 +523,11 @@ class ConnectionViewModel : ViewModel() {
         val delayIndex =
             (attempt - 1)
                 .coerceAtMost(
-                    RECONNECT_DELAYS_SECONDS
-                        .lastIndex
+                    RECONNECT_DELAYS_SECONDS.lastIndex
                 )
 
         val delaySeconds =
-            RECONNECT_DELAYS_SECONDS[
-                delayIndex
-            ]
+            RECONNECT_DELAYS_SECONDS[delayIndex]
 
         Log.i(
             TAG,
@@ -672,25 +535,20 @@ class ConnectionViewModel : ViewModel() {
         )
 
         uiState = uiState.copy(
-            connectionState =
-                ConnectionState.RECONNECTING,
+            connectionState = ConnectionState.RECONNECTING,
             isConnecting = false,
             webSocketStatus =
                 "Reconnexion dans ${delaySeconds}s",
             reconnectAttempt = attempt,
-            reconnectDelaySeconds =
-                delaySeconds
+            reconnectDelaySeconds = delaySeconds
         )
 
         reconnectJob =
             viewModelScope.launch {
-                delay(
-                    delaySeconds * 1000L
-                )
-
+                delay(delaySeconds * 1000L)
                 reconnectJob = null
 
-                if (!stopped) {
+                if (!networkDisabled()) {
                     startConnection(
                         reconnecting = true
                     )
@@ -698,20 +556,65 @@ class ConnectionViewModel : ViewModel() {
             }
     }
 
-    /**
-     * Invalide la socket active avant de la fermer.
-     *
-     * L'incr?ment de g?n?ration garantit que les callbacks produits
-     * par cette fermeture volontaire seront ignor?s.
-     */
+    private fun enterDemoMode() {
+        if (destroyed) return
+
+        stopped = true
+
+        reconnectJob?.cancel()
+        reconnectJob = null
+
+        handshakeTimeoutJob?.cancel()
+        handshakeTimeoutJob = null
+
+        invalidateCurrentWebSocket(
+            reason = "Mode démonstration local"
+        )
+
+        uiState = uiState.copy(
+            connectionState = ConnectionState.STOPPED,
+            isConnecting = false,
+            server = null,
+            catalog = null,
+            restStatus = "Mode démonstration local",
+            webSocketStatus = "Désactivé en mode démo",
+            reconnectAttempt = 0,
+            reconnectDelaySeconds = null,
+            error = null
+        )
+    }
+
+    private fun leaveDemoMode() {
+        if (destroyed) return
+
+        stopped = false
+
+        uiState = uiState.copy(
+            connectionState = ConnectionState.DISCONNECTED,
+            isConnecting = false,
+            server = null,
+            catalog = null,
+            restStatus = "Non connecté",
+            webSocketStatus = "Non connecté",
+            reconnectAttempt = 0,
+            reconnectDelaySeconds = null,
+            error = null
+        )
+
+        connect()
+    }
+
+    private fun networkDisabled(): Boolean =
+        destroyed ||
+            stopped ||
+            DemoModeState.active
+
     private fun invalidateCurrentWebSocket(
         reason: String
     ) {
         webSocketGeneration++
 
-        val socket =
-            webSocket
-
+        val socket = webSocket
         webSocket = null
 
         socket?.close(
@@ -720,23 +623,26 @@ class ConnectionViewModel : ViewModel() {
         )
     }
 
-    /**
-     * Arr?t d?finitif du gestionnaire lorsque l'?cran associ?
-     * dispara?t r?ellement.
-     */
     override fun onCleared() {
+        destroyed = true
         stopped = true
+
+        DemoModeState.removeListener(
+            demoModeListener
+        )
 
         reconnectJob?.cancel()
         reconnectJob = null
 
+        handshakeTimeoutJob?.cancel()
+        handshakeTimeoutJob = null
+
         invalidateCurrentWebSocket(
-            reason = "ViewModel d?truit"
+            reason = "ViewModel détruit"
         )
 
         uiState = uiState.copy(
-            connectionState =
-                ConnectionState.STOPPED,
+            connectionState = ConnectionState.STOPPED,
             isConnecting = false,
             reconnectDelaySeconds = null
         )
