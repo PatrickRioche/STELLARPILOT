@@ -1,9 +1,12 @@
 package fr.stellarpilot.app.feature.galleries
 
-import android.graphics.BitmapFactory
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.Image
+import androidx.compose.foundation.border
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -23,13 +26,18 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.remember
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import fr.stellarpilot.app.data.remote.GallerySession
+import fr.stellarpilot.app.ui.components.StellarImagePreview
 import fr.stellarpilot.app.ui.theme.StellarBackground
 import fr.stellarpilot.app.ui.theme.StellarBorder
 import fr.stellarpilot.app.ui.theme.StellarMuted
@@ -37,6 +45,7 @@ import fr.stellarpilot.app.ui.theme.StellarOrange
 import fr.stellarpilot.app.ui.theme.StellarRed
 import fr.stellarpilot.app.ui.theme.StellarSurface
 import fr.stellarpilot.app.ui.theme.StellarText
+import java.time.Year
 import java.util.Locale
 
 
@@ -46,19 +55,30 @@ fun GalleriesScreen(
     viewModel: GalleriesViewModel = viewModel()
 ) {
     val state = viewModel.uiState
+    var fullScreen by rememberSaveable { mutableStateOf(false) }
 
     LaunchedEffect(serverBaseUrl) {
         viewModel.load(serverBaseUrl)
     }
 
-    val bitmap = remember(state.previewBytes) {
-        state.previewBytes?.let { bytes ->
-            BitmapFactory.decodeByteArray(
-                bytes,
-                0,
-                bytes.size
-            )?.asImageBitmap()
+    BackHandler(enabled = fullScreen) {
+        fullScreen = false
+    }
+
+    if (fullScreen && state.previewBytes != null) {
+        Surface(
+            modifier = Modifier.fillMaxSize(),
+            color = StellarBackground
+        ) {
+            StellarImagePreview(
+                imageBytes = state.previewBytes,
+                contentDescription = "Stack plein écran",
+                modifier = Modifier.fillMaxSize(),
+                fullScreen = true,
+                onTap = { fullScreen = false }
+            )
         }
+        return
     }
 
     Surface(
@@ -95,7 +115,7 @@ fun GalleriesScreen(
 
             Text(
                 text =
-                    "Stacks finalisés, temps d'intégration et paramètres d'acquisition.",
+                    "Stacks finalisés, zoomables et exportables dans la galerie de la tablette ou du téléphone.",
                 color = StellarMuted
             )
 
@@ -142,13 +162,13 @@ fun GalleriesScreen(
                         text = session.targetName,
                         style = MaterialTheme.typography.titleLarge,
                         fontWeight = FontWeight.Bold,
-                        color = StellarText
+                        color = StellarOrange
                     )
 
                     Spacer(Modifier.height(4.dp))
 
                     Text(
-                        text = session.createdAt,
+                        text = formatGalleryDate(session.createdAt),
                         color = StellarMuted,
                         style = MaterialTheme.typography.bodySmall
                     )
@@ -163,7 +183,7 @@ fun GalleriesScreen(
 
                     Text(
                         text =
-                            "${session.acceptedFrames} acceptées • ${session.rejectedFrames} rejetées",
+                            "${session.capturedFrames} capturées • ${session.acceptedFrames} stackées • ${session.rejectedFrames} rejetées",
                         color = StellarMuted
                     )
 
@@ -183,16 +203,70 @@ fun GalleriesScreen(
 
                     if (
                         state.selectedSessionId == session.id &&
-                        bitmap != null
+                        state.previewBytes != null
                     ) {
-                        Spacer(Modifier.height(12.dp))
-                        Image(
-                            bitmap = bitmap,
-                            contentDescription =
-                                "Stack ${session.targetName}",
+                        Spacer(Modifier.height(14.dp))
+
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .border(
+                                    width = 1.dp,
+                                    color = StellarOrange,
+                                    shape = RoundedCornerShape(10.dp)
+                                )
+                                .padding(2.dp)
+                        ) {
+                            StellarImagePreview(
+                                imageBytes = state.previewBytes,
+                                contentDescription =
+                                    "Stack ${session.targetName}",
+                                onTap = { fullScreen = true }
+                            )
+                        }
+
+                        Spacer(Modifier.height(6.dp))
+                        Text(
+                            text = "Pincez pour zoomer • touchez l'image pour le plein écran",
                             modifier = Modifier.fillMaxWidth(),
-                            contentScale = ContentScale.FillWidth
+                            color = StellarOrange,
+                            textAlign = TextAlign.Center,
+                            style = MaterialTheme.typography.bodySmall
                         )
+
+                        Spacer(Modifier.height(16.dp))
+                        GalleryMetadata(session)
+
+                        Spacer(Modifier.height(14.dp))
+                        Button(
+                            onClick = {
+                                viewModel.exportSelected(session.id)
+                            },
+                            enabled = !state.isExporting,
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = StellarOrange,
+                                contentColor = StellarBackground
+                            )
+                        ) {
+                            Text(
+                                if (state.isExporting) {
+                                    "ENREGISTREMENT…"
+                                } else {
+                                    "ENREGISTRER DANS LA GALERIE"
+                                },
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+
+                        state.exportMessage?.let { message ->
+                            Spacer(Modifier.height(8.dp))
+                            Text(
+                                text = message,
+                                color = StellarOrange,
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                        }
                     }
                 }
 
@@ -207,6 +281,69 @@ fun GalleriesScreen(
             }
 
             Spacer(Modifier.height(24.dp))
+        }
+    }
+}
+
+
+@Composable
+private fun GalleryMetadata(session: GallerySession) {
+    val year = session.createdAt
+        .take(4)
+        .toIntOrNull()
+        ?: Year.now().value
+
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.Top
+    ) {
+        Column(
+            modifier = Modifier.weight(1f),
+            horizontalAlignment = Alignment.Start
+        ) {
+            Text(
+                text = "${stellarPilotVersionLabel()} © $year",
+                color = StellarOrange,
+                style = MaterialTheme.typography.bodySmall
+            )
+        }
+
+        Column(
+            modifier = Modifier.weight(1.15f),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Text(
+                text = "Objet : ${session.targetName}",
+                color = StellarOrange,
+                fontWeight = FontWeight.Bold,
+                textAlign = TextAlign.Center
+            )
+            Text(
+                text =
+                    "${session.capturedFrames} capturées • ${session.acceptedFrames} stackées",
+                color = StellarOrange,
+                style = MaterialTheme.typography.bodySmall,
+                textAlign = TextAlign.Center
+            )
+        }
+
+        Column(
+            modifier = Modifier.weight(1f),
+            horizontalAlignment = Alignment.End
+        ) {
+            Text(
+                text = formatGalleryDate(session.createdAt),
+                color = StellarOrange,
+                style = MaterialTheme.typography.bodySmall,
+                textAlign = TextAlign.End
+            )
+            Text(
+                text = formatGalleryLocation(session),
+                color = StellarOrange,
+                style = MaterialTheme.typography.bodySmall,
+                textAlign = TextAlign.End
+            )
         }
     }
 }
