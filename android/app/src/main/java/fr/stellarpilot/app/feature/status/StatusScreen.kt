@@ -199,21 +199,18 @@ fun StatusScreen(
                 StatusCard(
                     title = "Serveur"
                 ) {
-                    val appBuildStamp =
-                        BuildConfig.VERSION_NAME
-                            .substringAfter(
-                                "-device-",
-                                ""
-                            )
-
                     val serverBuildStamp =
                         serverBuild?.buildTimestamp
 
+                    // App and server are the same delivery when they come from
+                    // the same Git revision. Build timestamps are intentionally
+                    // independent because APK compilation and Pi deployment do
+                    // not happen at the exact same second.
                     val sameDelivery =
-                        appBuildStamp.isNotBlank() &&
-                            serverBuildStamp != null &&
-                            appBuildStamp ==
-                            serverBuildStamp
+                        gitRevisionsMatch(
+                            BuildConfig.GIT_SHA,
+                            serverBuild?.gitSha
+                        )
 
                     SectionTitle("VERSIONS")
 
@@ -273,13 +270,13 @@ fun StatusScreen(
                         text =
                             when {
                                 serverBuild == null ->
-                                    "Paire App / Serveur : non v\u00e9rifi\u00e9e"
+                                    "Paire App / Serveur : non vérifiée"
 
                                 sameDelivery ->
-                                    "\u2713 Paire App / Serveur : M\u00caME LIVRAISON"
+                                    "✓ Paire App / Serveur : MÊME LIVRAISON"
 
                                 else ->
-                                    "\u26a0 Paire App / Serveur : VERSIONS DIFF\u00c9RENTES"
+                                    "⚠ Paire App / Serveur : VERSIONS DIFFÉRENTES"
                             },
                         color =
                             if (sameDelivery) {
@@ -983,6 +980,36 @@ private fun InfoLine(
             fontWeight = FontWeight.SemiBold
         )
     }
+}
+
+
+private fun gitRevisionsMatch(
+    appSha: String?,
+    serverSha: String?
+): Boolean {
+    val app = appSha
+        ?.trim()
+        ?.lowercase(Locale.ROOT)
+        .orEmpty()
+    val server = serverSha
+        ?.trim()
+        ?.lowercase(Locale.ROOT)
+        .orEmpty()
+
+    if (
+        app.isBlank() ||
+        server.isBlank() ||
+        app == "unknown" ||
+        server == "unknown"
+    ) {
+        return false
+    }
+
+    // Deployment records a short SHA while Android can use a short or full
+    // SHA depending on the builder. Prefix comparison handles both safely.
+    return app == server ||
+        app.startsWith(server) ||
+        server.startsWith(app)
 }
 
 
