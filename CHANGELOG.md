@@ -2,6 +2,38 @@
 
 Ce fichier suit les changements des releases publiées.
 
+## v0.6.1-poc — 2026-09-06
+
+Livraison de consolidation après reprise du setup terrain validé avec OnStepX 10.28u.
+
+### OnStep / monture
+
+- ajout de `GET /mount/firmware` pour lire directement la propriété INDI `Firmware Info.Number` publiée par la monture ;
+- affichage du firmware réel dans `Statut > Monture`, sans valeur codée en dur ;
+- la version de référence observée sur le setup terrain est `10.28u` (`10.28U` dans l'affichage Android) ;
+- conservation de la lecture de position réelle via `EQUATORIAL_EOD_COORD` ;
+- aucun changement appliqué au calcul RA/DEC après validation terrain d'une position `idle`, `indi_state=Ok`, `virtual_position=false`.
+
+### Cohérence App / Serveur
+
+- correction du faux avertissement « versions différentes » ;
+- l'égalité d'une livraison est désormais déterminée par le commit Git commun entre APK et serveur, et non par leurs horodatages de build ;
+- comparaison compatible SHA court / SHA long ;
+- les horodatages de build restent affichés à titre informatif.
+
+### Version
+
+- serveur : `0.6.1-poc` ;
+- Android : `0.6.1`, `versionCode 7` ;
+- branche de validation terrain conservée : `final/main-convergence`.
+
+### Validation attendue
+
+- CI serveur incluant le test de lecture du firmware OnStep ;
+- CI Android simulationDebug + deviceDebug ;
+- déploiement serveur exclusivement via le kit PC `tools/deploy-server.ps1` ;
+- contrôle terrain de `/mount/firmware`, `/mount/status`, puis installation du nouvel APK.
+
 ## v0.6.0-poc — consolidation terrain 2026-09-06
 
 Intégration des enseignements de la soirée d'observation du 5 au 6 septembre 2026 dans la branche de convergence finale.
