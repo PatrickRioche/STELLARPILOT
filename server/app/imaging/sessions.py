@@ -15,6 +15,7 @@ from astropy.io import fits
 from PIL import Image
 from scipy.ndimage import gaussian_filter, shift as nd_shift
 
+from app.gps.service import gps_service
 from app.imaging.quality import analyze_fits
 from app.indi.service import indi_service
 from app.solving.service import plate_solver
@@ -70,6 +71,57 @@ class CaptureSessionService:
         )
         cleaned = "-".join(part for part in cleaned.split("-") if part)
         return cleaned[:48] or "target"
+
+    def _observation_snapshot(self) -> dict:
+        """Freeze the observing site when a session starts.
+
+        The device GPS is preferred. If it has no fix, keep the OnStep
+        coordinates as a fallback. Gallery rendering never depends on the
+        current device location after the session has been created.
+        """
+        try:
+            gps = gps_service.status()
+        except Exception:
+            gps = {}
+
+        if (
+            gps.get("status") == "fix"
+            and gps.get("latitude") is not None
+            and gps.get("longitude") is not None
+        ):
+            return {
+                "latitude": gps.get("latitude"),
+                "longitude": gps.get("longitude"),
+                "altitude_m": gps.get("altitude"),
+                "location_source": "gps",
+                "place_name": gps.get("place_name"),
+            }
+
+        try:
+            mount_location = self.indi.mount_location()
+        except Exception:
+            mount_location = {}
+
+        if (
+            mount_location.get("status") == "available"
+            and mount_location.get("latitude") is not None
+            and mount_location.get("longitude") is not None
+        ):
+            return {
+                "latitude": mount_location.get("latitude"),
+                "longitude": mount_location.get("longitude"),
+                "altitude_m": mount_location.get("altitude"),
+                "location_source": "onstep",
+                "place_name": None,
+            }
+
+        return {
+            "latitude": None,
+            "longitude": None,
+            "altitude_m": None,
+            "location_source": None,
+            "place_name": None,
+        }
 
     def _session_dir(self, session_id: str) -> Path:
         return self.sessions_root / session_id
@@ -142,6 +194,7 @@ class CaptureSessionService:
                 "object_type": object_type,
                 "tracking_mode": tracking_mode,
             },
+            "observation": self._observation_snapshot(),
             "setup": {
                 "exposure_s": float(exposure_s),
                 "centering_tolerance_arcsec": float(
