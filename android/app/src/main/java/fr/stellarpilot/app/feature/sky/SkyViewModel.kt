@@ -42,8 +42,8 @@ class SkyViewModel : ViewModel() {
             longitude
 
         /*
-         * En mode D?mo, aucune position n'est envoy?e au Pi
-         * et aucune requ?te HTTP n'est autoris?e.
+         * En mode Démo, aucune position n'est envoyée au Pi
+         * et aucune requête HTTP n'est autorisée.
          */
         if (
             fr.stellarpilot.app.feature.demo
@@ -108,8 +108,8 @@ class SkyViewModel : ViewModel() {
             longitude
 
         /*
-         * En mode D?mo, aucune position n'est envoy?e au Pi
-         * et aucune requ?te HTTP n'est autoris?e.
+         * En mode Démo, aucune position n'est envoyée au Pi
+         * et aucune requête HTTP n'est autorisée.
          */
         if (
             fr.stellarpilot.app.feature.demo
@@ -255,8 +255,8 @@ class SkyViewModel : ViewModel() {
 
         /*
          * Garde-fou absolu :
-         * le mode D?mo utilise uniquement les donn?es
-         * embarqu?es dans l'application Android.
+         * le mode Démo utilise uniquement les données
+         * embarquées dans l'application Android.
          */
         if (
             fr.stellarpilot.app.feature.demo

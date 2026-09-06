@@ -88,9 +88,9 @@ fun PreparationScreen(
     }
 
     /*
-     * Le mode D?mo appartient exclusivement ? l'application
-     * Android. Les autres ?crans peuvent ainsi interdire
-     * tout acc?s r?seau pendant une d?monstration.
+     * Le mode Démo appartient exclusivement à l'application
+     * Android. Les autres écrans peuvent ainsi interdire
+     * tout accès réseau pendant une démonstration.
      */
     LaunchedEffect(demoMode) {
         fr.stellarpilot.app.feature.demo

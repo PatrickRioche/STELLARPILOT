@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 from typing import Literal
 
@@ -24,6 +25,43 @@ from app.indi.coordinates import (
 
 
 app = _core.app
+
+_BUILD_INFO_PATH = (
+    Path(__file__).resolve().parents[1]
+    / "BUILD_INFO.json"
+)
+
+
+def _stellarpilot_build_info() -> dict:
+    try:
+        return json.loads(
+            _BUILD_INFO_PATH.read_text(
+                encoding="utf-8"
+            )
+        )
+    except Exception:
+        return {
+            "service": "stellarpilot-server",
+            "version": "unknown",
+            "build_timestamp": None,
+            "git_sha": None,
+            "branch": None,
+            "dirty": None,
+        }
+
+
+_STELLARPILOT_BUILD = _stellarpilot_build_info()
+
+if _STELLARPILOT_BUILD.get("version"):
+    app.version = str(
+        _STELLARPILOT_BUILD["version"]
+    )
+
+
+@app.get("/build")
+def server_build_info():
+    return _stellarpilot_build_info()
+
 
 
 class TrackingGotoPayload(_core.GotoPayload):

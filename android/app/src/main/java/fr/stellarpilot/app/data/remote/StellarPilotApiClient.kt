@@ -47,15 +47,15 @@ class StellarPilotApiClient(
     companion object {
 
         /*
-         * Configuration r?seau commune ? StellarPilot.
+         * Configuration réseau commune à StellarPilot.
          *
-         * Les d?lais sont volontairement courts car le serveur
-         * StellarPilot fonctionne normalement sur le m?me r?seau local
+         * Les délais sont volontairement courts car le serveur
+         * StellarPilot fonctionne normalement sur le même réseau local
          * que la tablette Android.
          *
          * Le ping WebSocket natif d'OkHttp sert de heartbeat transport.
-         * Si le serveur cesse de r?pondre, OkHttp d?clenche automatiquement
-         * l'?chec du WebSocket afin de permettre une reconnexion rapide.
+         * Si le serveur cesse de répondre, OkHttp déclenche automatiquement
+         * l'échec du WebSocket afin de permettre une reconnexion rapide.
          */
         private fun createHttpClient(): OkHttpClient =
             OkHttpClient.Builder()
@@ -67,11 +67,11 @@ class StellarPilotApiClient(
                 .build()
 
         /*
-         * Client d?di? ? /status.
+         * Client dédié à /status.
          *
          * Il ne partage ni dispatcher ni pool de connexions avec
-         * le WebSocket. Une t?l?m?trie lente ne peut donc pas
-         * perturber le heartbeat temps r?el.
+         * le WebSocket. Une télémétrie lente ne peut donc pas
+         * perturber le heartbeat temps réel.
          */
         private fun createStatusClient(): OkHttpClient =
             OkHttpClient.Builder()
@@ -83,9 +83,9 @@ class StellarPilotApiClient(
                 .build()
 
         /*
-         * Client exclusivement r?serv? au WebSocket StellarPilot.
+         * Client exclusivement réservé au WebSocket StellarPilot.
          *
-         * Le ping/pong natif OkHttp constitue le heartbeat r?seau.
+         * Le ping/pong natif OkHttp constitue le heartbeat réseau.
          */
         private fun createWebSocketClient(): OkHttpClient =
             OkHttpClient.Builder()
@@ -162,11 +162,11 @@ class StellarPilotApiClient(
     suspend fun getStatus(): ServerStatus = withContext(Dispatchers.IO) {
 
         /*
-         * /status interroge r?ellement INDI et plusieurs p?riph?riques.
-         * Cette requ?te dispose donc d'une marge sup?rieure ? /health.
+         * /status interroge réellement INDI et plusieurs périphériques.
+         * Cette requête dispose donc d'une marge supérieure à /health.
          *
-         * Les d?lais courts du client principal restent inchang?s pour
-         * d?tecter rapidement une v?ritable perte du serveur.
+         * Les délais courts du client principal restent inchangés pour
+         * détecter rapidement une véritable perte du serveur.
          */
         val request = Request.Builder()
             .url(endpoint("status"))

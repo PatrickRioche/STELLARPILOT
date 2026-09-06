@@ -162,13 +162,6 @@ fun AssistantFinalScreen(
                         exposureSeconds = 4.0
                     )
                 },
-                onNudge = { direction ->
-                    nudgeDirection(
-                        viewModel = mountViewModel,
-                        serverBaseUrl = baseUrl,
-                        direction = direction
-                    )
-                },
                 onPrevious = { step = 0 },
                 onContinue = { step = 2 }
             )
@@ -195,9 +188,6 @@ fun AssistantFinalScreen(
                         centeringViewModel.gotoAndCenter(baseUrl, it)
                     }
                 },
-                onManualNudge = {
-                    centeringViewModel.nudgeManual(baseUrl, it)
-                },
                 onVerifyCentering = {
                     centeringViewModel.verifyManualCentering(baseUrl)
                 },
@@ -222,7 +212,6 @@ fun AssistantFinalScreen(
                 telescopeCapped = telescopeCapped,
                 onCapped = { telescopeCapped = true },
                 onStart = { darkViewModel.start(baseUrl) },
-                onCapture = { darkViewModel.captureNext(baseUrl) },
                 onPrevious = { step = 2 },
                 onContinue = { step = 4 }
             )
@@ -259,7 +248,7 @@ private fun AssistantConnectionStep(
 
     val mountReady = mount?.status?.lowercase() in setOf("ready", "ok", "online")
     val cameraReady = camera?.status?.lowercase() in setOf("ready", "ok", "online")
-    val gpsReady = gps?.status?.lowercase() == "fix"
+    val gpsReady = gps?.status?.lowercase() in setOf("fix", "available")
     val timeReady = mountState.timeSyncVerified
     val ready = server != null && mountReady && cameraReady && gpsReady && timeReady
 
@@ -305,7 +294,7 @@ private fun AssistantConnectionStep(
         Spacer(Modifier.height(8.dp))
         Button(
             onClick = onContinue,
-            enabled = ready,
+            enabled = true,
             modifier = Modifier.fillMaxWidth(),
             colors = assistantPrimaryButtonColors()
         ) {
@@ -322,7 +311,6 @@ private fun AssistantAstrometryStep(
     state: CameraPreviewUiState,
     mountState: MountDiagnosticsUiState,
     onCapture: () -> Unit,
-    onNudge: (String) -> Unit,
     onPrevious: () -> Unit,
     onContinue: () -> Unit
 ) {
@@ -367,15 +355,33 @@ private fun AssistantAstrometryStep(
         }
 
         Spacer(Modifier.height(14.dp))
-        Text("Joystick monture", color = StellarText, fontWeight = FontWeight.Bold)
         Text(
-            "Petits déplacements de 0,10° pour corriger manuellement le cadrage.",
+            "Déplacement manuel de la monture",
+            color = StellarText,
+            fontWeight = FontWeight.Bold
+        )
+        Text(
+            "Pour un ajustement manuel précis, utilisez MLAstro Hub via le Wi-Fi OnStep.",
             color = StellarMuted
         )
+
+
         Spacer(Modifier.height(8.dp))
-        DirectionJoystick(
-            enabled = !state.isLoading && !mountState.isLoading,
-            onDirection = onNudge
+        StatusValue(
+            "RA OnStep",
+            mountState.status?.raHours?.let {
+                String.format(Locale.FRANCE, "%.6f h", it)
+            } ?: "?"
+        )
+        StatusValue(
+            "DEC OnStep",
+            mountState.status?.decDeg?.let {
+                String.format(Locale.FRANCE, "%+.5f°", it)
+            } ?: "?"
+        )
+        StatusValue(
+            "État OnStep",
+            mountState.status?.status ?: "?"
         )
 
         state.error?.let {
@@ -412,7 +418,6 @@ private fun AssistantBahtinovStep(
     onSelectStar: (SkyStar) -> Unit,
     onRefreshStars: () -> Unit,
     onGotoAndCenter: () -> Unit,
-    onManualNudge: (String) -> Unit,
     onVerifyCentering: () -> Unit,
     onMaskInstalled: () -> Unit,
     onFocusCapture: () -> Unit,
@@ -529,16 +534,27 @@ private fun AssistantBahtinovStep(
 
         if (centeringState.manualRequired && !centeringState.centered) {
             Spacer(Modifier.height(12.dp))
-            Text("Recentrage manuel", color = StellarOrange, fontWeight = FontWeight.Bold)
-            DirectionJoystick(
-                enabled = !centeringState.isLoading,
-                onDirection = onManualNudge
+
+            Text(
+                "Recentrage manuel via MLAstro Hub",
+                color = StellarOrange,
+                fontWeight = FontWeight.Bold
             )
+
+            Spacer(Modifier.height(6.dp))
+
+            Text(
+                "Déplacez précisément la monture avec MLAstro Hub, puis revenez dans StellarPilot.",
+                color = StellarText
+            )
+
             Spacer(Modifier.height(8.dp))
+
             Button(
                 onClick = onVerifyCentering,
                 enabled = !centeringState.isLoading,
-                modifier = Modifier.fillMaxWidth()
+                modifier = Modifier.fillMaxWidth(),
+                colors = assistantPrimaryButtonColors()
             ) {
                 Text("VÉRIFIER LE CENTRAGE • pose 4 s")
             }
@@ -653,7 +669,6 @@ private fun AssistantDarkStep(
     telescopeCapped: Boolean,
     onCapped: () -> Unit,
     onStart: () -> Unit,
-    onCapture: () -> Unit,
     onPrevious: () -> Unit,
     onContinue: () -> Unit
 ) {
@@ -688,22 +703,44 @@ private fun AssistantDarkStep(
                 ) {
                     Text("DÉMARRER 10 DARKS")
                 }
-            } else if (!state.complete) {
-                Button(
-                    onClick = onCapture,
-                    enabled = !state.isLoading,
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = assistantPrimaryButtonColors()
-                ) {
-                    Text(
-                        if (state.isLoading) {
-                            "POSE 4 s…"
-                        } else {
-                            "DARK ${state.capturedCount + 1}/${state.requestedCount} • 4 s"
-                        }
-                    )
-                }
+                        } else if (!state.complete) {
+                val progress =
+                    if (state.requestedCount > 0) {
+                        state.capturedCount.toFloat() /
+                            state.requestedCount.toFloat()
+                    } else {
+                        0f
+                    }
+
+                LinearProgressIndicator(
+                    progress = progress,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(8.dp),
+                    color = StellarOrange
+                )
+
+                Spacer(
+                    Modifier.height(8.dp)
+                )
+
+                Text(
+                    "Acquisition automatique • ${state.capturedCount}/${state.requestedCount}",
+                    color = StellarOrange,
+                    fontWeight = FontWeight.Bold
+                )
+
+                Spacer(
+                    Modifier.height(3.dp)
+                )
+
+                Text(
+                    state.message
+                        ?: "Acquisition en cours…",
+                    color = StellarMuted
+                )
             }
+
 
             state.message?.let {
                 Spacer(Modifier.height(8.dp))
@@ -797,32 +834,6 @@ private fun AssistantSummaryStep(
 }
 
 
-private fun nudgeDirection(
-    viewModel: MountDiagnosticsViewModel,
-    serverBaseUrl: String,
-    direction: String
-) {
-    val normalized = direction.uppercase()
-    val raDelta = when {
-        "E" in normalized -> 0.10 / 15.0
-        "O" in normalized -> -0.10 / 15.0
-        else -> 0.0
-    }
-    val decDelta = when {
-        "N" in normalized -> 0.10
-        "S" in normalized -> -0.10
-        else -> 0.0
-    }
-
-    viewModel.nudge(
-        serverBaseUrl = serverBaseUrl,
-        deltaRaHours = raDelta,
-        deltaDecDeg = decDelta,
-        label = "Joystick $direction"
-    )
-}
-
-
 private fun frenchDirection(value: String): String = when (value.uppercase()) {
     "SW" -> "SO"
     "W" -> "O"
@@ -843,7 +854,7 @@ private fun DirectionSelector(
     ).forEach { row ->
         Row(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(6.dp)
+            horizontalArrangement = Arrangement.SpaceEvenly
         ) {
             row.forEach { direction ->
                 if (selected == direction) {
@@ -851,40 +862,14 @@ private fun DirectionSelector(
                         onClick = { onSelect(direction) },
                         colors = assistantPrimaryButtonColors()
                     ) {
-                        Text("✓ $direction")
+                        Text(direction, fontWeight = FontWeight.Bold)
                     }
                 } else {
-                    OutlinedButton(onClick = { onSelect(direction) }) {
-                        Text(direction)
+                    OutlinedButton(
+                        onClick = { onSelect(direction) }
+                    ) {
+                        Text(direction, fontWeight = FontWeight.Bold)
                     }
-                }
-            }
-        }
-        Spacer(Modifier.height(5.dp))
-    }
-}
-
-
-@Composable
-private fun DirectionJoystick(
-    enabled: Boolean,
-    onDirection: (String) -> Unit
-) {
-    listOf(
-        listOf("NO", "N", "NE"),
-        listOf("O", "E"),
-        listOf("SO", "S", "SE")
-    ).forEach { row ->
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceEvenly
-        ) {
-            row.forEach { direction ->
-                OutlinedButton(
-                    onClick = { onDirection(direction) },
-                    enabled = enabled
-                ) {
-                    Text(direction, fontWeight = FontWeight.Bold)
                 }
             }
         }
@@ -956,7 +941,7 @@ private fun NavigationButtons(
     Spacer(Modifier.height(6.dp))
     Button(
         onClick = onContinue,
-        enabled = continueEnabled,
+        enabled = true,
         modifier = Modifier.fillMaxWidth(),
         colors = assistantPrimaryButtonColors()
     ) {

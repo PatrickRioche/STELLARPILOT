@@ -22,6 +22,10 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -30,6 +34,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import fr.stellarpilot.app.BuildConfig
+import fr.stellarpilot.app.data.remote.ServerBuildApiClient
+import fr.stellarpilot.app.data.remote.ServerBuildInfo
 import fr.stellarpilot.app.feature.connection.ConnectionState
 import fr.stellarpilot.app.feature.connection.ConnectionViewModel
 import fr.stellarpilot.app.feature.demo.DemoModeState
@@ -58,8 +64,52 @@ fun StatusScreen(
     val diagnostics = diagnosticsViewModel.uiState
     val demoMode = DemoModeState.active
 
+    var serverBuild by remember(
+        state.serverBaseUrl
+    ) {
+        mutableStateOf<ServerBuildInfo?>(null)
+    }
+
+    var serverBuildError by remember(
+        state.serverBaseUrl
+    ) {
+        mutableStateOf<String?>(null)
+    }
+
     LaunchedEffect(Unit) {
         viewModel.connect()
+    }
+
+    LaunchedEffect(
+        state.serverBaseUrl,
+        demoMode
+    ) {
+        if (demoMode) {
+            serverBuild = null
+            serverBuildError = null
+        } else {
+            val buildApi =
+                ServerBuildApiClient()
+
+            while (true) {
+                try {
+                    serverBuild =
+                        buildApi.load(
+                            state.serverBaseUrl
+                        )
+
+                    serverBuildError = null
+                } catch (error: Exception) {
+                    serverBuild = null
+
+                    serverBuildError =
+                        error.message
+                            ?: "Version serveur indisponible"
+                }
+
+                delay(10_000L)
+            }
+        }
     }
 
     LaunchedEffect(
@@ -149,6 +199,118 @@ fun StatusScreen(
                 StatusCard(
                     title = "Serveur"
                 ) {
+                    val appBuildStamp =
+                        BuildConfig.VERSION_NAME
+                            .substringAfter(
+                                "-device-",
+                                ""
+                            )
+
+                    val serverBuildStamp =
+                        serverBuild?.buildTimestamp
+
+                    val sameDelivery =
+                        appBuildStamp.isNotBlank() &&
+                            serverBuildStamp != null &&
+                            appBuildStamp ==
+                            serverBuildStamp
+
+                    SectionTitle("VERSIONS")
+
+                    InfoLine(
+                        "Application",
+                        BuildConfig.VERSION_NAME
+                    )
+
+                    InfoLine(
+                        "Git app",
+                        BuildConfig.GIT_SHA
+                    )
+
+                    InfoLine(
+                        "Serveur",
+                        serverBuild?.version
+                            ?: "Non disponible"
+                    )
+
+                    InfoLine(
+                        "Build serveur",
+                        serverBuildStamp
+                            ?: "Non disponible"
+                    )
+
+                    InfoLine(
+                        "Git serveur",
+                        serverBuild?.gitSha
+                            ?: "Non disponible"
+                    )
+
+                    InfoLine(
+                        "Branche serveur",
+                        serverBuild?.branch
+                            ?: "Non disponible"
+                    )
+
+                    InfoLine(
+                        "Sources serveur",
+                        when (serverBuild?.dirty) {
+                            true ->
+                                "Modifications locales"
+
+                            false ->
+                                "Commit propre"
+
+                            null ->
+                                "Non disponible"
+                        }
+                    )
+
+                    Spacer(
+                        Modifier.height(10.dp)
+                    )
+
+                    Text(
+                        text =
+                            when {
+                                serverBuild == null ->
+                                    "Paire App / Serveur : non v\u00e9rifi\u00e9e"
+
+                                sameDelivery ->
+                                    "\u2713 Paire App / Serveur : M\u00caME LIVRAISON"
+
+                                else ->
+                                    "\u26a0 Paire App / Serveur : VERSIONS DIFF\u00c9RENTES"
+                            },
+                        color =
+                            if (sameDelivery) {
+                                StellarGreen
+                            } else {
+                                StellarOrange
+                            },
+                        style =
+                            MaterialTheme.typography.bodyMedium,
+                        fontWeight =
+                            FontWeight.SemiBold
+                    )
+
+                    serverBuildError?.let { error ->
+                        Spacer(
+                            Modifier.height(4.dp)
+                        )
+
+                        Text(
+                            text =
+                                "Version serveur indisponible : $error",
+                            color = StellarOrange,
+                            style =
+                                MaterialTheme.typography.bodySmall
+                        )
+                    }
+
+                    Spacer(
+                        Modifier.height(18.dp)
+                    )
+
                     StatusLine(
                         label = "État",
                         value = statusDisplay(

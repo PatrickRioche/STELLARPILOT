@@ -36,30 +36,46 @@ class DarkCalibrationApiClient(
         serverBaseUrl: String,
         exposureSeconds: Double = 4.0,
         count: Int = 10
-    ): DarkCalibrationStatus = withContext(Dispatchers.IO) {
-        val json = JSONObject()
-            .put("exposure_s", exposureSeconds)
-            .put("requested_count", count)
+    ): DarkCalibrationStatus =
+        withContext(Dispatchers.IO) {
 
-        execute(
-            serverBaseUrl = serverBaseUrl,
-            path = "/calibration/darks",
-            method = "POST",
-            body = json
-        )
-    }
+            val json = JSONObject()
+                .put(
+                    "exposure_s",
+                    exposureSeconds
+                )
+                .put(
+                    "requested_count",
+                    count
+                )
+
+            execute(
+                serverBaseUrl =
+                    serverBaseUrl,
+                path =
+                    "/calibration/darks",
+                method = "POST",
+                body = json
+            )
+        }
+
 
     suspend fun capture(
         serverBaseUrl: String,
         sessionId: String
-    ): DarkCalibrationStatus = withContext(Dispatchers.IO) {
-        execute(
-            serverBaseUrl = serverBaseUrl,
-            path = "/calibration/darks/$sessionId/capture",
-            method = "POST",
-            body = null
-        )
-    }
+    ): DarkCalibrationStatus =
+        withContext(Dispatchers.IO) {
+
+            execute(
+                serverBaseUrl =
+                    serverBaseUrl,
+                path =
+                    "/calibration/darks/$sessionId/capture",
+                method = "POST",
+                body = null
+            )
+        }
+
 
     private fun execute(
         serverBaseUrl: String,
@@ -67,38 +83,130 @@ class DarkCalibrationApiClient(
         method: String,
         body: JSONObject?
     ): DarkCalibrationStatus {
+
         val builder = Request.Builder()
-            .url(serverBaseUrl.trimEnd('/') + path)
-            .header("Connection", "close")
-
-        val request = when (method) {
-            "POST" -> {
-                val requestBody = (body?.toString() ?: "")
-                    .toRequestBody(
-                        "application/json; charset=utf-8".toMediaType()
-                    )
-                builder.post(requestBody).build()
-            }
-            else -> builder.get().build()
-        }
-
-        client.newCall(request).execute().use { response ->
-            check(response.isSuccessful) {
-                "HTTP ${response.code} sur $path"
-            }
-            val payload = response.body?.string()
-                ?: error("Réponse $path vide")
-            val json = JSONObject(payload)
-            return DarkCalibrationStatus(
-                id = json.getString("id"),
-                status = json.optString("status", "error"),
-                exposureSeconds = json.optDouble("exposure_s", 4.0),
-                requestedCount = json.optInt("requested_count", 10),
-                capturedCount = json.optInt("captured_count", 0),
-                validCount = json.optInt("valid_count", 0),
-                storage = json.optString("storage")
-                    .takeIf { it.isNotBlank() }
+            .url(
+                serverBaseUrl
+                    .trimEnd('/') +
+                    path
             )
-        }
+            .header(
+                "Connection",
+                "close"
+            )
+
+        val request =
+            when (method) {
+
+                "POST" -> {
+
+                    val requestBody =
+                        (
+                            body?.toString()
+                                ?: ""
+                        ).toRequestBody(
+                            "application/json; charset=utf-8"
+                                .toMediaType()
+                        )
+
+                    builder
+                        .post(requestBody)
+                        .build()
+                }
+
+                else ->
+                    builder
+                        .get()
+                        .build()
+            }
+
+        client
+            .newCall(request)
+            .execute()
+            .use { response ->
+
+                val payload =
+                    response.body
+                        ?.string()
+                        .orEmpty()
+
+                if (!response.isSuccessful) {
+
+                    val detail =
+                        runCatching {
+                            JSONObject(payload)
+                                .optString(
+                                    "detail",
+                                    ""
+                                )
+                        }
+                            .getOrNull()
+                            ?.takeIf {
+                                it.isNotBlank()
+                            }
+
+                    error(
+                        buildString {
+                            append(
+                                "HTTP ${response.code}"
+                            )
+
+                            if (detail != null) {
+                                append(" • ")
+                                append(detail)
+                            }
+
+                            append(" • ")
+                            append(path)
+                        }
+                    )
+                }
+
+                if (payload.isBlank()) {
+                    error(
+                        "Réponse $path vide"
+                    )
+                }
+
+                val json =
+                    JSONObject(payload)
+
+                return DarkCalibrationStatus(
+                    id =
+                        json.getString("id"),
+                    status =
+                        json.optString(
+                            "status",
+                            "error"
+                        ),
+                    exposureSeconds =
+                        json.optDouble(
+                            "exposure_s",
+                            4.0
+                        ),
+                    requestedCount =
+                        json.optInt(
+                            "requested_count",
+                            10
+                        ),
+                    capturedCount =
+                        json.optInt(
+                            "captured_count",
+                            0
+                        ),
+                    validCount =
+                        json.optInt(
+                            "valid_count",
+                            0
+                        ),
+                    storage =
+                        json.optString(
+                            "storage"
+                        )
+                            .takeIf {
+                                it.isNotBlank()
+                            }
+                )
+            }
     }
 }

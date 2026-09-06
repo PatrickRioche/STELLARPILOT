@@ -488,9 +488,10 @@ fun CaptureScreen(
                             viewModel.startStacking(serverBaseUrl)
                         },
                         enabled =
-                            session?.centering?.status == "centered" &&
+                            target != null &&
                                 !state.isBusy &&
-                                !state.savedToGallery,
+                                !state.savedToGallery &&
+                                (session?.acceptedFrames ?: 0) < 10,
                         modifier = Modifier.fillMaxWidth(),
                         colors = ButtonDefaults.buttonColors(
                             containerColor = StellarOrange,
@@ -498,7 +499,7 @@ fun CaptureScreen(
                         )
                     ) {
                         Text(
-                            text = "DÉMARRER LE STACKING",
+                            text = "DÉMARRER • 10 IMAGES",
                             fontWeight = FontWeight.Bold
                         )
                     }

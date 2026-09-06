@@ -396,13 +396,10 @@ class CaptureViewModel(
     }
 
     fun startStacking(serverBaseUrl: String) {
-        val session = uiState.session ?: return
-        if (
-            uiState.isBusy ||
-            session.centering.status != "centered"
-        ) return
+        if (uiState.isBusy) return
 
         if (DemoModeState.active) {
+            val session = uiState.session ?: return
             startDemoStacking(session)
             return
         }
@@ -411,10 +408,14 @@ class CaptureViewModel(
             uiState = uiState.copy(
                 isBusy = true,
                 error = null,
-                statusMessage = "Démarrage du stacking..."
+                statusMessage =
+                    "Préparation du stacking court • 10 images"
             )
 
             try {
+                val session =
+                    ensureSession(serverBaseUrl)
+
                 val started =
                     CaptureSessionApiClient(serverBaseUrl)
                         .startStack(session.id)
@@ -422,14 +423,21 @@ class CaptureViewModel(
                 uiState = uiState.copy(
                     isBusy = false,
                     session = started,
-                    statusMessage = "Stacking en cours"
+                    statusMessage =
+                        "Stacking court en cours • objectif 10 images"
                 )
-                startMonitor(serverBaseUrl, session.id)
+
+                startMonitor(
+                    serverBaseUrl,
+                    session.id
+                )
 
             } catch (error: Exception) {
                 uiState = uiState.copy(
                     isBusy = false,
-                    error = error.message,
+                    error =
+                        error.message
+                            ?: "Démarrage stacking impossible",
                     statusMessage = null
                 )
             }
@@ -554,8 +562,12 @@ class CaptureViewModel(
                             when {
                                 session.stacking.recenterRequired ->
                                     "Dérive détectée — recentrage astrométrique"
+                                session.state == "stack_complete" ->
+                                    "Stacking terminé • ${session.acceptedFrames}/10 images"
+                                session.state == "stack_incomplete" ->
+                                    "Stacking arrêté • ${session.acceptedFrames}/10 images acceptées"
                                 session.stacking.running ->
-                                    "Stacking en cours"
+                                    "Stacking en cours • ${session.acceptedFrames}/10"
                                 session.state == "stack_error" ->
                                     "Stacking interrompu"
                                 else ->

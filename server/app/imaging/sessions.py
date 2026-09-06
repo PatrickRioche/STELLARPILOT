@@ -175,6 +175,9 @@ class CaptureSessionService:
             },
             "stacking": {
                 "running": False,
+                "target_frames": 10,
+                "max_captured_frames": 20,
+                "astrometry_required": False,
                 "stop_requested": False,
                 "recenter_required": False,
                 "recenter_reason": None,
@@ -581,7 +584,43 @@ class CaptureSessionService:
                     metadata = self._read(session_id)
                     if metadata["stacking"].get("recenter_required"):
                         break
-                    frame_number = int(metadata["counts"]["captured"]) + 1
+
+                    accepted_now = int(
+                        metadata["counts"]["accepted"]
+                    )
+                    captured_now = int(
+                        metadata["counts"]["captured"]
+                    )
+                    target_frames = int(
+                        metadata["stacking"].get(
+                            "target_frames",
+                            10,
+                        )
+                    )
+                    max_captured_frames = int(
+                        metadata["stacking"].get(
+                            "max_captured_frames",
+                            20,
+                        )
+                    )
+
+                    if accepted_now >= target_frames:
+                        metadata["stacking"]["running"] = False
+                        metadata["state"] = "stack_complete"
+                        self._write(metadata)
+                        break
+
+                    if captured_now >= max_captured_frames:
+                        metadata["stacking"]["running"] = False
+                        metadata["state"] = "stack_incomplete"
+                        metadata["stacking"]["error"] = (
+                            "Maximum capture count reached before "
+                            "target stack count"
+                        )
+                        self._write(metadata)
+                        break
+
+                    frame_number = captured_now + 1
 
                 capture = self._capture_into(
                     metadata,
@@ -661,16 +700,45 @@ class CaptureSessionService:
                         "distance_px"
                     ]
                     accepted = int(metadata["counts"]["accepted"])
+
+                    target_frames = int(
+                        metadata["stacking"].get(
+                            "target_frames",
+                            10,
+                        )
+                    )
+
+                    astrometry_required = bool(
+                        metadata["stacking"].get(
+                            "astrometry_required",
+                            False,
+                        )
+                    )
+
                     interval = max(
                         1,
                         int(metadata["setup"]["astrometry_interval_frames"]),
                     )
+
                     registration_trigger = (
-                        registration["distance_px"]
+                        astrometry_required
+                        and registration["distance_px"]
                         >= metadata["setup"]["registration_recenter_pixels"]
                     )
-                    astrometry_due = accepted % interval == 0
+
+                    astrometry_due = (
+                        astrometry_required
+                        and accepted % interval == 0
+                    )
+
+                    if accepted >= target_frames:
+                        metadata["stacking"]["running"] = False
+                        metadata["state"] = "stack_complete"
+
                     self._write(metadata)
+
+                if accepted >= target_frames:
+                    break
 
                 if astrometry_due or registration_trigger:
                     drift = self._check_astrometry_drift(
@@ -710,12 +778,9 @@ class CaptureSessionService:
     def start_stack(self, session_id: str) -> dict:
         with self._lock:
             metadata = self._read(session_id)
-            if metadata["centering"].get("status") != "centered":
-                return {
-                    "status": "centering_required",
-                    "detail": "Validate astrometric centering before stacking",
-                    "session": metadata,
-                }
+            metadata["stacking"]["start_centering_status"] = (
+                metadata["centering"].get("status")
+            )
             thread = self._threads.get(session_id)
             if thread is not None and thread.is_alive():
                 return {"status": "already_running", "session": metadata}

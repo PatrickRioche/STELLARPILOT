@@ -27,6 +27,10 @@ fun gitShortSha(): String {
 
 val gitSha = gitShortSha()
 
+val buildTimestamp =
+    System.getenv("STELLARPILOT_BUILD_TIMESTAMP")
+        ?: "local"
+
 android {
     namespace = "fr.stellarpilot.app"
     compileSdk = 36
@@ -52,7 +56,7 @@ android {
         create("simulation") {
             dimension = "backend"
             applicationIdSuffix = ".simulation"
-            versionNameSuffix = "-simulation"
+            versionNameSuffix = "-simulation-$buildTimestamp"
 
             buildConfigField(
                 "String",
@@ -69,7 +73,7 @@ android {
 
         create("device") {
             dimension = "backend"
-            versionNameSuffix = "-device"
+            versionNameSuffix = "-device-$buildTimestamp"
 
             buildConfigField(
                 "String",

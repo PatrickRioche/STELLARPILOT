@@ -311,6 +311,10 @@ class MountDiagnosticsViewModel : ViewModel() {
                     delay(700)
                     lastStatus = diagnosticsApi.status(base)
 
+                    uiState = uiState.copy(
+                        status = lastStatus
+                    )
+
                     val state = lastStatus.status.lowercase()
 
                     if (effectiveMovementTest != null) {
@@ -328,6 +332,9 @@ class MountDiagnosticsViewModel : ViewModel() {
                         ) {
                             delay(500)
                             lastStatus = diagnosticsApi.status(base)
+                            uiState = uiState.copy(
+                                status = lastStatus
+                            )
                             break
                         }
                     } else if (state == "tracking" || state == "idle") {
