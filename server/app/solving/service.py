@@ -11,11 +11,11 @@ class PlateSolverService:
     Aucun accès Internet n'est nécessaire : solve-field utilise les index
     installés localement dans /usr/share/astrometry.
 
-    Pour l'Assistant 3, StellarPilot essaie d'abord d'utiliser la position
-    équatoriale réellement publiée par la monture INDI comme centre de
-    recherche. La RA INDI est exprimée en heures et est convertie en degrés
-    avant d'être transmise à solve-field. Un blind solve reste toujours le
-    dernier recours.
+    Pour l'assistant StellarPilot, la position équatoriale publiée par la
+    monture INDI peut être utilisée comme simple indice de recherche. La RA
+    INDI est exprimée en heures et est convertie en degrés avant d'être
+    transmise à solve-field. La solution issue de l'image reste toujours la
+    référence et un blind solve est systématiquement disponible en secours.
     """
 
     @staticmethod
@@ -23,8 +23,9 @@ class PlateSolverService:
         """Return a safe astrometry.net position hint from the connected mount.
 
         INDI telescope RA values are in hours while astrometry.net --ra expects
-        degrees. The hint is advisory only: if it is unavailable or invalid,
-        solve_robust continues with scale-only/blind strategies.
+        degrees. Le statut textuel de la monture est conservé pour diagnostic
+        mais n'est pas utilisé seul pour rejeter le hint : les essais terrain
+        ont montré qu'il pouvait être en retard sur les coordonnées publiées.
         """
         try:
             # Lazy import avoids coupling the module import graph to INDI.
@@ -32,6 +33,12 @@ class PlateSolverService:
 
             status = indi_service.mount_status()
         except Exception:
+            return None
+
+        if not isinstance(status, dict):
+            return None
+
+        if status.get("status") == "error":
             return None
 
         try:
@@ -289,54 +296,64 @@ class PlateSolverService:
         image: str,
         ra_hint: float | None = None,
         dec_hint: float | None = None,
-        expected_scale_arcsec: float = 1.22,
+        expected_scale_arcsec: float = 1.218,
     ) -> dict:
-        """Solve with mount-assisted searches followed by a blind fallback.
+        """Solve robustly using the 5 September 2026 field-test findings.
 
-        When no explicit position is supplied, the current INDI mount
-        coordinates are used automatically for the two fast constrained
-        attempts. The final ``scale_broad`` strategy deliberately ignores the
-        position hint, so an inaccurate mount cannot prevent a blind solve.
+        Order:
+        1. INDI position + narrow scale window;
+        2. blind solve with the same narrow scale window;
+        3. blind solve with a wider scale window.
+
+        The INDI coordinates are advisory only. A wrong or stale mount hint can
+        therefore slow the first attempt but can never block the blind solve.
+        The default scale is based on the measured mean of about 1.2172"/px.
         """
         attempts = []
         position_hint = None
 
-        if ra_hint is None and dec_hint is None:
+        if ra_hint is None or dec_hint is None:
             position_hint = self._current_mount_position_hint()
 
             if position_hint is not None:
                 ra_hint = position_hint["ra_deg"]
                 dec_hint = position_hint["dec_deg"]
-        elif ra_hint is not None and dec_hint is not None:
+        else:
             position_hint = {
                 "source": "caller",
                 "ra_deg": ra_hint,
                 "dec_deg": dec_hint,
             }
 
+        # 1.218"/px -> about 0.90–1.51"/px. This corresponds to the
+        # successful offline retest window while still tolerating a changed
+        # instrument profile through expected_scale_arcsec.
+        narrow_low = expected_scale_arcsec * 0.74
+        narrow_high = expected_scale_arcsec * 1.24
+
         strategies = [
             {
-                "name": "scale_narrow",
-                "scale_low": expected_scale_arcsec * 0.70,
-                "scale_high": expected_scale_arcsec * 1.40,
+                "name": "scale_narrow_position",
+                "scale_low": narrow_low,
+                "scale_high": narrow_high,
                 "radius": 8.0,
-                "timeout": 15,
+                "timeout": 20,
                 "use_position": True,
             },
             {
-                "name": "scale_wide",
-                "scale_low": expected_scale_arcsec * 0.45,
-                "scale_high": expected_scale_arcsec * 2.00,
-                "radius": 20.0,
-                "timeout": 30,
-                "use_position": True,
-            },
-            {
-                "name": "scale_broad",
-                "scale_low": 0.2,
-                "scale_high": 5.0,
+                "name": "scale_narrow_blind",
+                "scale_low": narrow_low,
+                "scale_high": narrow_high,
                 "radius": None,
-                "timeout": 30,
+                "timeout": 90,
+                "use_position": False,
+            },
+            {
+                "name": "scale_wide_blind",
+                "scale_low": 0.50,
+                "scale_high": 2.50,
+                "radius": None,
+                "timeout": 120,
                 "use_position": False,
             },
         ]
@@ -344,13 +361,18 @@ class PlateSolverService:
         total_start = perf_counter()
 
         for strategy in strategies:
-            attempt_start = perf_counter()
-
             use_position = (
                 strategy["use_position"]
                 and ra_hint is not None
                 and dec_hint is not None
             )
+
+            # Without a usable position, start directly with the blind narrow
+            # strategy rather than running the same solve twice.
+            if strategy["use_position"] and not use_position:
+                continue
+
+            attempt_start = perf_counter()
 
             result = self.solve(
                 image=image,
@@ -376,8 +398,14 @@ class PlateSolverService:
                     "strategy": strategy["name"],
                     "status": result.get("status"),
                     "duration_s": attempt_duration,
-                    "scale_low_arcsec": strategy["scale_low"],
-                    "scale_high_arcsec": strategy["scale_high"],
+                    "scale_low_arcsec": round(
+                        strategy["scale_low"],
+                        6,
+                    ),
+                    "scale_high_arcsec": round(
+                        strategy["scale_high"],
+                        6,
+                    ),
                     "position_hint_used": use_position,
                     "ra_hint_deg": ra_hint if use_position else None,
                     "dec_hint_deg": dec_hint if use_position else None,
