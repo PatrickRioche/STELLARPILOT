@@ -10,7 +10,9 @@ import fr.stellarpilot.app.data.remote.MountDiagnosticsApiClient
 import fr.stellarpilot.app.data.remote.MountDiagnosticsResult
 import fr.stellarpilot.app.data.remote.MountGotoCommandClient
 import fr.stellarpilot.app.domain.model.SkyStar
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlin.math.abs
 
@@ -52,10 +54,14 @@ class MountDiagnosticsViewModel : ViewModel() {
 
     companion object {
         private const val TAG = "StellarMountTest"
+        private const val POSITION_REFRESH_MS = 1_000L
     }
 
     var uiState by mutableStateOf(MountDiagnosticsUiState())
         private set
+
+    private var positionPollingJob: Job? = null
+    private var positionPollingBaseUrl: String? = null
 
     fun refresh(serverBaseUrl: String) {
         if (uiState.isLoading) return
@@ -111,6 +117,8 @@ class MountDiagnosticsViewModel : ViewModel() {
                             ?: "Synchronisation TIME_UTC OnStep non validée"
                     }
                 )
+
+                ensurePositionPolling(serverBaseUrl)
             } catch (error: Exception) {
                 uiState = uiState.copy(
                     isLoading = false,
@@ -118,6 +126,42 @@ class MountDiagnosticsViewModel : ViewModel() {
                     timeSyncVerified = false,
                     error = error.message ?: "État monture indisponible"
                 )
+            }
+        }
+    }
+
+    private fun ensurePositionPolling(serverBaseUrl: String) {
+        val normalizedBaseUrl = serverBaseUrl.trimEnd('/') + "/"
+
+        if (
+            positionPollingJob?.isActive == true &&
+            positionPollingBaseUrl == normalizedBaseUrl
+        ) {
+            return
+        }
+
+        positionPollingJob?.cancel()
+        positionPollingBaseUrl = normalizedBaseUrl
+
+        positionPollingJob = viewModelScope.launch {
+            val api = MountDiagnosticsApiClient()
+
+            while (isActive) {
+                delay(POSITION_REFRESH_MS)
+
+                if (uiState.isLoading) {
+                    continue
+                }
+
+                try {
+                    val status = api.status(normalizedBaseUrl)
+                    uiState = uiState.copy(status = status)
+                } catch (error: Exception) {
+                    Log.w(
+                        TAG,
+                        "OnStep position refresh failed: ${error.message}"
+                    )
+                }
             }
         }
     }
