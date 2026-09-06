@@ -70,9 +70,15 @@ data class GallerySession(
     val createdAt: String,
     val targetName: String,
     val exposureSeconds: Double,
+    val capturedFrames: Int,
     val acceptedFrames: Int,
     val rejectedFrames: Int,
-    val integrationSeconds: Double
+    val integrationSeconds: Double,
+    val latitude: Double?,
+    val longitude: Double?,
+    val altitudeM: Double?,
+    val locationSource: String?,
+    val placeName: String?
 )
 
 
@@ -257,6 +263,7 @@ class CaptureSessionApiClient(
                     val target = item.optJSONObject("target")
                     val setup = item.optJSONObject("setup")
                     val counts = item.optJSONObject("counts")
+                    val observation = item.optJSONObject("observation")
                     add(
                         GallerySession(
                             id = item.optString("id"),
@@ -268,6 +275,9 @@ class CaptureSessionApiClient(
                             exposureSeconds =
                                 setup?.optDouble("exposure_s", 4.0)
                                     ?: 4.0,
+                            capturedFrames =
+                                counts?.optInt("captured", 0)
+                                    ?: 0,
                             acceptedFrames =
                                 counts?.optInt("accepted", 0)
                                     ?: 0,
@@ -278,7 +288,27 @@ class CaptureSessionApiClient(
                                 item.optDouble(
                                     "integration_seconds",
                                     0.0
-                                )
+                                ),
+                            latitude =
+                                observation?.let {
+                                    nullableDouble(it, "latitude")
+                                },
+                            longitude =
+                                observation?.let {
+                                    nullableDouble(it, "longitude")
+                                },
+                            altitudeM =
+                                observation?.let {
+                                    nullableDouble(it, "altitude_m")
+                                },
+                            locationSource =
+                                observation?.let {
+                                    nullableString(it, "location_source")
+                                },
+                            placeName =
+                                observation?.let {
+                                    nullableString(it, "place_name")
+                                }
                         )
                     )
                 }
@@ -336,14 +366,18 @@ class CaptureSessionApiClient(
                 .get()
                 .build()
 
-        client.newCall(request)
+        client.newCall(requestBuilder = request)
+    }
+
+    private fun OkHttpClient.newCall(requestBuilder: Request): ByteArray {
+        newCall(requestBuilder)
             .execute()
             .use { response ->
                 check(response.isSuccessful) {
-                    "HTTP ${response.code} sur /$path"
+                    "HTTP ${response.code} sur ${requestBuilder.url.encodedPath}"
                 }
                 return response.body?.bytes()
-                    ?: error("Image /$path vide")
+                    ?: error("Image ${requestBuilder.url.encodedPath} vide")
             }
     }
 
@@ -354,24 +388,6 @@ class CaptureSessionApiClient(
         val centering = root.optJSONObject("centering") ?: JSONObject()
         val centeringQuality = root.optJSONObject("centering_quality")
         val stacking = root.optJSONObject("stacking") ?: JSONObject()
-
-        fun nullableDouble(
-            json: JSONObject,
-            key: String
-        ): Double? {
-            if (!json.has(key) || json.isNull(key)) return null
-            return json.optDouble(key, Double.NaN)
-                .takeUnless { it.isNaN() }
-        }
-
-        fun nullableString(
-            json: JSONObject,
-            key: String
-        ): String? {
-            if (!json.has(key) || json.isNull(key)) return null
-            return json.optString(key)
-                .takeIf { it.isNotBlank() }
-        }
 
         val parsedQuality =
             centeringQuality?.let { quality ->
@@ -464,6 +480,24 @@ class CaptureSessionApiClient(
                 !root.isNull("stack_preview") && root.has("stack_preview"),
             galleryPath = nullableString(root, "gallery_path")
         )
+    }
+
+    private fun nullableDouble(
+        json: JSONObject,
+        key: String
+    ): Double? {
+        if (!json.has(key) || json.isNull(key)) return null
+        return json.optDouble(key, Double.NaN)
+            .takeUnless { it.isNaN() }
+    }
+
+    private fun nullableString(
+        json: JSONObject,
+        key: String
+    ): String? {
+        if (!json.has(key) || json.isNull(key)) return null
+        return json.optString(key)
+            .takeIf { it.isNotBlank() }
     }
 
     private fun endpoint(path: String): String =
