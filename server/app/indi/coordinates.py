@@ -251,6 +251,7 @@ def sync_mount_j2000(
 
 
 # `app.main` imports this module after `_main_core.app` exists. Importing the
-# field-test routes here registers the diagnostic-only mount-frame endpoint
-# without changing the public J2000 `/mount/goto` contract.
+# route modules here registers the diagnostic mount endpoints without changing
+# the public J2000 `/mount/goto` contract.
+from app.indi import firmware_routes as _firmware_routes  # noqa: E402,F401
 from app.indi import field_test_routes as _field_test_routes  # noqa: E402,F401
