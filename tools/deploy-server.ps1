@@ -42,8 +42,18 @@ try {
         throw "Unable to read local Git commit."
     }
 
+    $versionPath = Join-Path $RepoRoot "VERSION"
+    if (-not (Test-Path $versionPath)) {
+        throw "VERSION file missing: $versionPath"
+    }
+
+    $version = (Get-Content $versionPath -Raw).Trim()
+    $buildTimestamp = (Get-Date).ToUniversalTime().ToString("yyyyMMdd-HHmmss")
+
     Write-Host "[StellarPilot] Local branch : $branch"
     Write-Host "[StellarPilot] Commit       : $commit"
+    Write-Host "[StellarPilot] Version      : $version"
+    Write-Host "[StellarPilot] Build UTC    : $buildTimestamp"
 
     Remove-Item $Package -Force -ErrorAction SilentlyContinue
     Remove-Item $RemoteScriptLocal -Force -ErrorAction SilentlyContinue
@@ -66,6 +76,10 @@ set -euo pipefail
 PACKAGE="__REMOTE_PACKAGE__"
 STAGE="/tmp/stellarpilot-server-stage"
 DEPLOY="__DEPLOY_DIR__"
+VERSION="__VERSION__"
+BUILD_TIMESTAMP="__BUILD_TIMESTAMP__"
+GIT_SHA="__GIT_SHA__"
+BRANCH="__BRANCH__"
 
 log() { printf '[StellarPilot] %s\n' "$*"; }
 fail() { printf '[StellarPilot][ERROR] %s\n' "$*" >&2; exit 1; }
@@ -101,6 +115,19 @@ rsync -a --delete \
     --exclude '.venv/' \
     --exclude 'data/' \
     "$STAGE/server/" "$DEPLOY/"
+
+# BUILD_INFO.json in the repository is intentionally generic. The deployment
+# kit stamps the exact version, commit and branch that were archived on the PC.
+cat > "$DEPLOY/BUILD_INFO.json" <<EOF
+{
+  "service": "stellarpilot-server",
+  "version": "$VERSION",
+  "build_timestamp": "$BUILD_TIMESTAMP",
+  "git_sha": "$GIT_SHA",
+  "branch": "$BRANCH",
+  "dirty": false
+}
+EOF
 
 cd "$DEPLOY"
 
@@ -191,6 +218,10 @@ log "Checking /health"
 curl --fail --silent --show-error http://127.0.0.1:8000/health
 printf '\n'
 
+log "Checking /build"
+curl --fail --silent --show-error http://127.0.0.1:8000/build
+printf '\n'
+
 log "Checking V0.6 API"
 curl --fail --silent --show-error http://127.0.0.1:8000/openapi.json | python3 -c '
 import json, sys
@@ -200,8 +231,9 @@ print("version=", version)
 paths = api.get("paths", {})
 required = ["/mount/goto-mount-frame", "/mount/sync", "/mount/status"]
 missing = [path for path in required if path not in paths]
-if version != "0.6.0-poc":
-    print("expected_version=0.6.0-poc")
+expected = "__VERSION__"
+if version != expected:
+    print("expected_version=", expected)
     raise SystemExit(2)
 if missing:
     print("missing_routes=", ",".join(missing))
@@ -219,6 +251,10 @@ log "Deployment complete"
     $remoteBody = $remoteBody.Replace("__REMOTE_PACKAGE__", $RemotePackage)
     $remoteBody = $remoteBody.Replace("__REMOTE_SCRIPT__", $RemoteScript)
     $remoteBody = $remoteBody.Replace("__DEPLOY_DIR__", $DeployDir)
+    $remoteBody = $remoteBody.Replace("__VERSION__", $version)
+    $remoteBody = $remoteBody.Replace("__BUILD_TIMESTAMP__", $buildTimestamp)
+    $remoteBody = $remoteBody.Replace("__GIT_SHA__", $commit)
+    $remoteBody = $remoteBody.Replace("__BRANCH__", $branch)
     $remoteBody = $remoteBody -replace "`r`n", "`n"
 
     # UTF-8 without BOM for Bash.
