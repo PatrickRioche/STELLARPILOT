@@ -35,6 +35,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import fr.stellarpilot.app.BuildConfig
 import fr.stellarpilot.app.R
+import fr.stellarpilot.app.feature.status.SetupDiagnosticsViewModel
 import fr.stellarpilot.app.ui.theme.StellarBackground
 import fr.stellarpilot.app.ui.theme.StellarBorder
 import fr.stellarpilot.app.ui.theme.StellarGreen
@@ -44,13 +45,17 @@ import fr.stellarpilot.app.ui.theme.StellarRed
 import fr.stellarpilot.app.ui.theme.StellarSurface
 import fr.stellarpilot.app.ui.theme.StellarSurfaceRaised
 import fr.stellarpilot.app.ui.theme.StellarText
+import java.util.Locale
 
 @Composable
 fun ConnectionScreen(
-    viewModel: ConnectionViewModel = viewModel()
+    viewModel: ConnectionViewModel = viewModel(),
+    setupViewModel: SetupDiagnosticsViewModel = viewModel()
 ) {
     val state = viewModel.uiState
     val server = state.server
+    val setupState = setupViewModel.uiState
+    val opticalSetup = setupState.setup
 
     /*
      * La connexion au serveur depend de ConnectionState.
@@ -67,6 +72,12 @@ fun ConnectionScreen(
         viewModel.connect()
     }
 
+    LaunchedEffect(serverConnected, state.serverBaseUrl) {
+        if (serverConnected) {
+            setupViewModel.refresh(state.serverBaseUrl)
+        }
+    }
+
     Surface(
         modifier = Modifier.fillMaxSize(),
         color = StellarBackground
@@ -81,15 +92,10 @@ fun ConnectionScreen(
                 )
         ) {
 
-            // ----------------------------------------------------
-            // HEADER
-            // ----------------------------------------------------
-
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-
                 Image(
                     painter = painterResource(R.mipmap.ic_launcher),
                     contentDescription = "StellarPilot",
@@ -101,14 +107,12 @@ fun ConnectionScreen(
                         .weight(1f)
                         .padding(start = 16.dp)
                 ) {
-
                     Text(
                         text = "StellarPilot",
                         style = MaterialTheme.typography.headlineMedium,
                         fontWeight = FontWeight.Bold,
                         color = StellarText
                     )
-
                     Text(
                         text = "Pilotage astronomique",
                         style = MaterialTheme.typography.bodyMedium,
@@ -116,9 +120,7 @@ fun ConnectionScreen(
                     )
                 }
 
-                ModeBadge(
-                    text = state.backendMode
-                )
+                ModeBadge(text = state.backendMode)
             }
 
             Spacer(Modifier.height(28.dp))
@@ -129,53 +131,31 @@ fun ConnectionScreen(
                 fontWeight = FontWeight.SemiBold,
                 color = StellarText
             )
-
             Spacer(Modifier.height(6.dp))
-
             Text(
-                text = "Serveur StellarPilot et mat\u00E9riel d'observation",
+                text = "Serveur StellarPilot et matériel d'observation",
                 style = MaterialTheme.typography.bodyMedium,
                 color = StellarMuted
             )
-
             Spacer(Modifier.height(20.dp))
-
-            // ----------------------------------------------------
-            // SERVER
-            // ----------------------------------------------------
 
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(22.dp),
-                colors = CardDefaults.cardColors(
-                    containerColor = StellarSurface
-                ),
-                border = BorderStroke(
-                    1.dp,
-                    StellarBorder
-                )
+                colors = CardDefaults.cardColors(containerColor = StellarSurface),
+                border = BorderStroke(1.dp, StellarBorder)
             ) {
-                Column(
-                    modifier = Modifier.padding(20.dp)
-                ) {
-
+                Column(modifier = Modifier.padding(20.dp)) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-
                         StatusDot(
-                            status =
-                                when {
-                                    serverConnected ->
-                                        "connected"
-
-                                    serverConnecting ->
-                                        "connecting"
-
-                                    else ->
-                                        "offline"
-                                }
+                            status = when {
+                                serverConnected -> "connected"
+                                serverConnecting -> "connecting"
+                                else -> "offline"
+                            }
                         )
 
                         Column(
@@ -183,36 +163,24 @@ fun ConnectionScreen(
                                 .weight(1f)
                                 .padding(start = 14.dp)
                         ) {
-
                             Text(
                                 text = "Serveur StellarPilot",
                                 style = MaterialTheme.typography.titleMedium,
                                 fontWeight = FontWeight.SemiBold,
                                 color = StellarText
                             )
-
                             Text(
-                                text =
-                                    when {
-                                        serverConnected ->
-                                            "Connect\u00E9 \u2022 ${state.serverBaseUrl}"
-
-                                        serverConnecting ->
-                                            "Reconnexion en cours..."
-
-                                        else ->
-                                            "Serveur non connect\u00E9"
-                                    },
+                                text = when {
+                                    serverConnected -> "Connecté • ${state.serverBaseUrl}"
+                                    serverConnecting -> "Reconnexion en cours..."
+                                    else -> "Serveur non connecté"
+                                },
                                 style = MaterialTheme.typography.bodySmall,
                                 color = StellarMuted
                             )
                         }
 
-                        server?.let {
-                            ModeBadge(
-                                text = it.mode.uppercase()
-                            )
-                        }
+                        server?.let { ModeBadge(text = it.mode.uppercase()) }
                     }
 
                     Spacer(Modifier.height(18.dp))
@@ -221,50 +189,28 @@ fun ConnectionScreen(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
-
-                        BuildInfo(
-                            label = "VERSION",
-                            value = BuildConfig.VERSION_NAME
-                        )
-
-                        BuildInfo(
-                            label = "COMMIT",
-                            value = BuildConfig.GIT_SHA
-                        )
-
-                        BuildInfo(
-                            label = "APP",
-                            value = state.backendMode
-                        )
+                        BuildInfo("VERSION", BuildConfig.VERSION_NAME)
+                        BuildInfo("COMMIT", BuildConfig.GIT_SHA)
+                        BuildInfo("APP", state.backendMode)
                     }
                 }
             }
 
             Spacer(Modifier.height(24.dp))
 
-            // ----------------------------------------------------
-            // HARDWARE STATUS
-            // ----------------------------------------------------
-
             Text(
-                text = "Statut syst\u00E8me",
+                text = "Statut système",
                 style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.SemiBold,
                 color = StellarText
             )
-
             Spacer(Modifier.height(12.dp))
 
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(22.dp),
-                colors = CardDefaults.cardColors(
-                    containerColor = StellarSurface
-                ),
-                border = BorderStroke(
-                    1.dp,
-                    StellarBorder
-                )
+                colors = CardDefaults.cardColors(containerColor = StellarSurface),
+                border = BorderStroke(1.dp, StellarBorder)
             ) {
                 Column(
                     modifier = Modifier.padding(
@@ -272,66 +218,98 @@ fun ConnectionScreen(
                         vertical = 10.dp
                     )
                 ) {
-
                     if (server == null) {
-
                         Text(
-                            text =
-                                when {
-                                    serverConnected ->
-                                        "Serveur connect\u00E9 - t\u00E9l\u00E9m\u00E9trie /status indisponible"
-
-                                    serverConnecting ->
-                                        "Lecture de l'\u00E9tat du serveur..."
-
-                                    else ->
-                                        "Aucune donn\u00E9e disponible"
-                                },
+                            text = when {
+                                serverConnected -> "Serveur connecté - télémétrie /status indisponible"
+                                serverConnecting -> "Lecture de l'état du serveur..."
+                                else -> "Aucune donnée disponible"
+                            },
                             modifier = Modifier.padding(vertical = 20.dp),
                             color = StellarMuted
                         )
-
                     } else {
-
                         StatusRow(
                             label = "Serveur",
                             detail = server.service,
                             status = server.devices.server.status
                         )
-
                         StatusSeparator()
 
                         StatusRow(
                             label = "Monture",
-                            detail = server.devices.mount.name
-                                ?: "P\u00E9riph\u00E9rique INDI",
+                            detail = server.devices.mount.name ?: "Périphérique INDI",
                             status = server.devices.mount.status
                         )
-
                         StatusSeparator()
 
                         StatusRow(
-                            label = "Cam\u00E9ra",
-                            detail = server.devices.camera.name
-                                ?: "P\u00E9riph\u00E9rique INDI",
+                            label = "Caméra",
+                            detail = server.devices.camera.name ?: "Périphérique INDI",
                             status = server.devices.camera.status
                         )
+                        StatusSeparator()
 
+                        StatusRow(
+                            label = "Setup optique",
+                            detail = opticalSetup?.let { setup ->
+                                buildString {
+                                    append(
+                                        setup.telescopeName
+                                            ?: setup.scopeConfig
+                                            ?: setup.opticalTrainName
+                                            ?: "Configuration KStars"
+                                    )
+                                    setup.focalLengthMm?.let {
+                                        append(" • ${String.format(Locale.FRANCE, "%.0f mm", it)}")
+                                    }
+                                    setup.focalRatio?.let {
+                                        append(" • f/${String.format(Locale.FRANCE, "%.2f", it)}")
+                                    }
+                                }
+                            } ?: if (setupState.isLoading) {
+                                "Lecture KStars / Ekos..."
+                            } else {
+                                "Non disponible"
+                            },
+                            status = when {
+                                setupState.isLoading -> "connecting"
+                                opticalSetup == null -> "unavailable"
+                                opticalSetup.consistency == "warning" -> "warning"
+                                else -> opticalSetup.status
+                            }
+                        )
+                        StatusSeparator()
+
+                        StatusRow(
+                            label = "KStars / Ekos",
+                            detail = opticalSetup?.let {
+                                buildString {
+                                    append(if (it.databaseAvailable) "Base KStars détectée" else "Base KStars absente")
+                                    append(" • ")
+                                    append(if (it.kstarsRunning) "KStars actif" else "KStars arrêté")
+                                    it.opticalTrainName?.let { train -> append(" • $train") }
+                                }
+                            } ?: setupState.error ?: "Lecture en attente",
+                            status = when {
+                                opticalSetup?.databaseAvailable == true -> "ready"
+                                setupState.isLoading -> "connecting"
+                                else -> "unavailable"
+                            }
+                        )
                         StatusSeparator()
 
                         val gps = server.devices.gps
-
                         StatusRow(
                             label = "GPS",
-                            detail =
-                                if (
-                                    gps.latitude != null &&
-                                    gps.longitude != null
-                                ) {
-                                    "${gps.latitude}, ${gps.longitude}"
-                                } else {
-                                    "Position en attente"
-                                },
+                            detail = if (
+                                gps.latitude != null &&
+                                gps.longitude != null
+                            ) {
+                                "${gps.latitude}, ${gps.longitude}"
+                            } else {
+                                "Position en attente"
+                            },
                             status = gps.status
                         )
                     }
@@ -339,21 +317,15 @@ fun ConnectionScreen(
             }
 
             state.error?.let { error ->
-
                 Spacer(Modifier.height(16.dp))
-
                 Card(
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(18.dp),
                     colors = CardDefaults.cardColors(
                         containerColor = StellarRed.copy(alpha = 0.12f)
                     ),
-                    border = BorderStroke(
-                        1.dp,
-                        StellarRed.copy(alpha = 0.45f)
-                    )
+                    border = BorderStroke(1.dp, StellarRed.copy(alpha = 0.45f))
                 ) {
-
                     Text(
                         text = "Erreur : $error",
                         modifier = Modifier.padding(16.dp),
@@ -365,13 +337,14 @@ fun ConnectionScreen(
 
             Spacer(Modifier.height(24.dp))
 
-            // ----------------------------------------------------
-            // REFRESH
-            // ----------------------------------------------------
-
             Button(
-                onClick = viewModel::connect,
-                enabled = !state.isConnecting,
+                onClick = {
+                    viewModel.connect()
+                    if (serverConnected) {
+                        setupViewModel.refresh(state.serverBaseUrl)
+                    }
+                },
+                enabled = !state.isConnecting && !setupState.isLoading,
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(56.dp),
@@ -379,20 +352,16 @@ fun ConnectionScreen(
                 colors = ButtonDefaults.buttonColors(
                     containerColor = StellarOrange,
                     contentColor = StellarBackground,
-                    disabledContainerColor =
-                        StellarOrange.copy(alpha = 0.45f),
-                    disabledContentColor =
-                        StellarBackground.copy(alpha = 0.7f)
+                    disabledContainerColor = StellarOrange.copy(alpha = 0.45f),
+                    disabledContentColor = StellarBackground.copy(alpha = 0.7f)
                 )
             ) {
-
                 Text(
-                    text =
-                        if (state.isConnecting) {
-                            "Connexion..."
-                        } else {
-                            "Actualiser les \u00E9tats"
-                        },
+                    text = if (state.isConnecting || setupState.isLoading) {
+                        "Actualisation..."
+                    } else {
+                        "Actualiser les états"
+                    },
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold
                 )
@@ -400,20 +369,12 @@ fun ConnectionScreen(
 
             Spacer(Modifier.height(20.dp))
 
-            // ----------------------------------------------------
-            // FOOTER
-            // ----------------------------------------------------
-
             Text(
                 text =
-                    "v${BuildConfig.VERSION_NAME} \u2022 " +
-                    "${BuildConfig.GIT_SHA} \u2022 " +
+                    "v${BuildConfig.VERSION_NAME} • " +
+                    "${BuildConfig.GIT_SHA} • " +
                     "App ${state.backendMode}" +
-                    (
-                        server?.let {
-                            " \u2022 Serveur ${it.mode.uppercase()}"
-                        } ?: ""
-                    ),
+                    (server?.let { " • Serveur ${it.mode.uppercase()}" } ?: ""),
                 modifier = Modifier.align(Alignment.CenterHorizontally),
                 style = MaterialTheme.typography.bodySmall,
                 color = StellarMuted
@@ -425,24 +386,15 @@ fun ConnectionScreen(
 }
 
 @Composable
-private fun ModeBadge(
-    text: String
-) {
+private fun ModeBadge(text: String) {
     Surface(
         shape = RoundedCornerShape(50),
         color = StellarSurfaceRaised,
-        border = BorderStroke(
-            1.dp,
-            StellarOrange.copy(alpha = 0.65f)
-        )
+        border = BorderStroke(1.dp, StellarOrange.copy(alpha = 0.65f))
     ) {
-
         Text(
             text = text.uppercase(),
-            modifier = Modifier.padding(
-                horizontal = 11.dp,
-                vertical = 6.dp
-            ),
+            modifier = Modifier.padding(horizontal = 11.dp, vertical = 6.dp),
             style = MaterialTheme.typography.labelSmall,
             fontWeight = FontWeight.Bold,
             color = StellarOrange
@@ -451,20 +403,14 @@ private fun ModeBadge(
 }
 
 @Composable
-private fun BuildInfo(
-    label: String,
-    value: String
-) {
+private fun BuildInfo(label: String, value: String) {
     Column {
-
         Text(
             text = label,
             style = MaterialTheme.typography.labelSmall,
             color = StellarMuted
         )
-
         Spacer(Modifier.height(3.dp))
-
         Text(
             text = value,
             style = MaterialTheme.typography.bodySmall,
@@ -486,26 +432,20 @@ private fun StatusRow(
             .padding(vertical = 14.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-
-        StatusDot(
-            status = status
-        )
+        StatusDot(status = status)
 
         Column(
             modifier = Modifier
                 .weight(1f)
                 .padding(start = 14.dp)
         ) {
-
             Text(
                 text = label,
                 style = MaterialTheme.typography.titleSmall,
                 fontWeight = FontWeight.SemiBold,
                 color = StellarText
             )
-
             Spacer(Modifier.height(2.dp))
-
             Text(
                 text = detail,
                 style = MaterialTheme.typography.bodySmall,
@@ -523,9 +463,7 @@ private fun StatusRow(
 }
 
 @Composable
-private fun StatusDot(
-    status: String
-) {
+private fun StatusDot(status: String) {
     Box(
         modifier = Modifier
             .size(11.dp)
@@ -546,11 +484,8 @@ private fun StatusSeparator() {
     )
 }
 
-private fun statusColor(
-    status: String
-): Color =
+private fun statusColor(status: String): Color =
     when (status.lowercase()) {
-
         "online",
         "ready",
         "fix",
