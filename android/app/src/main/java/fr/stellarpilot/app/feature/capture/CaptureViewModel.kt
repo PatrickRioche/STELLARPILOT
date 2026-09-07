@@ -65,6 +65,7 @@ class CaptureViewModel(
     private var operationTimerJob: Job? = null
     private var demoStackJob: Job? = null
     private var autoRecenterRunning = false
+    private var demoAcquisitionStartedAt: Long? = null
 
     init {
         loadSelectedTarget()
@@ -72,39 +73,28 @@ class CaptureViewModel(
 
     fun loadSelectedTarget() {
         val context = getApplication<Application>()
-        val targetPreferences =
-            context.getSharedPreferences(
-                "stellarpilot_target",
-                0
-            )
-        val setupPreferences =
-            context.getSharedPreferences(
-                "stellarpilot_capture_setup",
-                0
-            )
+        val targetPreferences = context.getSharedPreferences(
+            "stellarpilot_target",
+            0
+        )
+        val setupPreferences = context.getSharedPreferences(
+            "stellarpilot_capture_setup",
+            0
+        )
 
         val name = targetPreferences.getString("name", null)
-        val ra = targetPreferences
-            .getString("ra_hours", null)
-            ?.toDoubleOrNull()
-        val dec = targetPreferences
-            .getString("dec_deg", null)
-            ?.toDoubleOrNull()
+        val ra = targetPreferences.getString("ra_hours", null)?.toDoubleOrNull()
+        val dec = targetPreferences.getString("dec_deg", null)?.toDoubleOrNull()
 
         val target =
             if (name != null && ra != null && dec != null) {
                 CaptureTarget(
                     name = name,
-                    reference =
-                        targetPreferences.getString(
-                            "reference",
-                            null
-                        ),
-                    objectType =
-                        targetPreferences.getString(
-                            "object_type",
-                            "unknown"
-                        ) ?: "unknown",
+                    reference = targetPreferences.getString("reference", null),
+                    objectType = targetPreferences.getString(
+                        "object_type",
+                        "unknown"
+                    ) ?: "unknown",
                     raHours = ra,
                     decDeg = dec
                 )
@@ -114,11 +104,10 @@ class CaptureViewModel(
 
         uiState = uiState.copy(
             target = target,
-            exposureSeconds =
-                setupPreferences.getFloat(
-                    "exposure_seconds",
-                    4.0f
-                ).toDouble(),
+            exposureSeconds = setupPreferences.getFloat(
+                "exposure_seconds",
+                4.0f
+            ).toDouble(),
             error = null
         )
     }
@@ -126,33 +115,22 @@ class CaptureViewModel(
     fun changeExposure(deltaSeconds: Double) {
         if (uiState.session != null) return
 
-        val value =
-            (uiState.exposureSeconds + deltaSeconds)
-                .coerceIn(0.1, 30.0)
+        val value = (uiState.exposureSeconds + deltaSeconds)
+            .coerceIn(0.1, 30.0)
 
         getApplication<Application>()
-            .getSharedPreferences(
-                "stellarpilot_capture_setup",
-                0
-            )
+            .getSharedPreferences("stellarpilot_capture_setup", 0)
             .edit()
-            .putFloat(
-                "exposure_seconds",
-                value.toFloat()
-            )
+            .putFloat("exposure_seconds", value.toFloat())
             .apply()
 
-        uiState = uiState.copy(
-            exposureSeconds = value
-        )
+        uiState = uiState.copy(exposureSeconds = value)
     }
 
     private suspend fun ensureSession(
         serverBaseUrl: String
     ): CaptureSessionStatus {
-        uiState.session?.let {
-            return it
-        }
+        uiState.session?.let { return it }
 
         val target = uiState.target
             ?: throw IllegalArgumentException(
@@ -171,22 +149,104 @@ class CaptureViewModel(
             return session
         }
 
-        val session =
-            CaptureSessionApiClient(serverBaseUrl)
-                .createSession(
-                    targetName = target.name,
-                    targetRaHours = target.raHours,
-                    targetDecDeg = target.decDeg,
-                    objectType = target.objectType,
-                    trackingMode = target.trackingMode,
-                    exposureSeconds = uiState.exposureSeconds
-                )
+        val session = CaptureSessionApiClient(serverBaseUrl)
+            .createSession(
+                targetName = target.name,
+                targetRaHours = target.raHours,
+                targetDecDeg = target.decDeg,
+                objectType = target.objectType,
+                trackingMode = target.trackingMode,
+                exposureSeconds = uiState.exposureSeconds
+            )
 
         uiState = uiState.copy(
             session = session,
             savedToGallery = false
         )
+        return session
+    }
 
+    private suspend fun measureCentering(
+        api: CaptureSessionApiClient,
+        session: CaptureSessionStatus,
+        message: String
+    ): CaptureSessionStatus {
+        uiState = uiState.copy(statusMessage = message)
+        startOperationTimer(session.exposureSeconds)
+
+        val captured = api.captureCenterFrame(session.id)
+        val preview = runCatching {
+            api.getPreview(session.id, stack = false)
+        }.getOrNull()
+
+        uiState = uiState.copy(
+            session = captured,
+            imageBytes = preview ?: uiState.imageBytes,
+            operationPhase = "astrometry",
+            statusMessage = "Image acquise • astrométrie en cours…"
+        )
+
+        val solved = api.solveCenterFrame(session.id)
+        stopOperationTimer()
+        uiState = uiState.copy(session = solved)
+        return solved
+    }
+
+    private suspend fun centerWithOneCorrection(
+        serverBaseUrl: String,
+        api: CaptureSessionApiClient,
+        initialSession: CaptureSessionStatus,
+        purpose: String
+    ): CaptureSessionStatus {
+        val target = uiState.target
+            ?: throw IllegalArgumentException("Aucune cible sélectionnée")
+
+        var session = measureCentering(
+            api,
+            initialSession,
+            "$purpose • pose de contrôle"
+        )
+
+        if (session.centering.status == "centered") {
+            return session
+        }
+        if (session.centering.status == "unsolved") {
+            return session
+        }
+        if (target.objectType.equals("sun", ignoreCase = true)) {
+            return session
+        }
+
+        val correctionRa = session.centering.correctionRaHours
+        val correctionDec = session.centering.correctionDecDeg
+        if (
+            session.centering.status != "correction_required" ||
+            correctionRa == null ||
+            correctionDec == null
+        ) {
+            return session
+        }
+
+        uiState = uiState.copy(
+            statusMessage = "$purpose • correction automatique unique 1/1"
+        )
+
+        MountGotoCommandClient(serverBaseUrl).gotoMount(
+            raHours = correctionRa,
+            decDeg = correctionDec,
+            trackingMode = target.trackingMode,
+            coordinateFrame = "j2000"
+        )
+        waitForTracking(serverBaseUrl)
+        delay(700)
+
+        // Mandatory closed-loop verification. Never send a second automatic
+        // correction from this result.
+        session = measureCentering(
+            api,
+            session,
+            "$purpose • vérification après correction"
+        )
         return session
     }
 
@@ -201,167 +261,58 @@ class CaptureViewModel(
         viewModelScope.launch {
             uiState = uiState.copy(
                 isBusy = true,
-                statusMessage = "Préparation de la capture astrométrique...",
+                statusMessage = "Préparation du centrage astrométrique…",
                 error = null
             )
 
             try {
-                var session = ensureSession(serverBaseUrl)
-                val target = uiState.target
-                    ?: throw IllegalArgumentException(
-                        "Aucune cible sélectionnée"
-                    )
+                val initial = ensureSession(serverBaseUrl)
                 val api = CaptureSessionApiClient(serverBaseUrl)
+                val session = centerWithOneCorrection(
+                    serverBaseUrl,
+                    api,
+                    initial,
+                    "Centrage"
+                )
 
-                for (attempt in 1..4) {
-                    uiState = uiState.copy(
-                        statusMessage =
-                            "Acquisition image • tentative $attempt/4"
-                    )
-                    startOperationTimer(
-                        expectedSeconds = session.exposureSeconds
-                    )
-
-                    session = api.captureCenterFrame(session.id)
-
-                    val preview =
-                        runCatching {
-                            api.getPreview(
-                                session.id,
-                                stack = false
-                            )
-                        }.getOrNull()
-
-                    uiState = uiState.copy(
-                        session = session,
-                        imageBytes = preview ?: uiState.imageBytes,
-                        operationPhase = "astrometry",
-                        statusMessage =
-                            "Image acquise • astrométrie en cours…"
-                    )
-
-                    session = api.solveCenterFrame(session.id)
-                    stopOperationTimer()
-
-                    uiState = uiState.copy(
-                        session = session
-                    )
-
-                    when (session.centering.status) {
-                        "centered" -> {
-                            uiState = uiState.copy(
-                                isBusy = false,
-                                session = session,
-                                error = null,
-                                statusMessage =
-                                    "Cible centrée — vous pouvez démarrer le stacking"
-                            )
-                            return@launch
-                        }
-
-                        "unsolved" -> {
-                            val detail =
-                                session.centering.solverDetail
-                                    ?.takeIf { it.isNotBlank() }
-                            uiState = uiState.copy(
-                                isBusy = false,
-                                session = session,
-                                statusMessage =
-                                    "Astrométrie non résolue — aucune correction de monture envoyée",
-                                error =
-                                    buildString {
-                                        append(
-                                            "Champ non résolu. Réessayez la capture"
-                                        )
-                                        if (detail != null) {
-                                            append(" • ")
-                                            append(detail)
-                                        }
-                                    }
-                            )
-                            return@launch
-                        }
-                    }
-
-                    if (target.objectType.equals("sun", ignoreCase = true)) {
-                        uiState = uiState.copy(
-                            isBusy = false,
-                            session = session,
-                            statusMessage = null,
-                            error =
-                                "Le recentrage automatique du Soleil est désactivé. " +
-                                    "Vérifiez le filtre solaire et le cadrage manuellement."
-                        )
-                        return@launch
-                    }
-
-                    val correctionRa =
-                        session.centering.correctionRaHours
-                    val correctionDec =
-                        session.centering.correctionDecDeg
-
-                    if (
-                        correctionRa == null ||
-                        correctionDec == null
-                    ) {
-                        uiState = uiState.copy(
-                            isBusy = false,
-                            session = session,
-                            statusMessage = null,
-                            error =
-                                "Astrométrie exploitable mais correction AD/DEC indisponible. " +
-                                    "Aucun mouvement de monture n'a été envoyé."
-                        )
-                        return@launch
-                    }
-
-                    uiState = uiState.copy(
-                        statusMessage =
-                            "Recentrage monture • tentative $attempt/4"
-                    )
-
-                    MountGotoCommandClient(serverBaseUrl)
-                        .gotoMount(
-                            raHours = correctionRa,
-                            decDeg = correctionDec,
-                            trackingMode = target.trackingMode
-                        )
-
-                    waitForTracking(serverBaseUrl)
-                    delay(700)
+                val message = when (session.centering.status) {
+                    "centered" ->
+                        "Cible centrée ✓ — vous pouvez démarrer le stacking"
+                    "unsolved" ->
+                        "Astrométrie non résolue — aucune correction envoyée"
+                    else ->
+                        "Correction automatique 1/1 effectuée mais centrage non validé — ajustement manuel requis"
                 }
 
                 uiState = uiState.copy(
                     isBusy = false,
-                    statusMessage = null,
+                    session = session,
+                    statusMessage = message,
                     error =
-                        "Centrage non obtenu après 4 corrections astrométriques"
+                        if (session.centering.status == "centered") {
+                            null
+                        } else {
+                            session.centering.solverDetail
+                                ?: "Centrage non validé"
+                        }
                 )
-
             } catch (error: Exception) {
                 stopOperationTimer()
                 uiState = uiState.copy(
                     isBusy = false,
-                    error =
-                        error.message
-                            ?: "Erreur de capture / centrage",
+                    error = error.message ?: "Erreur de capture / centrage",
                     statusMessage = null
                 )
             }
         }
     }
 
-    private fun startOperationTimer(
-        expectedSeconds: Double
-    ) {
+    private fun startOperationTimer(expectedSeconds: Double) {
         operationTimerJob?.cancel()
-
-        val expectedMs =
-            (expectedSeconds * 1000.0)
-                .toLong()
-                .coerceAtLeast(1L)
-        val startedAt =
-            SystemClock.elapsedRealtime()
+        val expectedMs = (expectedSeconds * 1000.0)
+            .toLong()
+            .coerceAtLeast(1L)
+        val startedAt = SystemClock.elapsedRealtime()
 
         uiState = uiState.copy(
             operationElapsedMs = 0L,
@@ -371,16 +322,11 @@ class CaptureViewModel(
 
         operationTimerJob = viewModelScope.launch {
             while (isActive && uiState.isBusy) {
-                val elapsed =
-                    SystemClock.elapsedRealtime() - startedAt
+                val elapsed = SystemClock.elapsedRealtime() - startedAt
                 uiState = uiState.copy(
                     operationElapsedMs = elapsed,
                     operationPhase =
-                        if (elapsed < expectedMs) {
-                            "capture"
-                        } else {
-                            "astrometry"
-                        }
+                        if (elapsed < expectedMs) "capture" else "astrometry"
                 )
                 delay(100)
             }
@@ -390,9 +336,7 @@ class CaptureViewModel(
     private fun stopOperationTimer() {
         operationTimerJob?.cancel()
         operationTimerJob = null
-        uiState = uiState.copy(
-            operationPhase = null
-        )
+        uiState = uiState.copy(operationPhase = null)
     }
 
     fun startStacking(serverBaseUrl: String) {
@@ -408,36 +352,82 @@ class CaptureViewModel(
             uiState = uiState.copy(
                 isBusy = true,
                 error = null,
-                statusMessage =
-                    "Préparation du stacking court • 10 images"
+                statusMessage = "Préparation du stacking continu calibré…"
             )
 
             try {
-                val session =
-                    ensureSession(serverBaseUrl)
+                val session = ensureSession(serverBaseUrl)
+                check(session.centering.status == "centered") {
+                    "Centrez d'abord la cible avant de démarrer le stacking"
+                }
 
-                val started =
-                    CaptureSessionApiClient(serverBaseUrl)
-                        .startStack(session.id)
+                val started = CaptureSessionApiClient(serverBaseUrl)
+                    .startStack(session.id)
 
                 uiState = uiState.copy(
                     isBusy = false,
                     session = started,
-                    statusMessage =
-                        "Stacking court en cours • objectif 10 images"
+                    statusMessage = "Stacking continu en cours"
                 )
-
-                startMonitor(
-                    serverBaseUrl,
-                    session.id
-                )
-
+                startMonitor(serverBaseUrl, session.id)
             } catch (error: Exception) {
                 uiState = uiState.copy(
                     isBusy = false,
-                    error =
-                        error.message
-                            ?: "Démarrage stacking impossible",
+                    error = error.message ?: "Démarrage stacking impossible",
+                    statusMessage = null
+                )
+            }
+        }
+    }
+
+    fun resumeStacking(serverBaseUrl: String) {
+        val current = uiState.session ?: return
+        if (uiState.isBusy || current.stacking.running) return
+
+        if (DemoModeState.active) {
+            startDemoStacking(current)
+            return
+        }
+
+        viewModelScope.launch {
+            uiState = uiState.copy(
+                isBusy = true,
+                error = null,
+                statusMessage = "Contrôle du centrage avant reprise…"
+            )
+
+            try {
+                val api = CaptureSessionApiClient(serverBaseUrl)
+                val verified = centerWithOneCorrection(
+                    serverBaseUrl,
+                    api,
+                    current,
+                    "Reprise"
+                )
+
+                if (verified.centering.status != "centered") {
+                    uiState = uiState.copy(
+                        isBusy = false,
+                        session = verified,
+                        error =
+                            "Reprise bloquée : le centrage n'est pas validé après la correction automatique unique.",
+                        statusMessage = null
+                    )
+                    return@launch
+                }
+
+                val resumed = api.resumeStack(current.id)
+                uiState = uiState.copy(
+                    isBusy = false,
+                    session = resumed,
+                    statusMessage = "Centrage vérifié ✓ • stacking repris"
+                )
+                startMonitor(serverBaseUrl, current.id)
+            } catch (error: Exception) {
+                stopOperationTimer()
+                uiState = uiState.copy(
+                    isBusy = false,
+                    error = error.message ?: "Reprise du stacking impossible",
                     statusMessage = null
                 )
             }
@@ -448,34 +438,21 @@ class CaptureViewModel(
         val session = uiState.session ?: return
 
         if (DemoModeState.active) {
-            demoStackJob?.cancel()
-            demoStackJob = null
-            uiState = uiState.copy(
-                session = session.copy(
-                    state = "stopped",
-                    stacking = session.stacking.copy(
-                        running = false
-                    )
-                ),
-                statusMessage = "Stacking démo arrêté"
-            )
+            stopDemoStacking(session)
             return
         }
 
         viewModelScope.launch {
             try {
-                val stopped =
-                    CaptureSessionApiClient(serverBaseUrl)
-                        .stopStack(session.id)
+                val stopped = CaptureSessionApiClient(serverBaseUrl)
+                    .stopStack(session.id)
                 uiState = uiState.copy(
                     session = stopped,
                     statusMessage =
-                        "Arrêt demandé — la pose en cours se termine"
+                        "Arrêt demandé — la pose en cours se termine puis la session reste reprenable"
                 )
             } catch (error: Exception) {
-                uiState = uiState.copy(
-                    error = error.message
-                )
+                uiState = uiState.copy(error = error.message)
             }
         }
     }
@@ -487,12 +464,11 @@ class CaptureViewModel(
         if (DemoModeState.active) {
             uiState = uiState.copy(
                 session = session.copy(
-                    state = "finalized",
+                    state = "completed",
                     galleryPath = "demo-local"
                 ),
                 savedToGallery = true,
-                statusMessage =
-                    "Session de démonstration enregistrée localement dans la démo",
+                statusMessage = "Session de démonstration enregistrée",
                 error = null
             )
             return
@@ -502,17 +478,22 @@ class CaptureViewModel(
             uiState = uiState.copy(
                 isBusy = true,
                 error = null,
-                statusMessage = "Enregistrement dans Galeries..."
+                statusMessage =
+                    "Combinaison sigma-clippée finale et enregistrement dans Galeries…"
             )
             try {
-                val saved =
+                val saved = CaptureSessionApiClient(serverBaseUrl)
+                    .finalizeSession(session.id)
+                val preview = runCatching {
                     CaptureSessionApiClient(serverBaseUrl)
-                        .finalizeSession(session.id)
+                        .getPreview(session.id, stack = true)
+                }.getOrNull()
                 uiState = uiState.copy(
                     isBusy = false,
                     session = saved,
+                    imageBytes = preview ?: uiState.imageBytes,
                     savedToGallery = true,
-                    statusMessage = "Session enregistrée dans Galeries"
+                    statusMessage = "Stack final enregistré dans Galeries ✓"
                 )
             } catch (error: Exception) {
                 uiState = uiState.copy(
@@ -530,10 +511,7 @@ class CaptureViewModel(
     ) {
         monitorJob?.cancel()
         monitorJob = viewModelScope.launch {
-            uiState = uiState.copy(
-                isMonitoring = true
-            )
-
+            uiState = uiState.copy(isMonitoring = true)
             var previewTick = 0
 
             try {
@@ -543,69 +521,53 @@ class CaptureViewModel(
                     previewTick += 1
 
                     var preview = uiState.imageBytes
-                    if (
-                        session.hasStackPreview &&
-                        previewTick % 3 == 0
-                    ) {
+                    if (session.hasStackPreview && previewTick % 3 == 0) {
                         preview = runCatching {
-                            api.getPreview(
-                                sessionId,
-                                stack = true
-                            )
+                            api.getPreview(sessionId, stack = true)
                         }.getOrNull() ?: preview
+                    }
+
+                    val status = when {
+                        session.stacking.recenterRequired ->
+                            "Dérive détectée — stacking en pause pour recentrage"
+                        session.state == "paused_calibration" ->
+                            session.calibration?.detail
+                                ?: "Stacking en pause : Master Dark incompatible"
+                        session.stacking.running ->
+                            "Stacking en cours • ${session.acceptedFrames} acceptées • ${session.rejectedFrames} rejetées"
+                        session.state == "stopped" ->
+                            "Stacking arrêté • reprise possible après contrôle du centrage"
+                        session.state == "stack_error" ->
+                            "Stacking interrompu"
+                        else -> uiState.statusMessage
                     }
 
                     uiState = uiState.copy(
                         session = session,
                         imageBytes = preview,
-                        statusMessage =
-                            when {
-                                session.stacking.recenterRequired ->
-                                    "Dérive détectée — recentrage astrométrique"
-                                session.state == "stack_complete" ->
-                                    "Stacking terminé • ${session.acceptedFrames}/10 images"
-                                session.state == "stack_incomplete" ->
-                                    "Stacking arrêté • ${session.acceptedFrames}/10 images acceptées"
-                                session.stacking.running ->
-                                    "Stacking en cours • ${session.acceptedFrames}/10"
-                                session.state == "stack_error" ->
-                                    "Stacking interrompu"
-                                else ->
-                                    uiState.statusMessage
-                            }
+                        statusMessage = status
                     )
 
                     if (
                         session.stacking.recenterRequired &&
                         !autoRecenterRunning
                     ) {
-                        performStackRecenter(
-                            serverBaseUrl,
-                            session
-                        )
+                        performStackRecenter(serverBaseUrl, session)
                     }
 
                     if (
                         !session.stacking.running &&
                         !session.stacking.recenterRequired &&
-                        session.state !in setOf(
-                            "stacking",
-                            "stopping"
-                        )
+                        session.state !in setOf("stacking", "stopping")
                     ) {
                         break
                     }
-
                     delay(1000)
                 }
             } catch (error: Exception) {
-                uiState = uiState.copy(
-                    error = error.message
-                )
+                uiState = uiState.copy(error = error.message)
             } finally {
-                uiState = uiState.copy(
-                    isMonitoring = false
-                )
+                uiState = uiState.copy(isMonitoring = false)
             }
         }
     }
@@ -618,8 +580,7 @@ class CaptureViewModel(
         if (target.objectType.equals("sun", ignoreCase = true)) {
             uiState = uiState.copy(
                 error =
-                    "Recentrage automatique solaire suspendu. " +
-                        "Intervention manuelle requise."
+                    "Recentrage automatique solaire suspendu. Intervention manuelle requise."
             )
             return
         }
@@ -630,70 +591,54 @@ class CaptureViewModel(
         autoRecenterRunning = true
         try {
             uiState = uiState.copy(
-                statusMessage = "Stacking en pause • correction du pointage"
+                statusMessage = "Stacking en pause • correction automatique unique 1/1"
             )
 
-            MountGotoCommandClient(serverBaseUrl)
-                .gotoMount(
-                    raHours = ra,
-                    decDeg = dec,
-                    trackingMode = target.trackingMode
-                )
+            MountGotoCommandClient(serverBaseUrl).gotoMount(
+                raHours = ra,
+                decDeg = dec,
+                trackingMode = target.trackingMode,
+                coordinateFrame = "j2000"
+            )
             waitForTracking(serverBaseUrl)
             delay(700)
 
             val api = CaptureSessionApiClient(serverBaseUrl)
-            val captured = api.captureCenterFrame(session.id)
-            val preview =
-                runCatching {
-                    api.getPreview(session.id, stack = false)
-                }.getOrNull()
-
-            uiState = uiState.copy(
-                session = captured,
-                imageBytes = preview ?: uiState.imageBytes,
-                statusMessage =
-                    "Image de contrôle acquise • astrométrie en cours…"
-            )
-
-            val verified = api.solveCenterFrame(session.id)
-
-            uiState = uiState.copy(
-                session = verified
+            val verified = measureCentering(
+                api,
+                session,
+                "Recentrage stacking • vérification obligatoire"
             )
 
             if (verified.centering.status == "centered") {
                 val resumed = api.resumeStack(session.id)
                 uiState = uiState.copy(
                     session = resumed,
-                    statusMessage =
-                        "Cible recentrée • reprise du stacking"
+                    statusMessage = "Cible recentrée ✓ • reprise du stacking"
                 )
             } else {
                 uiState = uiState.copy(
+                    session = verified,
                     error =
-                        "La vérification astrométrique demande encore une correction. " +
-                            "Utilisez RECENTRER."
+                        "Le contrôle après correction demande encore un recentrage. Aucune seconde correction automatique n'est envoyée."
                 )
             }
         } catch (error: Exception) {
             uiState = uiState.copy(
-                error =
-                    "Recentrage stacking: ${error.message}"
+                error = "Recentrage stacking: ${error.message}"
             )
         } finally {
             autoRecenterRunning = false
         }
     }
 
-    private suspend fun waitForTracking(
-        serverBaseUrl: String
-    ) {
+    private suspend fun waitForTracking(serverBaseUrl: String) {
         val api = StellarPilotApiClient(serverBaseUrl)
         repeat(120) {
             val status = api.getMountMotionStatus()
             if (
                 status.status == "tracking" ||
+                status.status == "idle" ||
                 status.progressPercent?.let { it >= 99.5 } == true
             ) {
                 return
@@ -724,34 +669,29 @@ class CaptureViewModel(
             uiState = uiState.copy(
                 isBusy = true,
                 error = null,
-                statusMessage =
-                    "MODE DÉMO LOCAL • acquisition fictive"
+                statusMessage = "MODE DÉMO LOCAL • acquisition fictive"
             )
 
             ensureSession("demo://local")
             startOperationTimer(uiState.exposureSeconds)
-
             delay(
                 (uiState.exposureSeconds * 1000.0)
                     .toLong()
                     .coerceIn(100L, 4_000L)
             )
-
             uiState = uiState.copy(
                 operationPhase = "astrometry",
-                statusMessage =
-                    "MODE DÉMO LOCAL • astrométrie fictive"
+                statusMessage = "MODE DÉMO LOCAL • astrométrie fictive"
             )
             delay(650)
             stopOperationTimer()
 
-            val image =
-                runCatching {
-                    getApplication<Application>()
-                        .resources
-                        .openRawResource(R.drawable.m103_preview)
-                        .use { it.readBytes() }
-                }.getOrNull()
+            val image = runCatching {
+                getApplication<Application>()
+                    .resources
+                    .openRawResource(R.drawable.m103_preview)
+                    .use { it.readBytes() }
+            }.getOrNull()
 
             val centered = demoSession(
                 target = target,
@@ -776,18 +716,18 @@ class CaptureViewModel(
         existing: CaptureSessionStatus? = null
     ): CaptureSessionStatus {
         val base = existing
-        val centering =
-            CaptureCenteringStatus(
-                status = if (centered) "centered" else "not_checked",
-                errorArcsec = if (centered) 4.2 else null,
-                solveRaDeg = if (centered) target.raHours * 15.0 else null,
-                solveDecDeg = if (centered) target.decDeg else null,
-                correctionRaHours = if (centered) target.raHours else null,
-                correctionDecDeg = if (centered) target.decDeg else null,
-                attempts = if (centered) 1 else 0,
-                solverStatus = if (centered) "solved" else null,
-                solverDetail = if (centered) "Résultat fictif embarqué" else null
-            )
+        val centering = CaptureCenteringStatus(
+            status = if (centered) "centered" else "not_checked",
+            errorArcsec = if (centered) 4.2 else null,
+            solveRaDeg = if (centered) target.raHours * 15.0 else null,
+            solveDecDeg = if (centered) target.decDeg else null,
+            correctionRaHours = if (centered) target.raHours else null,
+            correctionDecDeg = if (centered) target.decDeg else null,
+            attempts = if (centered) 1 else 0,
+            solverStatus = if (centered) "solved" else null,
+            solverDetail = if (centered) "Résultat fictif embarqué" else null,
+            verifiedAt = if (centered) "demo-now" else null
+        )
         return CaptureSessionStatus(
             id = base?.id ?: "demo-${System.currentTimeMillis()}",
             state = if (centered) "centered" else "framing",
@@ -813,25 +753,28 @@ class CaptureViewModel(
                 ),
             hasPreview = centered,
             hasStackPreview = base?.hasStackPreview ?: false,
-            galleryPath = base?.galleryPath
+            galleryPath = base?.galleryPath,
+            acquisitionSeconds = base?.acquisitionSeconds ?: 0.0,
+            rejectedByReason = base?.rejectedByReason ?: emptyMap(),
+            calibration = base?.calibration,
+            lastLightQuality = base?.lastLightQuality
         )
     }
 
-    private fun startDemoStacking(
-        session: CaptureSessionStatus
-    ) {
+    private fun startDemoStacking(session: CaptureSessionStatus) {
         demoStackJob?.cancel()
+        demoAcquisitionStartedAt = SystemClock.elapsedRealtime()
         uiState = uiState.copy(
             session = session.copy(
                 state = "stacking",
                 stacking = session.stacking.copy(
                     running = true,
                     recenterRequired = false,
-                    recenterReason = null
+                    recenterReason = null,
+                    runCount = session.stacking.runCount + 1
                 )
             ),
-            statusMessage =
-                "MODE DÉMO LOCAL • stacking fictif en cours",
+            statusMessage = "MODE DÉMO LOCAL • stacking continu fictif",
             error = null
         )
 
@@ -841,15 +784,17 @@ class CaptureViewModel(
                 val current = uiState.session ?: break
                 if (!current.stacking.running) break
                 val nextAccepted = current.acceptedFrames + 1
-                val distance =
-                    ((nextAccepted % 5) * 0.35) + 0.4
+                val distance = ((nextAccepted % 5) * 0.35) + 0.4
+                val elapsed = demoAcquisitionStartedAt?.let {
+                    (SystemClock.elapsedRealtime() - it) / 1000.0
+                } ?: 0.0
                 uiState = uiState.copy(
                     session = current.copy(
                         capturedFrames = current.capturedFrames + 1,
                         acceptedFrames = nextAccepted,
                         integrationSeconds =
-                            current.integrationSeconds +
-                                current.exposureSeconds,
+                            current.integrationSeconds + current.exposureSeconds,
+                        acquisitionSeconds = current.acquisitionSeconds + elapsed,
                         hasStackPreview = true,
                         stacking = current.stacking.copy(
                             lastRegistrationDxPx = distance,
@@ -857,11 +802,28 @@ class CaptureViewModel(
                             lastRegistrationDistancePx = distance
                         )
                     ),
-                    statusMessage =
-                        "MODE DÉMO LOCAL • stacking fictif en cours"
+                    statusMessage = "MODE DÉMO LOCAL • stacking continu fictif"
                 )
+                demoAcquisitionStartedAt = SystemClock.elapsedRealtime()
             }
         }
+    }
+
+    private fun stopDemoStacking(session: CaptureSessionStatus) {
+        demoStackJob?.cancel()
+        demoStackJob = null
+        val extra = demoAcquisitionStartedAt?.let {
+            (SystemClock.elapsedRealtime() - it) / 1000.0
+        } ?: 0.0
+        demoAcquisitionStartedAt = null
+        uiState = uiState.copy(
+            session = session.copy(
+                state = "stopped",
+                acquisitionSeconds = session.acquisitionSeconds + extra,
+                stacking = session.stacking.copy(running = false)
+            ),
+            statusMessage = "Stacking démo arrêté • reprise possible"
+        )
     }
 
     override fun onCleared() {
