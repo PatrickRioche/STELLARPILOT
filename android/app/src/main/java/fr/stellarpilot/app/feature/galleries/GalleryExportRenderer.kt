@@ -12,7 +12,6 @@ import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
 import fr.stellarpilot.app.BuildConfig
-import fr.stellarpilot.app.R
 import fr.stellarpilot.app.data.remote.GallerySession
 import java.time.OffsetDateTime
 import java.time.ZoneId
@@ -28,7 +27,6 @@ private const val EXPORT_JPEG_QUALITY = 94
 
 private val EXPORT_BACKGROUND = Color.rgb(6, 17, 31)
 private val EXPORT_ORANGE = Color.rgb(255, 138, 61)
-private val EXPORT_OVERLAY = Color.argb(168, 6, 17, 31)
 
 
 fun stellarPilotVersionLabel(): String {
@@ -88,14 +86,8 @@ object GalleryExportRenderer {
             previewBytes.size
         ) ?: error("Image de galerie illisible")
 
-        val logo = BitmapFactory.decodeResource(
-            context.resources,
-            R.mipmap.ic_launcher
-        )
-
         val exported = render(
             source = source,
-            logo = logo,
             session = session
         )
         val filename = exportFilename(session)
@@ -142,7 +134,6 @@ object GalleryExportRenderer {
             throw error
         } finally {
             if (exported !== source) exported.recycle()
-            logo?.recycle()
             source.recycle()
         }
 
@@ -151,12 +142,8 @@ object GalleryExportRenderer {
 
     private fun render(
         source: Bitmap,
-        logo: Bitmap?,
         session: GallerySession
     ): Bitmap {
-        // L'export suit le ratio de l'image d'origine. Aucune zone de titre ou
-        // de pied de page n'est réservée : l'astrophotographie occupe donc la
-        // totalité du fichier, en portrait comme en paysage.
         val sourceLongEdge = max(source.width, source.height).toFloat()
         val exportScale = EXPORT_LONG_EDGE / sourceLongEdge
         val outputWidth = max(1, (source.width * exportScale).roundToInt())
@@ -170,26 +157,16 @@ object GalleryExportRenderer {
         val canvas = Canvas(output)
         canvas.drawColor(EXPORT_BACKGROUND)
 
-        val imagePaint = Paint(
-            Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG
-        )
+        val imagePaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
         canvas.drawBitmap(
             source,
             null,
-            RectF(
-                0f,
-                0f,
-                outputWidth.toFloat(),
-                outputHeight.toFloat()
-            ),
+            RectF(0f, 0f, outputWidth.toFloat(), outputHeight.toFloat()),
             imagePaint
         )
 
         val orange = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = EXPORT_ORANGE
-        }
-        val overlay = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = EXPORT_OVERLAY
         }
         val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = EXPORT_ORANGE
@@ -206,13 +183,12 @@ object GalleryExportRenderer {
         }
 
         val shortEdge = minOf(outputWidth, outputHeight).toFloat()
-        val borderInset = shortEdge * 0.014f
+        val borderInset = shortEdge * 0.030f
         val corner = shortEdge * 0.018f
+        val strokeWidth = max(3f, shortEdge * 0.0032f)
 
-        // Le liseré est décalé vers l'intérieur : l'image reste visible entre
-        // le bord du fichier et la signature orange.
         orange.style = Paint.Style.STROKE
-        orange.strokeWidth = max(3f, shortEdge * 0.0035f)
+        orange.strokeWidth = strokeWidth
         val borderRect = RectF(
             borderInset,
             borderInset,
@@ -222,125 +198,134 @@ object GalleryExportRenderer {
         canvas.drawRoundRect(borderRect, corner, corner, orange)
         orange.style = Paint.Style.FILL
 
-        val topHeight = shortEdge * 0.095f
-        val topWidth = outputWidth * 0.46f
-        val topRect = RectF(
-            (outputWidth - topWidth) / 2f,
-            0f,
-            (outputWidth + topWidth) / 2f,
-            topHeight
+        val shadowRadius = shortEdge * 0.006f
+        val shadowOffset = shortEdge * 0.002f
+        textPaint.setShadowLayer(
+            shadowRadius,
+            shadowOffset,
+            shadowOffset,
+            Color.argb(225, 0, 0, 0)
         )
-        canvas.drawRoundRect(
-            topRect,
-            0f,
-            shortEdge * 0.014f,
-            overlay
+        boldPaint.setShadowLayer(
+            shadowRadius,
+            shadowOffset,
+            shadowOffset,
+            Color.argb(225, 0, 0, 0)
         )
 
-        val logoSize = topHeight * 0.78f
-        val topGap = topHeight * 0.08f
-        var textStartX = topRect.left + topGap
-
-        if (logo != null) {
-            val logoTop = (topHeight - logoSize) / 2f
-            canvas.drawBitmap(
-                logo,
-                null,
-                RectF(
-                    textStartX,
-                    logoTop,
-                    textStartX + logoSize,
-                    logoTop + logoSize
-                ),
-                imagePaint
-            )
-            textStartX += logoSize + topGap * 0.65f
-        }
-
-        textPaint.textAlign = Paint.Align.LEFT
-        textPaint.textSize = topHeight * 0.31f
+        val contentInset = borderInset + shortEdge * 0.020f
         val versionText =
             "${stellarPilotVersionLabel()} © ${copyrightYear(session)}"
-        val versionBaseline =
-            topHeight / 2f - (textPaint.ascent() + textPaint.descent()) / 2f
+        textPaint.textSize = shortEdge * 0.050f
+        textPaint.textAlign = Paint.Align.LEFT
+
+        val logoSize = shortEdge * 0.078f
+        val logoGap = shortEdge * 0.014f
+        val versionWidth = textPaint.measureText(versionText)
+        val headerWidth = logoSize + logoGap + versionWidth
+        val headerLeft = (outputWidth - headerWidth) / 2f
+        val logoTop = contentInset
+
+        drawStellarPilotMark(
+            canvas = canvas,
+            left = headerLeft,
+            top = logoTop,
+            size = logoSize,
+            orange = orange
+        )
+
+        val headerBaseline =
+            logoTop + logoSize / 2f -
+                (textPaint.ascent() + textPaint.descent()) / 2f
         canvas.drawText(
             versionText,
-            textStartX,
-            versionBaseline,
+            headerLeft + logoSize + logoGap,
+            headerBaseline,
             textPaint
         )
 
-        val bottomHeight = shortEdge * 0.105f
-        val bottomY = outputHeight - bottomHeight
-        val leftWidth = outputWidth * 0.34f
-        val rightWidth = outputWidth * 0.39f
-
-        val leftRect = RectF(
-            0f,
-            bottomY,
-            leftWidth,
-            outputHeight.toFloat()
-        )
-        val rightRect = RectF(
-            outputWidth - rightWidth,
-            bottomY,
-            outputWidth.toFloat(),
-            outputHeight.toFloat()
-        )
-
-        canvas.drawRoundRect(
-            leftRect,
-            0f,
-            shortEdge * 0.014f,
-            overlay
-        )
-        canvas.drawRoundRect(
-            rightRect,
-            shortEdge * 0.014f,
-            0f,
-            overlay
-        )
-
-        val bottomPad = shortEdge * 0.016f
-        val firstLineBaseline = bottomY + bottomHeight * 0.44f
-        val secondLineBaseline = bottomY + bottomHeight * 0.78f
+        val bottomPad = contentInset
+        val firstLineBaseline =
+            outputHeight - bottomPad - shortEdge * 0.046f
+        val secondLineBaseline =
+            outputHeight - bottomPad - shortEdge * 0.010f
 
         boldPaint.textAlign = Paint.Align.LEFT
-        boldPaint.textSize = bottomHeight * 0.32f
+        boldPaint.textSize = shortEdge * 0.050f
         canvas.drawText(
             "Objet : ${session.targetName}",
-            bottomPad,
+            contentInset,
             firstLineBaseline,
             boldPaint
         )
 
         textPaint.textAlign = Paint.Align.LEFT
-        textPaint.textSize = bottomHeight * 0.22f
+        textPaint.textSize = shortEdge * 0.033f
         canvas.drawText(
-            "${session.capturedFrames} capturées • ${session.acceptedFrames} stackées",
-            bottomPad,
+            "${session.capturedFrames} captures • ${session.acceptedFrames} stackées",
+            contentInset,
             secondLineBaseline,
             textPaint
         )
 
         textPaint.textAlign = Paint.Align.RIGHT
-        textPaint.textSize = bottomHeight * 0.28f
+        textPaint.textSize = shortEdge * 0.041f
         canvas.drawText(
             formatGalleryDate(session.createdAt),
-            outputWidth - bottomPad,
+            outputWidth - contentInset,
             firstLineBaseline,
             textPaint
         )
 
-        textPaint.textSize = bottomHeight * 0.21f
+        textPaint.textSize = shortEdge * 0.031f
         canvas.drawText(
             formatGalleryLocation(session),
-            outputWidth - bottomPad,
+            outputWidth - contentInset,
             secondLineBaseline,
             textPaint
         )
 
         return output
+    }
+
+    private fun drawStellarPilotMark(
+        canvas: Canvas,
+        left: Float,
+        top: Float,
+        size: Float,
+        orange: Paint
+    ) {
+        val centerX = left + size * 0.46f
+        val centerY = top + size * 0.56f
+
+        val ring = Paint(orange).apply {
+            style = Paint.Style.STROKE
+            strokeWidth = size * 0.085f
+        }
+        val fill = Paint(orange).apply {
+            style = Paint.Style.FILL
+        }
+
+        canvas.save()
+        canvas.rotate(-18f, centerX, centerY)
+        canvas.drawOval(
+            RectF(
+                left + size * 0.08f,
+                top + size * 0.38f,
+                left + size * 0.84f,
+                top + size * 0.72f
+            ),
+            ring
+        )
+        canvas.restore()
+
+        canvas.drawCircle(centerX, centerY, size * 0.18f, fill)
+        canvas.drawCircle(
+            left + size * 0.80f,
+            top + size * 0.17f,
+            size * 0.055f,
+            fill
+        )
     }
 
     private fun copyrightYear(session: GallerySession): Int {
