@@ -23,6 +23,10 @@ MASTER_SIGMA = 3.0
 HOT_PIXEL_SIGMA = 8.0
 HOT_PIXEL_MIN_EXCESS_ADU = 32.0
 TEMPERATURE_TOLERANCE_C = 2.0
+DARK_SERIES_SIGMA = 6.0
+DARK_SERIES_MEDIAN_REL_TOLERANCE = 0.35
+DARK_SERIES_NOISE_REL_TOLERANCE = 0.50
+DARK_SERIES_MIN_TOLERANCE_ADU = 8.0
 
 
 def _now() -> datetime:
@@ -183,6 +187,121 @@ def _frame_temperature() -> float | None:
         return None
 
 
+def _quality_number(value: Any) -> float | None:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if math.isfinite(number) else None
+
+
+def _series_reference(
+    values: list[float],
+    *,
+    relative_tolerance: float,
+) -> tuple[float, float, float]:
+    center = float(np.median(values))
+    mad = float(np.median(np.abs(np.asarray(values, dtype=np.float64) - center)))
+    robust_sigma = 1.4826 * mad
+    tolerance = max(
+        DARK_SERIES_SIGMA * robust_sigma,
+        abs(center) * relative_tolerance,
+        DARK_SERIES_MIN_TOLERANCE_ADU,
+    )
+    return center, tolerance, robust_sigma
+
+
+def _apply_series_quality_filter(metadata: dict[str, Any]) -> dict[str, Any]:
+    frames = metadata.get("frames", [])
+    candidates: list[dict[str, Any]] = []
+
+    for frame in frames:
+        capture_valid = bool(frame.get("capture_valid", frame.get("valid")))
+        frame["capture_valid"] = capture_valid
+        if not capture_valid:
+            frame["valid"] = False
+            frame["series_quality"] = {"status": "skipped"}
+            continue
+
+        median = _quality_number(frame.get("median"))
+        noise = _quality_number(frame.get("background_sigma"))
+        if median is not None and noise is not None:
+            candidates.append(frame)
+
+    if len(candidates) < 3:
+        metadata["valid_count"] = sum(
+            1 for frame in frames if frame.get("valid")
+        )
+        summary = {
+            "status": "insufficient_samples",
+            "sample_count": len(candidates),
+            "rejected_count": 0,
+        }
+        metadata["series_quality"] = summary
+        return summary
+
+    medians = [float(frame["median"]) for frame in candidates]
+    noises = [float(frame["background_sigma"]) for frame in candidates]
+    median_ref, median_tol, median_sigma = _series_reference(
+        medians,
+        relative_tolerance=DARK_SERIES_MEDIAN_REL_TOLERANCE,
+    )
+    noise_ref, noise_tol, noise_sigma = _series_reference(
+        noises,
+        relative_tolerance=DARK_SERIES_NOISE_REL_TOLERANCE,
+    )
+
+    rejected = 0
+    for frame in frames:
+        capture_valid = bool(frame.get("capture_valid", frame.get("valid")))
+        if not capture_valid:
+            continue
+
+        reasons: list[str] = []
+        median = _quality_number(frame.get("median"))
+        noise = _quality_number(frame.get("background_sigma"))
+
+        if median is None or noise is None:
+            reasons.append("quality_metrics_unavailable")
+        else:
+            if abs(median - median_ref) > median_tol:
+                reasons.append("median_outlier")
+            if abs(noise - noise_ref) > noise_tol:
+                reasons.append("background_noise_outlier")
+
+        frame["series_quality"] = {
+            "status": "rejected" if reasons else "ok",
+            "median_reference": round(median_ref, 3),
+            "median_tolerance": round(median_tol, 3),
+            "background_sigma_reference": round(noise_ref, 3),
+            "background_sigma_tolerance": round(noise_tol, 3),
+        }
+        frame["valid"] = not reasons
+
+        if reasons:
+            rejected += 1
+            frame["rejection_reasons"] = reasons
+        else:
+            frame.pop("rejection_reasons", None)
+
+    metadata["valid_count"] = sum(
+        1 for frame in frames if frame.get("valid")
+    )
+    summary = {
+        "status": "ok",
+        "sample_count": len(candidates),
+        "rejected_count": rejected,
+        "median_reference": round(median_ref, 3),
+        "median_robust_sigma": round(median_sigma, 3),
+        "median_tolerance": round(median_tol, 3),
+        "background_sigma_reference": round(noise_ref, 3),
+        "background_sigma_robust_sigma": round(noise_sigma, 3),
+        "background_sigma_tolerance": round(noise_tol, 3),
+    }
+    metadata["series_quality"] = summary
+    return summary
+
+
 def _compatibility_profile(metadata: dict[str, Any]) -> dict[str, Any]:
     setup = metadata.get("setup_profile") or {}
     camera = setup.get("camera") or {}
@@ -247,6 +366,7 @@ def start_dark_session(
         "setup_profile": _snapshot_setup(float(exposure_s)),
         "fits_profile": None,
         "compatibility": None,
+        "series_quality": None,
         "master_dark": None,
         "hot_pixels": None,
     }
@@ -319,6 +439,7 @@ def capture_dark(session_id: str) -> dict:
             "image": str(path),
             "size_bytes": path.stat().st_size if path.exists() else None,
             "valid": valid,
+            "capture_valid": valid,
             "frame_type": result.get("frame_type", "dark"),
             "temperature_c": temperature_c,
             "median": quality.get("median"),
@@ -509,6 +630,8 @@ def _build_hot_pixel_map(
 
 
 def _finalize_dark_products(metadata: dict[str, Any]) -> None:
+    _apply_series_quality_filter(metadata)
+
     valid_paths = [
         Path(frame["image"])
         for frame in metadata.get("frames", [])
@@ -542,6 +665,7 @@ def _finalize_dark_products(metadata: dict[str, Any]) -> None:
         "setup": metadata.get("setup_profile"),
         "fits": metadata.get("fits_profile"),
         "compatibility": compatibility,
+        "series_quality": metadata.get("series_quality"),
         "requested_count": metadata.get("requested_count"),
         "valid_count": len(valid_paths),
         "master_method": MASTER_METHOD,
@@ -561,6 +685,7 @@ def _finalize_dark_products(metadata: dict[str, Any]) -> None:
         "method": MASTER_METHOD,
         "sigma": MASTER_SIGMA,
         "valid_frames": len(valid_paths),
+        "rejected_frames": int(metadata.get("requested_count") or 0) - len(valid_paths),
     }
     metadata["hot_pixels"] = hot_pixels
 
