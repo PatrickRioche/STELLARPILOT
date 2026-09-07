@@ -57,11 +57,13 @@ import kotlin.math.floor
 @Composable
 fun StatusScreen(
     viewModel: ConnectionViewModel = viewModel(),
-    diagnosticsViewModel: StatusDiagnosticsViewModel = viewModel()
+    diagnosticsViewModel: StatusDiagnosticsViewModel = viewModel(),
+    setupViewModel: SetupDiagnosticsViewModel = viewModel()
 ) {
     val state = viewModel.uiState
     val server = state.server
     val diagnostics = diagnosticsViewModel.uiState
+    val setupDiagnostics = setupViewModel.uiState
     val demoMode = DemoModeState.active
 
     var serverBuild by remember(
@@ -88,25 +90,16 @@ fun StatusScreen(
             serverBuild = null
             serverBuildError = null
         } else {
-            val buildApi =
-                ServerBuildApiClient()
+            val buildApi = ServerBuildApiClient()
 
             while (true) {
                 try {
-                    serverBuild =
-                        buildApi.load(
-                            state.serverBaseUrl
-                        )
-
+                    serverBuild = buildApi.load(state.serverBaseUrl)
                     serverBuildError = null
                 } catch (error: Exception) {
                     serverBuild = null
-
-                    serverBuildError =
-                        error.message
-                            ?: "Version serveur indisponible"
+                    serverBuildError = error.message ?: "Version serveur indisponible"
                 }
-
                 delay(10_000L)
             }
         }
@@ -117,14 +110,11 @@ fun StatusScreen(
         demoMode
     ) {
         if (!demoMode) {
-            diagnosticsViewModel.refreshStatic(
-                state.serverBaseUrl
-            )
+            diagnosticsViewModel.refreshStatic(state.serverBaseUrl)
+            setupViewModel.refresh(state.serverBaseUrl)
 
             while (true) {
-                diagnosticsViewModel.refreshMount(
-                    state.serverBaseUrl
-                )
+                diagnosticsViewModel.refreshMount(state.serverBaseUrl)
                 delay(2_000L)
             }
         }
@@ -162,7 +152,7 @@ fun StatusScreen(
             Spacer(Modifier.height(6.dp))
 
             Text(
-                text = "Diagnostic, position monture et ressources du système",
+                text = "Diagnostic, position monture, setup optique et ressources du système",
                 style = MaterialTheme.typography.bodyMedium,
                 color = StellarMuted
             )
@@ -199,120 +189,55 @@ fun StatusScreen(
                 StatusCard(
                     title = "Serveur"
                 ) {
-                    val serverBuildStamp =
-                        serverBuild?.buildTimestamp
-
-                    // App and server are the same delivery when they come from
-                    // the same Git revision. Build timestamps are intentionally
-                    // independent because APK compilation and Pi deployment do
-                    // not happen at the exact same second.
-                    val sameDelivery =
-                        gitRevisionsMatch(
-                            BuildConfig.GIT_SHA,
-                            serverBuild?.gitSha
-                        )
+                    val serverBuildStamp = serverBuild?.buildTimestamp
+                    val sameDelivery = gitRevisionsMatch(
+                        BuildConfig.GIT_SHA,
+                        serverBuild?.gitSha
+                    )
 
                     SectionTitle("VERSIONS")
-
-                    InfoLine(
-                        "Application",
-                        BuildConfig.VERSION_NAME
-                    )
-
-                    InfoLine(
-                        "Git app",
-                        BuildConfig.GIT_SHA
-                    )
-
-                    InfoLine(
-                        "Serveur",
-                        serverBuild?.version
-                            ?: "Non disponible"
-                    )
-
-                    InfoLine(
-                        "Build serveur",
-                        serverBuildStamp
-                            ?: "Non disponible"
-                    )
-
-                    InfoLine(
-                        "Git serveur",
-                        serverBuild?.gitSha
-                            ?: "Non disponible"
-                    )
-
-                    InfoLine(
-                        "Branche serveur",
-                        serverBuild?.branch
-                            ?: "Non disponible"
-                    )
-
+                    InfoLine("Application", BuildConfig.VERSION_NAME)
+                    InfoLine("Git app", BuildConfig.GIT_SHA)
+                    InfoLine("Serveur", serverBuild?.version ?: "Non disponible")
+                    InfoLine("Build serveur", serverBuildStamp ?: "Non disponible")
+                    InfoLine("Git serveur", serverBuild?.gitSha ?: "Non disponible")
+                    InfoLine("Branche serveur", serverBuild?.branch ?: "Non disponible")
                     InfoLine(
                         "Sources serveur",
                         when (serverBuild?.dirty) {
-                            true ->
-                                "Modifications locales"
-
-                            false ->
-                                "Commit propre"
-
-                            null ->
-                                "Non disponible"
+                            true -> "Modifications locales"
+                            false -> "Commit propre"
+                            null -> "Non disponible"
                         }
                     )
 
-                    Spacer(
-                        Modifier.height(10.dp)
-                    )
+                    Spacer(Modifier.height(10.dp))
 
                     Text(
-                        text =
-                            when {
-                                serverBuild == null ->
-                                    "Paire App / Serveur : non vérifiée"
-
-                                sameDelivery ->
-                                    "✓ Paire App / Serveur : MÊME LIVRAISON"
-
-                                else ->
-                                    "⚠ Paire App / Serveur : VERSIONS DIFFÉRENTES"
-                            },
-                        color =
-                            if (sameDelivery) {
-                                StellarGreen
-                            } else {
-                                StellarOrange
-                            },
-                        style =
-                            MaterialTheme.typography.bodyMedium,
-                        fontWeight =
-                            FontWeight.SemiBold
+                        text = when {
+                            serverBuild == null -> "Paire App / Serveur : non vérifiée"
+                            sameDelivery -> "✓ Paire App / Serveur : MÊME LIVRAISON"
+                            else -> "⚠ Paire App / Serveur : VERSIONS DIFFÉRENTES"
+                        },
+                        color = if (sameDelivery) StellarGreen else StellarOrange,
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.SemiBold
                     )
 
                     serverBuildError?.let { error ->
-                        Spacer(
-                            Modifier.height(4.dp)
-                        )
-
+                        Spacer(Modifier.height(4.dp))
                         Text(
-                            text =
-                                "Version serveur indisponible : $error",
+                            text = "Version serveur indisponible : $error",
                             color = StellarOrange,
-                            style =
-                                MaterialTheme.typography.bodySmall
+                            style = MaterialTheme.typography.bodySmall
                         )
                     }
 
-                    Spacer(
-                        Modifier.height(18.dp)
-                    )
+                    Spacer(Modifier.height(18.dp))
 
                     StatusLine(
                         label = "État",
-                        value = statusDisplay(
-                            server.devices.server.status
-                        ),
+                        value = statusDisplay(server.devices.server.status),
                         status = server.devices.server.status
                     )
 
@@ -323,46 +248,24 @@ fun StatusScreen(
                     InfoLine("WebSocket", state.webSocketStatus)
 
                     Spacer(Modifier.height(16.dp))
-
                     SectionTitle("STOCKAGE RASPBERRY PI")
 
                     diagnostics.storage?.let { storage ->
                         StatusLine(
                             label = "État",
-                            value = if (storage.status == "ready") {
-                                "Disponible"
-                            } else {
-                                "Indisponible"
-                            },
+                            value = if (storage.status == "ready") "Disponible" else "Indisponible",
                             status = storage.status
                         )
-
-                        InfoLine(
-                            "Capacité",
-                            formatBytes(storage.totalBytes)
-                        )
-                        InfoLine(
-                            "Utilisé",
-                            formatBytes(storage.usedBytes)
-                        )
-                        InfoLine(
-                            "Disponible",
-                            formatBytes(storage.availableBytes)
-                        )
+                        InfoLine("Capacité", formatBytes(storage.totalBytes))
+                        InfoLine("Utilisé", formatBytes(storage.usedBytes))
+                        InfoLine("Disponible", formatBytes(storage.availableBytes))
                         InfoLine(
                             "Occupation",
                             storage.usedPercent?.let {
-                                String.format(
-                                    Locale.FRANCE,
-                                    "%.1f %%",
-                                    it
-                                )
+                                String.format(Locale.FRANCE, "%.1f %%", it)
                             } ?: "Non disponible"
                         )
-                        InfoLine(
-                            "Répertoire",
-                            storage.path ?: "Non disponible"
-                        )
+                        InfoLine("Répertoire", storage.path ?: "Non disponible")
                     } ?: Text(
                         text = if (diagnostics.staticLoading) {
                             "Lecture du stockage..."
@@ -385,22 +288,9 @@ fun StatusScreen(
                         value = statusDisplay(mount.status),
                         status = mount.status
                     )
-
-                    InfoLine(
-                        "Périphérique",
-                        mount.name ?: "Non identifié"
-                    )
-                    InfoLine(
-                        "Type",
-                        mountTypeDisplay(
-                            mount.type,
-                            mount.typeLabel
-                        )
-                    )
-                    InfoLine(
-                        "Code INDI",
-                        mount.type ?: "Non disponible"
-                    )
+                    InfoLine("Périphérique", mount.name ?: "Non identifié")
+                    InfoLine("Type", mountTypeDisplay(mount.type, mount.typeLabel))
+                    InfoLine("Code INDI", mount.type ?: "Non disponible")
                     InfoLine(
                         "Détection",
                         when (server.session.mountTypeSource) {
@@ -411,110 +301,57 @@ fun StatusScreen(
                     )
 
                     Spacer(Modifier.height(18.dp))
-
                     SectionTitle("POSITION MONTURE · TEMPS RÉEL")
-
                     Text(
                         text = "Actualisation automatique toutes les 2 s",
                         color = StellarMuted,
                         style = MaterialTheme.typography.bodySmall
                     )
-
                     Spacer(Modifier.height(6.dp))
 
                     diagnostics.mount?.let { position ->
                         StatusLine(
                             label = "Mouvement",
                             value = mountMotionLabel(position.status),
-                            status = mountMotionStatusKey(
-                                position.status
-                            )
+                            status = mountMotionStatusKey(position.status)
                         )
-
-                        InfoLine(
-                            "Ascension droite",
-                            formatRa(position.raHours)
-                        )
+                        InfoLine("Ascension droite", formatRa(position.raHours))
                         InfoLine(
                             "RA décimale",
                             position.raHours?.let {
-                                String.format(
-                                    Locale.FRANCE,
-                                    "%.6f h",
-                                    it
-                                )
+                                String.format(Locale.FRANCE, "%.6f h", it)
                             } ?: "Non disponible"
                         )
-                        InfoLine(
-                            "Déclinaison",
-                            formatDec(position.decDeg)
-                        )
+                        InfoLine("Déclinaison", formatDec(position.decDeg))
                         InfoLine(
                             "DEC décimale",
                             position.decDeg?.let {
-                                String.format(
-                                    Locale.FRANCE,
-                                    "%+.6f°",
-                                    it
-                                )
+                                String.format(Locale.FRANCE, "%+.6f°", it)
                             } ?: "Non disponible"
                         )
-                        InfoLine(
-                            "Coordonnées INDI",
-                            position.coordinateProperty
-                                ?: "Non disponible"
-                        )
-                        InfoLine(
-                            "État INDI",
-                            position.indiState ?: "Non disponible"
-                        )
-                        InfoLine(
-                            "Suivi",
-                            trackingModeLabel(
-                                position.trackingMode
-                            )
-                        )
+                        InfoLine("Coordonnées INDI", position.coordinateProperty ?: "Non disponible")
+                        InfoLine("État INDI", position.indiState ?: "Non disponible")
+                        InfoLine("Suivi", trackingModeLabel(position.trackingMode))
                         InfoLine(
                             "Source position",
-                            if (position.virtualPosition) {
-                                "Virtuelle"
-                            } else {
-                                "OnStep / INDI réel"
-                            }
+                            if (position.virtualPosition) "Virtuelle" else "OnStep / INDI réel"
                         )
 
-                        if (
-                            position.targetRaHours != null ||
-                            position.targetDecDeg != null
-                        ) {
+                        if (position.targetRaHours != null || position.targetDecDeg != null) {
                             Spacer(Modifier.height(10.dp))
                             SectionTitle("POINTAGE EN COURS / DERNIÈRE CIBLE")
-                            InfoLine(
-                                "Cible RA",
-                                formatRa(position.targetRaHours)
-                            )
-                            InfoLine(
-                                "Cible DEC",
-                                formatDec(position.targetDecDeg)
-                            )
+                            InfoLine("Cible RA", formatRa(position.targetRaHours))
+                            InfoLine("Cible DEC", formatDec(position.targetDecDeg))
                             InfoLine(
                                 "Progression",
                                 position.progressPercent?.let {
-                                    String.format(
-                                        Locale.FRANCE,
-                                        "%.1f %%",
-                                        it
-                                    )
+                                    String.format(Locale.FRANCE, "%.1f %%", it)
                                 } ?: "Non disponible"
                             )
                             InfoLine(
                                 "Écart restant",
                                 position.remainingDeg?.let {
-                                    String.format(
-                                        Locale.FRANCE,
-                                        "%.4f°",
-                                        it
-                                    )
+                                    String.format(Locale.FRANCE, "%.4f°", it)
                                 } ?: "Non disponible"
                             )
                         }
@@ -554,16 +391,10 @@ fun StatusScreen(
                         value = statusDisplay(camera.status),
                         status = camera.status
                     )
-                    InfoLine(
-                        "Périphérique",
-                        camera.name ?: "Non identifiée"
-                    )
+                    InfoLine("Périphérique", camera.name ?: "Non identifiée")
                     InfoLine(
                         "Résolution capteur",
-                        resolutionDisplay(
-                            camera.sensor.width,
-                            camera.sensor.height
-                        )
+                        resolutionDisplay(camera.sensor.width, camera.sensor.height)
                     )
                     InfoLine(
                         "Taille pixel",
@@ -573,35 +404,23 @@ fun StatusScreen(
                     )
                     InfoLine(
                         "Profondeur",
-                        camera.sensor.bitsPerPixel?.let {
-                            "$it bits"
-                        } ?: "Non disponible"
+                        camera.sensor.bitsPerPixel?.let { "$it bits" } ?: "Non disponible"
                     )
                     InfoLine(
                         "Zone de capture",
-                        resolutionDisplay(
-                            camera.capture.frameWidth,
-                            camera.capture.frameHeight
-                        )
+                        resolutionDisplay(camera.capture.frameWidth, camera.capture.frameHeight)
                     )
                     InfoLine(
                         "Binning",
-                        binningDisplay(
-                            camera.capture.binX,
-                            camera.capture.binY
-                        )
+                        binningDisplay(camera.capture.binX, camera.capture.binY)
                     )
                     InfoLine(
                         "Gain",
-                        camera.capture.gain?.let {
-                            numberDisplay(it)
-                        } ?: "Non disponible"
+                        camera.capture.gain?.let { numberDisplay(it) } ?: "Non disponible"
                     )
                     InfoLine(
                         "Offset",
-                        camera.capture.offset?.let {
-                            numberDisplay(it)
-                        } ?: "Non disponible"
+                        camera.capture.offset?.let { numberDisplay(it) } ?: "Non disponible"
                     )
                     InfoLine(
                         "Exposition",
@@ -609,12 +428,7 @@ fun StatusScreen(
                             "${decimal(it, 3)} s"
                         } ?: "Non disponible"
                     )
-                    InfoLine(
-                        "Type image",
-                        frameTypeDisplay(
-                            camera.capture.frameType
-                        )
-                    )
+                    InfoLine("Type image", frameTypeDisplay(camera.capture.frameType))
                     InfoLine(
                         "Température",
                         camera.temperatureC?.let {
@@ -626,46 +440,123 @@ fun StatusScreen(
                 Spacer(Modifier.height(16.dp))
 
                 StatusCard(
+                    title = "Setup optique · KStars / Ekos"
+                ) {
+                    val setup = setupDiagnostics.setup
+
+                    if (setup == null) {
+                        Text(
+                            text = if (setupDiagnostics.isLoading) {
+                                "Lecture du setup KStars / Ekos..."
+                            } else {
+                                setupDiagnostics.error ?: "Setup optique non disponible"
+                            },
+                            color = if (setupDiagnostics.error != null) StellarOrange else StellarMuted
+                        )
+                    } else {
+                        StatusLine(
+                            label = "État",
+                            value = when {
+                                setup.consistency == "warning" -> "À vérifier"
+                                setup.status == "ready" -> "Prêt"
+                                else -> "Indisponible"
+                            },
+                            status = if (setup.consistency == "warning") "warning" else setup.status
+                        )
+                        InfoLine(
+                            "KStars",
+                            if (setup.kstarsRunning) "Actif" else "Arrêté"
+                        )
+                        InfoLine(
+                            "Base KStars",
+                            if (setup.databaseAvailable) "Détectée" else "Absente"
+                        )
+                        InfoLine("Train optique", setup.opticalTrainName ?: "Non disponible")
+                        InfoLine("Tube", setup.telescopeName ?: setup.scopeConfig ?: "Non disponible")
+                        InfoLine("Type optique", setup.telescopeType ?: "Non disponible")
+                        InfoLine(
+                            "Diamètre",
+                            setup.apertureMm?.let {
+                                String.format(Locale.FRANCE, "%.1f mm", it)
+                            } ?: "Non disponible"
+                        )
+                        InfoLine(
+                            "Focale native",
+                            setup.focalLengthMm?.let {
+                                String.format(Locale.FRANCE, "%.1f mm", it)
+                            } ?: "Non disponible"
+                        )
+                        InfoLine(
+                            "F/D natif",
+                            setup.focalRatio?.let {
+                                String.format(Locale.FRANCE, "f/%.2f", it)
+                            } ?: "Non disponible"
+                        )
+                        InfoLine(
+                            "Réducteur",
+                            setup.reducer?.let {
+                                String.format(Locale.FRANCE, "×%.2f", it)
+                            } ?: "Non disponible"
+                        )
+                        InfoLine(
+                            "Focale effective",
+                            setup.effectiveFocalLengthMm?.let {
+                                String.format(Locale.FRANCE, "%.1f mm", it)
+                            } ?: "Non disponible"
+                        )
+                        InfoLine(
+                            "F/D effectif",
+                            setup.effectiveFocalRatio?.let {
+                                String.format(Locale.FRANCE, "f/%.2f", it)
+                            } ?: "Non disponible"
+                        )
+                        InfoLine("Caméra train", setup.camera ?: "Non disponible")
+                        InfoLine("Monture train", setup.mount ?: "Non disponible")
+                        InfoLine(
+                            "Cohérence INDI / KStars",
+                            when (setup.consistency) {
+                                "ok" -> "Cohérente"
+                                "warning" -> "À vérifier"
+                                else -> "Non vérifiée"
+                            }
+                        )
+
+                        setup.detail?.let {
+                            Spacer(Modifier.height(8.dp))
+                            Text(
+                                text = it,
+                                color = StellarOrange,
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                        }
+                    }
+                }
+
+                Spacer(Modifier.height(16.dp))
+
+                StatusCard(
                     title = "GPS"
                 ) {
                     StatusLine(
                         label = "État",
-                        value = statusDisplay(
-                            server.devices.gps.status
-                        ),
+                        value = statusDisplay(server.devices.gps.status),
                         status = server.devices.gps.status
                     )
-                    InfoLine(
-                        "Latitude",
-                        formatCoordinate(
-                            server.devices.gps.latitude
-                        )
-                    )
-                    InfoLine(
-                        "Longitude",
-                        formatCoordinate(
-                            server.devices.gps.longitude
-                        )
-                    )
+                    InfoLine("Latitude", formatCoordinate(server.devices.gps.latitude))
+                    InfoLine("Longitude", formatCoordinate(server.devices.gps.longitude))
 
                     Spacer(Modifier.height(8.dp))
 
                     Text(
                         text = if (
-                            server.devices.gps.status.equals(
-                                "fix",
-                                ignoreCase = true
-                            )
+                            server.devices.gps.status.equals("fix", ignoreCase = true)
                         ) {
                             "✓ Position GPS disponible"
                         } else {
                             "Position GPS non fixée"
                         },
                         color = if (
-                            server.devices.gps.status.equals(
-                                "fix",
-                                ignoreCase = true
-                            )
+                            server.devices.gps.status.equals("fix", ignoreCase = true)
                         ) {
                             StellarGreen
                         } else {
@@ -681,31 +572,18 @@ fun StatusScreen(
                 StatusCard(
                     title = "Session"
                 ) {
-                    InfoLine(
-                        "Latitude",
-                        formatCoordinate(server.session.latitude)
-                    )
-                    InfoLine(
-                        "Longitude",
-                        formatCoordinate(server.session.longitude)
-                    )
+                    InfoLine("Latitude", formatCoordinate(server.session.latitude))
+                    InfoLine("Longitude", formatCoordinate(server.session.longitude))
                     InfoLine(
                         "Altitude",
                         server.session.altitude?.let {
                             "${decimal(it, 1)} m"
                         } ?: "Non disponible"
                     )
-                    InfoLine(
-                        "Horodatage",
-                        server.session.timestamp
-                            ?: "Non disponible"
-                    )
+                    InfoLine("Horodatage", server.session.timestamp ?: "Non disponible")
                     InfoLine(
                         "Type monture",
-                        mountTypeDisplay(
-                            server.session.mountType,
-                            mount.typeLabel
-                        )
+                        mountTypeDisplay(server.session.mountType, mount.typeLabel)
                     )
                 }
             }
@@ -718,76 +596,30 @@ fun StatusScreen(
                 ) {
                     StatusLine(
                         label = "État",
-                        value = if (catalog.status == "ready") {
-                            "Prêt"
-                        } else {
-                            "Indisponible"
-                        },
+                        value = if (catalog.status == "ready") "Prêt" else "Indisponible",
                         status = catalog.status
                     )
-                    InfoLine(
-                        "Source",
-                        catalog.source ?: "Non disponible"
-                    )
-                    InfoLine(
-                        "Version",
-                        catalog.sourceVersion ?: "Non disponible"
-                    )
-                    InfoLine(
-                        "Base",
-                        catalog.databaseName ?: "Non disponible"
-                    )
-                    InfoLine(
-                        "Taille de la base",
-                        formatBytes(catalog.databaseSizeBytes)
-                    )
-                    InfoLine(
-                        "Objets",
-                        integerDisplay(catalog.objectCount)
-                    )
-                    InfoLine(
-                        "Constellations IAU",
-                        catalog.constellationCount.toString()
-                    )
-                    InfoLine(
-                        "Codes constellation présents",
-                        catalog.constellationCodesInCatalog.toString()
-                    )
-                    InfoLine(
-                        "Noms français",
-                        integerDisplay(catalog.frenchNameCount)
-                    )
-                    InfoLine(
-                        "Groupes d'alias français",
-                        integerDisplay(catalog.frenchAliasCount)
-                    )
+                    InfoLine("Source", catalog.source ?: "Non disponible")
+                    InfoLine("Version", catalog.sourceVersion ?: "Non disponible")
+                    InfoLine("Base", catalog.databaseName ?: "Non disponible")
+                    InfoLine("Taille de la base", formatBytes(catalog.databaseSizeBytes))
+                    InfoLine("Objets", integerDisplay(catalog.objectCount))
+                    InfoLine("Constellations IAU", catalog.constellationCount.toString())
+                    InfoLine("Codes constellation présents", catalog.constellationCodesInCatalog.toString())
+                    InfoLine("Noms français", integerDisplay(catalog.frenchNameCount))
+                    InfoLine("Groupes d'alias français", integerDisplay(catalog.frenchAliasCount))
                     InfoLine(
                         "Langue",
-                        if (catalog.language == "fr") {
-                            "Français"
-                        } else {
-                            catalog.language ?: "Non disponible"
-                        }
+                        if (catalog.language == "fr") "Français" else catalog.language ?: "Non disponible"
                     )
-                    InfoLine(
-                        "Mode",
-                        if (catalog.offline) {
-                            "Local · hors ligne"
-                        } else {
-                            "En ligne"
-                        }
-                    )
+                    InfoLine("Mode", if (catalog.offline) "Local · hors ligne" else "En ligne")
 
                     if (catalog.typeDetails.isNotEmpty()) {
                         Spacer(Modifier.height(14.dp))
                         SectionTitle("CONTENU")
                         Spacer(Modifier.height(4.dp))
-
                         catalog.typeDetails.forEach { detail ->
-                            InfoLine(
-                                detail.labelFr,
-                                integerDisplay(detail.count)
-                            )
+                            InfoLine(detail.labelFr, integerDisplay(detail.count))
                         }
                     }
                 }
@@ -821,8 +653,7 @@ fun StatusScreen(
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(18.dp),
                     colors = CardDefaults.cardColors(
-                        containerColor =
-                            StellarRed.copy(alpha = 0.12f)
+                        containerColor = StellarRed.copy(alpha = 0.12f)
                     ),
                     border = BorderStroke(
                         1.dp,
@@ -843,15 +674,12 @@ fun StatusScreen(
                 onClick = {
                     viewModel.connect()
                     if (!demoMode) {
-                        diagnosticsViewModel.refreshStatic(
-                            state.serverBaseUrl
-                        )
-                        diagnosticsViewModel.refreshMount(
-                            state.serverBaseUrl
-                        )
+                        diagnosticsViewModel.refreshStatic(state.serverBaseUrl)
+                        diagnosticsViewModel.refreshMount(state.serverBaseUrl)
+                        setupViewModel.refresh(state.serverBaseUrl)
                     }
                 },
-                enabled = !state.isConnecting,
+                enabled = !state.isConnecting && !setupDiagnostics.isLoading,
                 modifier = Modifier.fillMaxWidth(),
                 colors = ButtonDefaults.buttonColors(
                     containerColor = StellarOrange,
@@ -859,7 +687,7 @@ fun StatusScreen(
                 )
             ) {
                 Text(
-                    text = if (state.isConnecting) {
+                    text = if (state.isConnecting || setupDiagnostics.isLoading) {
                         "Actualisation..."
                     } else {
                         "Actualiser le statut"
@@ -882,24 +710,16 @@ private fun StatusCard(
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(22.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = StellarSurface
-        ),
-        border = BorderStroke(
-            1.dp,
-            StellarBorder
-        )
+        colors = CardDefaults.cardColors(containerColor = StellarSurface),
+        border = BorderStroke(1.dp, StellarBorder)
     ) {
-        Column(
-            modifier = Modifier.padding(20.dp)
-        ) {
+        Column(modifier = Modifier.padding(20.dp)) {
             Text(
                 text = title,
                 style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.Bold,
                 color = StellarText
             )
-
             Spacer(Modifier.height(16.dp))
             content()
         }
@@ -932,10 +752,7 @@ private fun StatusLine(
     ) {
         Box(
             modifier = Modifier
-                .background(
-                    statusColor(status),
-                    CircleShape
-                )
+                .background(statusColor(status), CircleShape)
                 .padding(5.dp)
         )
 
@@ -987,14 +804,8 @@ private fun gitRevisionsMatch(
     appSha: String?,
     serverSha: String?
 ): Boolean {
-    val app = appSha
-        ?.trim()
-        ?.lowercase(Locale.ROOT)
-        .orEmpty()
-    val server = serverSha
-        ?.trim()
-        ?.lowercase(Locale.ROOT)
-        .orEmpty()
+    val app = appSha?.trim()?.lowercase(Locale.ROOT).orEmpty()
+    val server = serverSha?.trim()?.lowercase(Locale.ROOT).orEmpty()
 
     if (
         app.isBlank() ||
@@ -1005,8 +816,6 @@ private fun gitRevisionsMatch(
         return false
     }
 
-    // Deployment records a short SHA while Android can use a short or full
-    // SHA depending on the builder. Prefix comparison handles both safely.
     return app == server ||
         app.startsWith(server) ||
         server.startsWith(app)
@@ -1078,22 +887,14 @@ private fun resolutionDisplay(
     width: Int?,
     height: Int?
 ): String =
-    if (width != null && height != null) {
-        "$width × $height"
-    } else {
-        "Non disponible"
-    }
+    if (width != null && height != null) "$width × $height" else "Non disponible"
 
 
 private fun binningDisplay(
     x: Int?,
     y: Int?
 ): String =
-    if (x != null && y != null) {
-        "$x × $y"
-    } else {
-        "Non disponible"
-    }
+    if (x != null && y != null) "$x × $y" else "Non disponible"
 
 
 private fun frameTypeDisplay(value: String?): String =
@@ -1109,11 +910,7 @@ private fun frameTypeDisplay(value: String?): String =
 
 private fun formatCoordinate(value: Double?): String =
     value?.let {
-        String.format(
-            Locale.FRANCE,
-            "%.6f°",
-            it
-        )
+        String.format(Locale.FRANCE, "%.6f°", it)
     } ?: "Non disponible"
 
 
@@ -1121,33 +918,19 @@ private fun decimal(
     value: Double,
     digits: Int
 ): String =
-    String.format(
-        Locale.FRANCE,
-        "%.$digits" + "f",
-        value
-    )
+    String.format(Locale.FRANCE, "%.$digits" + "f", value)
 
 
 private fun numberDisplay(value: Double): String =
-    if (value % 1.0 == 0.0) {
-        value.toInt().toString()
-    } else {
-        decimal(value, 2)
-    }
+    if (value % 1.0 == 0.0) value.toInt().toString() else decimal(value, 2)
 
 
 private fun integerDisplay(value: Int): String =
-    String.format(
-        Locale.FRANCE,
-        "%,d",
-        value
-    )
+    String.format(Locale.FRANCE, "%,d", value)
 
 
 private fun formatBytes(bytes: Long?): String {
-    if (bytes == null || bytes < 0L) {
-        return "Non disponible"
-    }
+    if (bytes == null || bytes < 0L) return "Non disponible"
 
     val value = bytes.toDouble()
     val gib = 1024.0 * 1024.0 * 1024.0
@@ -1155,21 +938,9 @@ private fun formatBytes(bytes: Long?): String {
     val kib = 1024.0
 
     return when {
-        value >= gib -> String.format(
-            Locale.FRANCE,
-            "%.1f Gio",
-            value / gib
-        )
-        value >= mib -> String.format(
-            Locale.FRANCE,
-            "%.1f Mio",
-            value / mib
-        )
-        value >= kib -> String.format(
-            Locale.FRANCE,
-            "%.1f Kio",
-            value / kib
-        )
+        value >= gib -> String.format(Locale.FRANCE, "%.1f Gio", value / gib)
+        value >= mib -> String.format(Locale.FRANCE, "%.1f Mio", value / mib)
+        value >= kib -> String.format(Locale.FRANCE, "%.1f Kio", value / kib)
         else -> "$bytes octets"
     }
 }
@@ -1181,12 +952,8 @@ private fun formatRa(value: Double?): String {
     val normalized = ((value % 24.0) + 24.0) % 24.0
     val totalSeconds = normalized * 3600.0
     val hours = floor(totalSeconds / 3600.0).toInt()
-    val minutes = floor(
-        (totalSeconds - hours * 3600.0) / 60.0
-    ).toInt()
-    val seconds = totalSeconds -
-        hours * 3600.0 -
-        minutes * 60.0
+    val minutes = floor((totalSeconds - hours * 3600.0) / 60.0).toInt()
+    val seconds = totalSeconds - hours * 3600.0 - minutes * 60.0
 
     return String.format(
         Locale.FRANCE,
