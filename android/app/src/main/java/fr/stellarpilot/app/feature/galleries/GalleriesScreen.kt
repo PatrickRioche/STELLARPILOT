@@ -2,16 +2,21 @@ package fr.stellarpilot.app.feature.galleries
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.matchParentSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -32,10 +37,16 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import fr.stellarpilot.app.R
 import fr.stellarpilot.app.data.remote.GallerySession
 import fr.stellarpilot.app.ui.components.StellarImagePreview
 import fr.stellarpilot.app.ui.theme.StellarBackground
@@ -47,6 +58,9 @@ import fr.stellarpilot.app.ui.theme.StellarSurface
 import fr.stellarpilot.app.ui.theme.StellarText
 import java.time.Year
 import java.util.Locale
+
+
+private val GalleryOverlayBackground = Color(0xA806111F)
 
 
 @Composable
@@ -65,15 +79,22 @@ fun GalleriesScreen(
         fullScreen = false
     }
 
-    if (fullScreen && state.previewBytes != null) {
+    val selectedSession = state.sessions.firstOrNull {
+        it.id == state.selectedSessionId
+    }
+
+    if (
+        fullScreen &&
+        state.previewBytes != null &&
+        selectedSession != null
+    ) {
         Surface(
             modifier = Modifier.fillMaxSize(),
             color = StellarBackground
         ) {
-            StellarImagePreview(
+            BrandedGalleryViewer(
+                session = selectedSession,
                 imageBytes = state.previewBytes,
-                contentDescription = "Stack plein écran",
-                modifier = Modifier.fillMaxSize(),
                 fullScreen = true,
                 onTap = { fullScreen = false }
             )
@@ -91,8 +112,8 @@ fun GalleriesScreen(
                     .fillMaxSize()
                     .verticalScroll(rememberScrollState())
                     .padding(
-                        horizontal = 24.dp,
-                        vertical = 24.dp
+                        horizontal = 12.dp,
+                        vertical = 16.dp
                     )
         ) {
             Text(
@@ -102,7 +123,7 @@ fun GalleriesScreen(
                 color = StellarOrange
             )
 
-            Spacer(Modifier.height(8.dp))
+            Spacer(Modifier.height(6.dp))
 
             Text(
                 text = "Sessions d'observation",
@@ -111,7 +132,7 @@ fun GalleriesScreen(
                 color = StellarText
             )
 
-            Spacer(Modifier.height(6.dp))
+            Spacer(Modifier.height(4.dp))
 
             Text(
                 text =
@@ -119,7 +140,7 @@ fun GalleriesScreen(
                 color = StellarMuted
             )
 
-            Spacer(Modifier.height(16.dp))
+            Spacer(Modifier.height(12.dp))
 
             Button(
                 onClick = {
@@ -138,13 +159,13 @@ fun GalleriesScreen(
                 )
             }
 
-            Spacer(Modifier.height(16.dp))
+            Spacer(Modifier.height(12.dp))
 
             if (state.isLoading) {
                 CircularProgressIndicator(
                     color = StellarOrange
                 )
-                Spacer(Modifier.height(12.dp))
+                Spacer(Modifier.height(10.dp))
             }
 
             if (!state.isLoading && state.sessions.isEmpty()) {
@@ -165,15 +186,7 @@ fun GalleriesScreen(
                         color = StellarOrange
                     )
 
-                    Spacer(Modifier.height(4.dp))
-
-                    Text(
-                        text = formatGalleryDate(session.createdAt),
-                        color = StellarMuted,
-                        style = MaterialTheme.typography.bodySmall
-                    )
-
-                    Spacer(Modifier.height(8.dp))
+                    Spacer(Modifier.height(3.dp))
 
                     Text(
                         text =
@@ -187,7 +200,7 @@ fun GalleriesScreen(
                         color = StellarMuted
                     )
 
-                    Spacer(Modifier.height(10.dp))
+                    Spacer(Modifier.height(8.dp))
 
                     OutlinedButton(
                         onClick = {
@@ -205,39 +218,17 @@ fun GalleriesScreen(
                         state.selectedSessionId == session.id &&
                         state.previewBytes != null
                     ) {
-                        Spacer(Modifier.height(14.dp))
+                        Spacer(Modifier.height(10.dp))
 
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .border(
-                                    width = 1.dp,
-                                    color = StellarOrange,
-                                    shape = RoundedCornerShape(10.dp)
-                                )
-                                .padding(2.dp)
-                        ) {
-                            StellarImagePreview(
-                                imageBytes = state.previewBytes,
-                                contentDescription =
-                                    "Stack ${session.targetName}",
-                                onTap = { fullScreen = true }
-                            )
-                        }
-
-                        Spacer(Modifier.height(6.dp))
-                        Text(
-                            text = "Pincez pour zoomer • touchez l'image pour le plein écran",
-                            modifier = Modifier.fillMaxWidth(),
-                            color = StellarOrange,
-                            textAlign = TextAlign.Center,
-                            style = MaterialTheme.typography.bodySmall
+                        BrandedGalleryViewer(
+                            session = session,
+                            imageBytes = state.previewBytes,
+                            fullScreen = false,
+                            onTap = { fullScreen = true }
                         )
 
-                        Spacer(Modifier.height(16.dp))
-                        GalleryMetadata(session)
+                        Spacer(Modifier.height(8.dp))
 
-                        Spacer(Modifier.height(14.dp))
                         Button(
                             onClick = {
                                 viewModel.exportSelected(session.id)
@@ -260,7 +251,7 @@ fun GalleriesScreen(
                         }
 
                         state.exportMessage?.let { message ->
-                            Spacer(Modifier.height(8.dp))
+                            Spacer(Modifier.height(6.dp))
                             Text(
                                 text = message,
                                 color = StellarOrange,
@@ -270,7 +261,7 @@ fun GalleriesScreen(
                     }
                 }
 
-                Spacer(Modifier.height(12.dp))
+                Spacer(Modifier.height(10.dp))
             }
 
             state.error?.let {
@@ -280,69 +271,154 @@ fun GalleriesScreen(
                 )
             }
 
-            Spacer(Modifier.height(24.dp))
+            Spacer(Modifier.height(16.dp))
         }
     }
 }
 
 
 @Composable
-private fun GalleryMetadata(session: GallerySession) {
-    val year = session.createdAt
-        .take(4)
-        .toIntOrNull()
-        ?: Year.now().value
-
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-        verticalAlignment = Alignment.Top
+private fun BrandedGalleryViewer(
+    session: GallerySession,
+    imageBytes: ByteArray,
+    fullScreen: Boolean,
+    onTap: () -> Unit
+) {
+    BoxWithConstraints(
+        modifier =
+            if (fullScreen) {
+                Modifier.fillMaxSize()
+            } else {
+                Modifier.fillMaxWidth()
+            }
     ) {
-        Column(
-            modifier = Modifier.weight(1f),
-            horizontalAlignment = Alignment.Start
+        val compact = maxWidth < 520.dp
+        val borderInset = if (fullScreen) 8.dp else 5.dp
+        val logoSize = if (compact) 34.dp else 42.dp
+        val chipPaddingHorizontal = if (compact) 7.dp else 10.dp
+        val chipPaddingVertical = if (compact) 4.dp else 6.dp
+
+        StellarImagePreview(
+            imageBytes = imageBytes,
+            contentDescription = "Stack ${session.targetName}",
+            modifier = if (fullScreen) Modifier.fillMaxSize() else Modifier,
+            fullScreen = fullScreen,
+            onTap = onTap
+        )
+
+        // Le liseré est volontairement en retrait : l'image continue derrière
+        // lui afin de maximiser la surface utile et de créer la signature
+        // visuelle StellarPilot.
+        Box(
+            modifier = Modifier
+                .matchParentSize()
+                .padding(borderInset)
+                .border(
+                    width = 1.dp,
+                    color = StellarOrange,
+                    shape = RoundedCornerShape(10.dp)
+                )
+        )
+
+        Row(
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .clip(RoundedCornerShape(bottomStart = 10.dp, bottomEnd = 10.dp))
+                .background(GalleryOverlayBackground)
+                .padding(
+                    horizontal = chipPaddingHorizontal,
+                    vertical = 3.dp
+                ),
+            verticalAlignment = Alignment.CenterVertically
         ) {
+            Image(
+                painter = painterResource(R.mipmap.ic_launcher),
+                contentDescription = "Logo StellarPilot",
+                modifier = Modifier.size(logoSize),
+                contentScale = ContentScale.Fit
+            )
+
             Text(
-                text = "${stellarPilotVersionLabel()} © $year",
+                text = "${stellarPilotVersionLabel()} © ${copyrightYear(session)}",
                 color = StellarOrange,
-                style = MaterialTheme.typography.bodySmall
+                style =
+                    if (compact) {
+                        MaterialTheme.typography.bodySmall
+                    } else {
+                        MaterialTheme.typography.bodyMedium
+                    },
+                fontWeight = FontWeight.Medium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
             )
         }
 
         Column(
-            modifier = Modifier.weight(1.15f),
-            horizontalAlignment = Alignment.CenterHorizontally
+            modifier = Modifier
+                .align(Alignment.BottomStart)
+                .widthIn(max = if (compact) 210.dp else 320.dp)
+                .clip(RoundedCornerShape(topEnd = 10.dp))
+                .background(GalleryOverlayBackground)
+                .padding(
+                    horizontal = chipPaddingHorizontal,
+                    vertical = chipPaddingVertical
+                )
         ) {
             Text(
                 text = "Objet : ${session.targetName}",
                 color = StellarOrange,
                 fontWeight = FontWeight.Bold,
-                textAlign = TextAlign.Center
+                style =
+                    if (compact) {
+                        MaterialTheme.typography.bodyMedium
+                    } else {
+                        MaterialTheme.typography.titleMedium
+                    },
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
             )
             Text(
                 text =
                     "${session.capturedFrames} capturées • ${session.acceptedFrames} stackées",
                 color = StellarOrange,
                 style = MaterialTheme.typography.bodySmall,
-                textAlign = TextAlign.Center
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
             )
         }
 
         Column(
-            modifier = Modifier.weight(1f),
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .widthIn(max = if (compact) 220.dp else 340.dp)
+                .clip(RoundedCornerShape(topStart = 10.dp))
+                .background(GalleryOverlayBackground)
+                .padding(
+                    horizontal = chipPaddingHorizontal,
+                    vertical = chipPaddingVertical
+                ),
             horizontalAlignment = Alignment.End
         ) {
             Text(
                 text = formatGalleryDate(session.createdAt),
                 color = StellarOrange,
-                style = MaterialTheme.typography.bodySmall,
-                textAlign = TextAlign.End
+                fontWeight = FontWeight.Medium,
+                textAlign = TextAlign.End,
+                style =
+                    if (compact) {
+                        MaterialTheme.typography.bodySmall
+                    } else {
+                        MaterialTheme.typography.bodyMedium
+                    },
+                maxLines = 1
             )
             Text(
                 text = formatGalleryLocation(session),
                 color = StellarOrange,
                 style = MaterialTheme.typography.bodySmall,
-                textAlign = TextAlign.End
+                textAlign = TextAlign.End,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis
             )
         }
     }
@@ -355,7 +431,7 @@ private fun GalleryCard(
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(18.dp),
+        shape = RoundedCornerShape(14.dp),
         colors = CardDefaults.cardColors(
             containerColor = StellarSurface
         ),
@@ -365,11 +441,19 @@ private fun GalleryCard(
             modifier =
                 Modifier
                     .fillMaxWidth()
-                    .padding(16.dp)
+                    .padding(10.dp)
         ) {
             content()
         }
     }
+}
+
+
+private fun copyrightYear(session: GallerySession): Int {
+    return session.createdAt
+        .take(4)
+        .toIntOrNull()
+        ?: Year.now().value
 }
 
 
