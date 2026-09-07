@@ -18,6 +18,7 @@ data class SkyObject(
     val altitudeDeg: Double,
     val azimuthDeg: Double,
     val azimuthDirection: String,
+    val visible: Boolean = true,
     val aboveHorizon: Boolean = true,
     val solarWarning: Boolean = false,
     val symbol: String? = null
@@ -28,7 +29,9 @@ data class SkyObjectsResult(
     val category: String,
     val categoryLabelFr: String,
     val query: String?,
+    val explicitSearch: Boolean = false,
     val minAltitudeDeg: Double,
+    val matchedCount: Int,
     val visibleCount: Int,
     val returnedCount: Int,
     val sort: String,
