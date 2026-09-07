@@ -156,3 +156,4 @@ def solve_centering_frame(
 from app.imaging import assistant_reference_routes as _assistant_reference_routes  # noqa: E402,F401
 from app.imaging import bahtinov_routes as _bahtinov_routes  # noqa: E402,F401
 from app.imaging import dark_routes as _dark_routes  # noqa: E402,F401
+from app.setup import routes as _setup_routes  # noqa: E402,F401
