@@ -1,6 +1,6 @@
 {
   "service": "stellarpilot-server",
-  "version": "0.6.3-poc",
+  "version": "0.6.4-poc",
   "build_timestamp": null,
   "git_sha": null,
   "branch": null,
