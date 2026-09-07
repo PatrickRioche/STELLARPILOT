@@ -341,9 +341,7 @@ private fun AssistantAstrometryStep(
 
     AssistantCard("Astrométrie") {
         Text(
-            "Positionnez librement la monture avec OnStep, MLAstro Hub ou une autre commande. " +
-                "StellarPilot lit automatiquement AD/DEC via INDI comme indice facultatif, " +
-                "puis résout le champ réel de l'image. Aucun choix N/NE/E/... n'est nécessaire.",
+            "Positionnez librement la monture. StellarPilot lit automatiquement AD et DEC via INDI, puis résout le champ réel de l'image.",
             color = StellarText
         )
         Spacer(Modifier.height(12.dp))
