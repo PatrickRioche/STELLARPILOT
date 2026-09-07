@@ -193,11 +193,10 @@ object GalleryExportRenderer {
 
         val shortEdge = minOf(outputWidth, outputHeight).toFloat()
 
-        // Le cadre est volontairement plus intérieur que le texte : les
-        // métadonnées vivent dans la fine zone d'image située entre le bord du
-        // fichier et le liseré. L'image conserve ainsi toute sa surface utile.
-        val borderInset = shortEdge * 0.075f
-        val edgeInset = shortEdge * 0.016f
+        // Le liseré reste à quelques pixels du bord de l'image et toutes les
+        // métadonnées sont rendues à l'intérieur de ce cadre.
+        val borderInset = shortEdge * 0.012f
+        val contentInset = borderInset + shortEdge * 0.010f
         val corner = shortEdge * 0.018f
         val strokeWidth = max(3f, shortEdge * 0.0030f)
 
@@ -237,7 +236,7 @@ object GalleryExportRenderer {
         val versionWidth = textPaint.measureText(versionText)
         val headerWidth = logoSize + logoGap + versionWidth
         val headerLeft = (outputWidth - headerWidth) / 2f
-        val logoTop = edgeInset
+        val logoTop = contentInset
 
         if (logo != null) {
             canvas.drawBitmap(
@@ -263,14 +262,14 @@ object GalleryExportRenderer {
             textPaint
         )
 
-        val secondLineBaseline = outputHeight - edgeInset
+        val secondLineBaseline = outputHeight - contentInset
         val firstLineBaseline = secondLineBaseline - shortEdge * 0.034f
 
         boldPaint.textAlign = Paint.Align.LEFT
         boldPaint.textSize = shortEdge * 0.034f
         canvas.drawText(
             "Objet : ${session.targetName}",
-            edgeInset,
+            contentInset,
             firstLineBaseline,
             boldPaint
         )
@@ -279,7 +278,7 @@ object GalleryExportRenderer {
         textPaint.textSize = shortEdge * 0.022f
         canvas.drawText(
             "${session.capturedFrames} captures • ${session.acceptedFrames} stackées",
-            edgeInset,
+            contentInset,
             secondLineBaseline,
             textPaint
         )
@@ -288,7 +287,7 @@ object GalleryExportRenderer {
         textPaint.textSize = shortEdge * 0.027f
         canvas.drawText(
             formatGalleryDate(session.createdAt),
-            outputWidth - edgeInset,
+            outputWidth - contentInset,
             firstLineBaseline,
             textPaint
         )
@@ -296,7 +295,7 @@ object GalleryExportRenderer {
         textPaint.textSize = shortEdge * 0.021f
         canvas.drawText(
             formatGalleryLocation(session),
-            outputWidth - edgeInset,
+            outputWidth - contentInset,
             secondLineBaseline,
             textPaint
         )
