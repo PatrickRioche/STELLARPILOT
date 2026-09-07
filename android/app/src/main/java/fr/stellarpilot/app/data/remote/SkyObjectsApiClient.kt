@@ -143,6 +143,18 @@ class SkyObjectsApiClient(
                                 0.0
                             )
 
+                        val aboveHorizon =
+                            item.optBoolean(
+                                "above_horizon",
+                                altitudeDeg > 0.0
+                            )
+
+                        val visible =
+                            item.optBoolean(
+                                "visible",
+                                aboveHorizon
+                            )
+
                         add(
                             SkyObject(
                                 id =
@@ -237,11 +249,11 @@ class SkyObjectsApiClient(
                                         ""
                                     ),
 
+                                visible =
+                                    visible,
+
                                 aboveHorizon =
-                                    item.optBoolean(
-                                        "above_horizon",
-                                        altitudeDeg > 0.0
-                                    ),
+                                    aboveHorizon,
 
                                 solarWarning =
                                     item.optBoolean(
@@ -258,6 +270,12 @@ class SkyObjectsApiClient(
                     }
                 }
             }
+
+        val visibleCount =
+            root.optInt(
+                "visible_count",
+                0
+            )
 
         return SkyObjectsResult(
             status =
@@ -283,6 +301,12 @@ class SkyObjectsApiClient(
                     "query"
                 ),
 
+            explicitSearch =
+                root.optBoolean(
+                    "explicit_search",
+                    false
+                ),
+
             minAltitudeDeg =
                 root.optDouble(
                     "min_altitude_deg",
@@ -290,9 +314,12 @@ class SkyObjectsApiClient(
                 ),
 
             visibleCount =
+                visibleCount,
+
+            matchedCount =
                 root.optInt(
-                    "visible_count",
-                    0
+                    "matched_count",
+                    visibleCount
                 ),
 
             returnedCount =
