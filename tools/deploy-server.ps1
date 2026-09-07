@@ -21,6 +21,9 @@ function Invoke-Checked {
 }
 
 $RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
+$WorkRoot = Join-Path $env:TEMP "stellarpilot-server-package"
+$Stage = Join-Path $WorkRoot "stage"
+$TrackedTar = Join-Path $WorkRoot "tracked-server.tar"
 $Package = Join-Path $env:TEMP "stellarpilot-server-deploy.tar.gz"
 $RemoteScriptLocal = Join-Path $env:TEMP "stellarpilot-remote-deploy.sh"
 $RemotePackage = "/tmp/stellarpilot-server-deploy.tar.gz"
@@ -55,19 +58,52 @@ try {
     Write-Host "[StellarPilot] Version      : $version"
     Write-Host "[StellarPilot] Build UTC    : $buildTimestamp"
 
+    Remove-Item $WorkRoot -Recurse -Force -ErrorAction SilentlyContinue
     Remove-Item $Package -Force -ErrorAction SilentlyContinue
     Remove-Item $RemoteScriptLocal -Force -ErrorAction SilentlyContinue
+    New-Item -ItemType Directory -Path $Stage -Force | Out-Null
 
-    # Git is used only on the PC. git archive includes tracked files only,
-    # so Windows .venv, caches, captures and runtime data are never deployed.
-    Invoke-Checked git archive --format=tar.gz --output=$Package HEAD server
+    # Git is used only on the PC. Package exactly HEAD so local runtime data,
+    # captures and the Windows virtual environment can never leak into a kit.
+    Invoke-Checked git archive --format=tar --output=$TrackedTar HEAD server
+    Invoke-Checked tar -xf $TrackedTar -C $Stage
+
+    $StagedServer = Join-Path $Stage "server"
+    $ManifestPath = Join-Path $StagedServer "catalog_sources\SOURCE_MANIFEST.json"
+
+    if (Test-Path $ManifestPath) {
+        Write-Host "[StellarPilot] Fetching pinned stellar catalogue sources on PC"
+        $manifest = Get-Content $ManifestPath -Raw | ConvertFrom-Json
+        $sourceDir = Split-Path $ManifestPath -Parent
+
+        foreach ($source in $manifest.sources) {
+            $destination = Join-Path $sourceDir $source.file
+            Write-Host "[StellarPilot]   $($source.file)"
+            Invoke-WebRequest `
+                -Uri $source.url `
+                -OutFile $destination `
+                -UseBasicParsing
+
+            if (-not (Test-Path $destination)) {
+                throw "Stellar catalogue source missing after download: $destination"
+            }
+
+            if ((Get-Item $destination).Length -le 0) {
+                throw "Empty stellar catalogue source: $destination"
+            }
+        }
+    }
+
+    # The final update kit is self-contained. The Pi needs no Internet access
+    # to build/use the catalogue at runtime.
+    Invoke-Checked tar -czf $Package -C $Stage server
 
     if (-not (Test-Path $Package)) {
         throw "Deployment archive was not created: $Package"
     }
 
     $sizeMb = [math]::Round((Get-Item $Package).Length / 1MB, 2)
-    Write-Host "[StellarPilot] Clean archive : $sizeMb MB"
+    Write-Host "[StellarPilot] Self-contained archive : $sizeMb MB"
 
     $remoteBody = @'
 #!/usr/bin/env bash
@@ -84,9 +120,7 @@ BRANCH="__BRANCH__"
 log() { printf '[StellarPilot] %s\n' "$*"; }
 fail() { printf '[StellarPilot][ERROR] %s\n' "$*" >&2; exit 1; }
 
-log "Cleaning legacy temporary files"
-# Some legacy deployment folders were created as root. sudo is required once
-# to remove them safely before creating a fresh user-owned staging directory.
+log "Cleaning temporary deployment files"
 sudo rm -rf \
     /tmp/stellarpilot-v060 \
     /tmp/stellarpilot-v060.tar.gz \
@@ -94,7 +128,6 @@ sudo rm -rf \
 mkdir -p "$STAGE"
 
 test -f "$PACKAGE" || fail "Remote archive missing: $PACKAGE"
-
 tar -xzf "$PACKAGE" -C "$STAGE"
 
 test -f "$STAGE/server/requirements.txt" || fail "requirements.txt missing from archive"
@@ -108,16 +141,14 @@ command -v solve-field >/dev/null || fail "astrometry.net / solve-field missing"
 log "Deploying to $DEPLOY"
 mkdir -p "$DEPLOY"
 
-# .venv = persistent Linux Python environment.
-# data  = persistent scientific captures and calibration references.
-# Neither may be deleted during a normal update.
+# Persistent Raspberry Pi state is deliberately preserved.
+# .venv = Linux Python environment
+# data  = captures, calibrations and catalog.sqlite3
 rsync -a --delete \
     --exclude '.venv/' \
     --exclude 'data/' \
     "$STAGE/server/" "$DEPLOY/"
 
-# BUILD_INFO.json in the repository is intentionally generic. The deployment
-# kit stamps the exact version, commit and branch that were archived on the PC.
 cat > "$DEPLOY/BUILD_INFO.json" <<EOF
 {
   "service": "stellarpilot-server",
@@ -140,10 +171,6 @@ log "Updating Python dependencies"
 .venv/bin/python -m pip install --upgrade pip
 .venv/bin/pip install -r requirements.txt
 
-# Astroberry intentionally exposes selected system Python packages to this
-# environment. A global `pip check` therefore reports unrelated OS packages
-# (types-*, apt-listchanges, h2, gevent, ...). Validate only the dependencies
-# that StellarPilot actually relies on.
 log "Checking StellarPilot Python dependencies"
 .venv/bin/python - <<'PY'
 from importlib.metadata import PackageNotFoundError, distribution, version
@@ -169,7 +196,6 @@ if Version(requests_version) < Version("2.32.4"):
     raise SystemExit(f"requests>=2.32.4 required, found {requests_version}")
 print(f"requests={requests_version}")
 
-# If indiweb is installed, also enforce its declared requests constraint.
 try:
     indiweb = distribution("indiweb")
 except PackageNotFoundError:
@@ -189,7 +215,6 @@ import numpy
 import PIL
 import requests
 import scipy
-
 print("StellarPilot dependency check OK")
 PY
 
@@ -205,12 +230,12 @@ EOF
 sudo systemctl daemon-reload
 sudo systemctl enable stellarpilot-server >/dev/null
 sudo systemctl restart stellarpilot-server
-sleep 2
+sleep 3
 
 log "Checking service"
 if ! systemctl is-active --quiet stellarpilot-server; then
     systemctl --no-pager -l --full status stellarpilot-server || true
-    journalctl -u stellarpilot-server -n 80 --no-pager || true
+    journalctl -u stellarpilot-server -n 100 --no-pager || true
     fail "stellarpilot-server is not active"
 fi
 
@@ -222,16 +247,16 @@ log "Checking /build"
 curl --fail --silent --show-error http://127.0.0.1:8000/build
 printf '\n'
 
-log "Checking V0.6 API"
+log "Checking API version and mount routes"
 curl --fail --silent --show-error http://127.0.0.1:8000/openapi.json | python3 -c '
 import json, sys
 api = json.load(sys.stdin)
 version = api.get("info", {}).get("version")
-print("version=", version)
 paths = api.get("paths", {})
 required = ["/mount/goto-mount-frame", "/mount/sync", "/mount/status"]
 missing = [path for path in required if path not in paths]
 expected = "__VERSION__"
+print("version=", version)
 if version != expected:
     print("expected_version=", expected)
     raise SystemExit(2)
@@ -239,6 +264,26 @@ if missing:
     print("missing_routes=", ",".join(missing))
     raise SystemExit(3)
 print("routes_v06=OK")
+'
+
+log "Checking offline stellar catalogue"
+curl --fail --silent --show-error http://127.0.0.1:8000/catalog/status | python3 -c '
+import json, sys
+status = json.load(sys.stdin)
+star_count = int(status.get("types", {}).get("star", 0))
+print("stellar_count=", star_count)
+if star_count < 4000:
+    raise SystemExit("stellar catalogue did not load")
+'
+
+curl --fail --silent --show-error \
+    'http://127.0.0.1:8000/catalog/search?q=Vega&object_type=star' | python3 -c '
+import json, sys
+result = json.load(sys.stdin)
+names = [obj.get("name") for obj in result.get("objects", [])]
+print("Vega search=", names[:3])
+if not names:
+    raise SystemExit("Vega missing from catalogue")
 '
 
 log "Cleaning staging"
@@ -257,14 +302,13 @@ log "Deployment complete"
     $remoteBody = $remoteBody.Replace("__BRANCH__", $branch)
     $remoteBody = $remoteBody -replace "`r`n", "`n"
 
-    # UTF-8 without BOM for Bash.
     [System.IO.File]::WriteAllText(
         $RemoteScriptLocal,
         $remoteBody,
         [System.Text.UTF8Encoding]::new($false)
     )
 
-    Write-Host "[StellarPilot] Uploading package and deploy script"
+    Write-Host "[StellarPilot] Uploading self-contained package"
     Invoke-Checked scp $Package $RemoteScriptLocal "${PiHost}:/tmp/"
 
     Write-Host "[StellarPilot] Running remote deployment"
@@ -273,10 +317,11 @@ log "Deployment complete"
         throw "Remote deployment failed with exit code $LASTEXITCODE"
     }
 
-    Write-Host "[StellarPilot] Server V0.6 deployed successfully." -ForegroundColor Green
+    Write-Host "[StellarPilot] Server deployed successfully." -ForegroundColor Green
 }
 finally {
     Pop-Location
+    Remove-Item $WorkRoot -Recurse -Force -ErrorAction SilentlyContinue
     Remove-Item $Package -Force -ErrorAction SilentlyContinue
     Remove-Item $RemoteScriptLocal -Force -ErrorAction SilentlyContinue
 }
