@@ -64,6 +64,7 @@ def capture_centering_frame(
         "solver": None,
         "solver_detail": None,
         "pixel_scale_arcsec": None,
+        "verified_at": None,
     }
     metadata["state"] = "framing"
 
@@ -116,6 +117,7 @@ def solve_centering_frame(
         "solver": solution.get("solver"),
         "solver_detail": solution.get("detail"),
         "pixel_scale_arcsec": solution.get("pixel_scale_arcsec"),
+        "verified_at": None,
     }
 
     if (
@@ -132,6 +134,8 @@ def solve_centering_frame(
                 metadata["setup"]["centering_tolerance_arcsec"],
             )
         )
+        if centering["status"] == "centered":
+            centering["verified_at"] = service._utc_now()
 
     metadata["centering"] = centering
     metadata["state"] = (
