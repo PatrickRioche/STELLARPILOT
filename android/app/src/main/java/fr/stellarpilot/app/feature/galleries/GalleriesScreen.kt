@@ -2,8 +2,7 @@ package fr.stellarpilot.app.feature.galleries
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.Image
-import androidx.compose.foundation.background
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -36,16 +35,18 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.graphics.Shadow
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.rotate
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
-import fr.stellarpilot.app.R
 import fr.stellarpilot.app.data.remote.GallerySession
 import fr.stellarpilot.app.ui.components.StellarImagePreview
 import fr.stellarpilot.app.ui.theme.StellarBackground
@@ -59,7 +60,11 @@ import java.time.Year
 import java.util.Locale
 
 
-private val GalleryOverlayBackground = Color(0xA806111F)
+private val GalleryTextShadow = Shadow(
+    color = Color.Black.copy(alpha = 0.92f),
+    offset = Offset(1.5f, 1.5f),
+    blurRadius = 5f
+)
 
 
 @Composable
@@ -292,10 +297,14 @@ private fun BrandedGalleryViewer(
             }
     ) {
         val compact = maxWidth < 520.dp
-        val borderInset = if (fullScreen) 8.dp else 5.dp
-        val logoSize = if (compact) 34.dp else 42.dp
-        val chipPaddingHorizontal = if (compact) 7.dp else 10.dp
-        val chipPaddingVertical = if (compact) 4.dp else 6.dp
+        val borderInset = when {
+            fullScreen && compact -> 16.dp
+            fullScreen -> 22.dp
+            compact -> 10.dp
+            else -> 14.dp
+        }
+        val contentInset = borderInset + if (compact) 7.dp else 10.dp
+        val logoSize = if (compact) 28.dp else 36.dp
 
         StellarImagePreview(
             imageBytes = imageBytes,
@@ -305,44 +314,53 @@ private fun BrandedGalleryViewer(
             onTap = onTap
         )
 
-        Box(
-            modifier = Modifier
-                .matchParentSize()
-                .padding(borderInset)
-                .border(
-                    width = 1.dp,
-                    color = StellarOrange,
-                    shape = RoundedCornerShape(10.dp)
-                )
-        )
+        Canvas(
+            modifier = Modifier.matchParentSize()
+        ) {
+            val insetPx = borderInset.toPx()
+            val radiusPx = (if (compact) 10.dp else 14.dp).toPx()
+            val strokePx = (if (compact) 1.dp else 1.25.dp).toPx()
+            drawRoundRect(
+                color = StellarOrange,
+                topLeft = Offset(insetPx, insetPx),
+                size = Size(
+                    width = (size.width - 2f * insetPx).coerceAtLeast(1f),
+                    height = (size.height - 2f * insetPx).coerceAtLeast(1f)
+                ),
+                cornerRadius = androidx.compose.ui.geometry.CornerRadius(
+                    radiusPx,
+                    radiusPx
+                ),
+                style = Stroke(width = strokePx)
+            )
+        }
 
         Row(
             modifier = Modifier
                 .align(Alignment.TopCenter)
-                .clip(RoundedCornerShape(bottomStart = 10.dp, bottomEnd = 10.dp))
-                .background(GalleryOverlayBackground)
                 .padding(
-                    horizontal = chipPaddingHorizontal,
-                    vertical = 3.dp
+                    top = contentInset,
+                    start = contentInset,
+                    end = contentInset
                 ),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Image(
-                painter = painterResource(R.mipmap.ic_launcher),
-                contentDescription = "Logo StellarPilot",
-                modifier = Modifier.size(logoSize),
-                contentScale = ContentScale.Fit
+            StellarPilotOrangeMark(
+                modifier = Modifier.size(logoSize)
             )
+
+            Spacer(Modifier.size(if (compact) 5.dp else 7.dp))
 
             Text(
                 text = "${stellarPilotVersionLabel()} © ${copyrightYear(session)}",
                 color = StellarOrange,
-                style =
+                style = galleryTextStyle(
                     if (compact) {
                         MaterialTheme.typography.bodySmall
                     } else {
                         MaterialTheme.typography.bodyMedium
-                    },
+                    }
+                ),
                 fontWeight = FontWeight.Medium,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
@@ -352,32 +370,31 @@ private fun BrandedGalleryViewer(
         Column(
             modifier = Modifier
                 .align(Alignment.BottomStart)
-                .widthIn(max = if (compact) 210.dp else 320.dp)
-                .clip(RoundedCornerShape(topEnd = 10.dp))
-                .background(GalleryOverlayBackground)
                 .padding(
-                    horizontal = chipPaddingHorizontal,
-                    vertical = chipPaddingVertical
+                    start = contentInset,
+                    bottom = contentInset
                 )
+                .widthIn(max = if (compact) 220.dp else 330.dp)
         ) {
             Text(
                 text = "Objet : ${session.targetName}",
                 color = StellarOrange,
                 fontWeight = FontWeight.Bold,
-                style =
+                style = galleryTextStyle(
                     if (compact) {
                         MaterialTheme.typography.bodyMedium
                     } else {
                         MaterialTheme.typography.titleMedium
-                    },
+                    }
+                ),
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
             Text(
                 text =
-                    "${session.capturedFrames} capturées • ${session.acceptedFrames} stackées",
+                    "${session.capturedFrames} captures • ${session.acceptedFrames} stackées",
                 color = StellarOrange,
-                style = MaterialTheme.typography.bodySmall,
+                style = galleryTextStyle(MaterialTheme.typography.bodySmall),
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
@@ -386,13 +403,11 @@ private fun BrandedGalleryViewer(
         Column(
             modifier = Modifier
                 .align(Alignment.BottomEnd)
-                .widthIn(max = if (compact) 220.dp else 340.dp)
-                .clip(RoundedCornerShape(topStart = 10.dp))
-                .background(GalleryOverlayBackground)
                 .padding(
-                    horizontal = chipPaddingHorizontal,
-                    vertical = chipPaddingVertical
-                ),
+                    end = contentInset,
+                    bottom = contentInset
+                )
+                .widthIn(max = if (compact) 230.dp else 350.dp),
             horizontalAlignment = Alignment.End
         ) {
             Text(
@@ -400,24 +415,78 @@ private fun BrandedGalleryViewer(
                 color = StellarOrange,
                 fontWeight = FontWeight.Medium,
                 textAlign = TextAlign.End,
-                style =
+                style = galleryTextStyle(
                     if (compact) {
                         MaterialTheme.typography.bodySmall
                     } else {
                         MaterialTheme.typography.bodyMedium
-                    },
+                    }
+                ),
                 maxLines = 1
             )
             Text(
                 text = formatGalleryLocation(session),
                 color = StellarOrange,
-                style = MaterialTheme.typography.bodySmall,
+                style = galleryTextStyle(MaterialTheme.typography.bodySmall),
                 textAlign = TextAlign.End,
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis
             )
         }
     }
+}
+
+
+@Composable
+private fun StellarPilotOrangeMark(
+    modifier: Modifier = Modifier
+) {
+    Canvas(modifier = modifier) {
+        val shortEdge = minOf(size.width, size.height)
+        val center = Offset(
+            x = size.width * 0.46f,
+            y = size.height * 0.56f
+        )
+        val stroke = Stroke(width = shortEdge * 0.085f)
+
+        rotate(
+            degrees = -18f,
+            pivot = center
+        ) {
+            drawOval(
+                color = StellarOrange,
+                topLeft = Offset(
+                    x = size.width * 0.08f,
+                    y = size.height * 0.38f
+                ),
+                size = Size(
+                    width = size.width * 0.76f,
+                    height = size.height * 0.34f
+                ),
+                style = stroke
+            )
+        }
+
+        drawCircle(
+            color = StellarOrange,
+            radius = shortEdge * 0.18f,
+            center = center
+        )
+
+        drawCircle(
+            color = StellarOrange,
+            radius = shortEdge * 0.055f,
+            center = Offset(
+                x = size.width * 0.80f,
+                y = size.height * 0.17f
+            )
+        )
+    }
+}
+
+
+private fun galleryTextStyle(base: TextStyle): TextStyle {
+    return base.copy(shadow = GalleryTextShadow)
 }
 
 
