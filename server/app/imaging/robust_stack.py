@@ -8,15 +8,16 @@ from astropy.io import fits
 
 FINAL_STACK_METHOD = "sigma-clipped-mean-v1"
 FINAL_STACK_SIGMA = 3.0
+FINAL_STACK_TILE_ROWS = 32
 
 
-def _load(path: Path) -> tuple[np.ndarray, fits.Header]:
-    with fits.open(path, memmap=False) as hdul:
+def _shape_and_header(path: Path) -> tuple[tuple[int, int], fits.Header]:
+    with fits.open(path, memmap=True) as hdul:
         data = np.squeeze(np.asarray(hdul[0].data))
         header = hdul[0].header.copy()
-    if data.ndim != 2:
-        raise ValueError(f"Dimensions FITS inattendues: {data.shape}")
-    return data.astype(np.float32, copy=False), header
+        if data.ndim != 2:
+            raise ValueError(f"Dimensions FITS inattendues: {data.shape}")
+        return (int(data.shape[0]), int(data.shape[1])), header
 
 
 def build_sigma_clipped_stack(
@@ -24,58 +25,56 @@ def build_sigma_clipped_stack(
     destination: Path,
     *,
     sigma: float = FINAL_STACK_SIGMA,
+    tile_rows: int = FINAL_STACK_TILE_ROWS,
 ) -> dict:
     if not paths:
         raise ValueError("Aucune image enregistrée à combiner")
 
-    first, header = _load(paths[0])
-    shape = first.shape
-    total = np.zeros(shape, dtype=np.float64)
-    total_sq = np.zeros(shape, dtype=np.float64)
-    count = np.zeros(shape, dtype=np.uint32)
-
-    for path in paths:
-        data, _ = _load(path)
-        if data.shape != shape:
+    shape, header = _shape_and_header(paths[0])
+    for path in paths[1:]:
+        other_shape, _ = _shape_and_header(path)
+        if other_shape != shape:
             raise ValueError("Dimensions différentes dans le stack")
-        finite = np.isfinite(data)
-        total[finite] += data[finite]
-        total_sq[finite] += data[finite].astype(np.float64) ** 2
-        count[finite] += 1
 
-    mean = np.divide(
-        total,
-        count,
-        out=np.zeros(shape, dtype=np.float64),
-        where=count > 0,
-    )
-    second_moment = np.divide(
-        total_sq,
-        count,
-        out=np.zeros(shape, dtype=np.float64),
-        where=count > 0,
-    )
-    variance = np.maximum(second_moment - mean * mean, 0.0)
-    std = np.sqrt(variance)
-    del total, total_sq, second_moment, variance
+    tile_rows = max(1, int(tile_rows))
+    final = np.zeros(shape, dtype=np.float32)
 
-    clipped_sum = np.zeros(shape, dtype=np.float64)
-    clipped_count = np.zeros(shape, dtype=np.uint32)
-    threshold = np.maximum(std * float(sigma), 1.0)
+    # Keep the FITS files memory-mapped and combine only a few rows at a time.
+    # This gives a robust median/MAD clipping baseline without loading the full
+    # N-frame cube into RAM on the Raspberry Pi.
+    handles = [fits.open(path, memmap=True) for path in paths]
+    try:
+        for y0 in range(0, shape[0], tile_rows):
+            y1 = min(shape[0], y0 + tile_rows)
+            cube = np.stack(
+                [
+                    np.asarray(handle[0].data[y0:y1, :], dtype=np.float32)
+                    for handle in handles
+                ],
+                axis=0,
+            )
+            cube = np.where(np.isfinite(cube), cube, np.nan)
 
-    for path in paths:
-        data, _ = _load(path)
-        finite = np.isfinite(data)
-        accepted = finite & (np.abs(data - mean) <= threshold)
-        clipped_sum[accepted] += data[accepted]
-        clipped_count[accepted] += 1
+            center = np.nanmedian(cube, axis=0)
+            mad = np.nanmedian(np.abs(cube - center[None, :, :]), axis=0)
+            robust_sigma = np.maximum(1.4826 * mad, 1.0)
+            accepted = np.abs(cube - center[None, :, :]) <= (
+                float(sigma) * robust_sigma[None, :, :]
+            )
+            accepted &= np.isfinite(cube)
 
-    final = np.divide(
-        clipped_sum,
-        clipped_count,
-        out=mean,
-        where=clipped_count > 0,
-    ).astype(np.float32)
+            clipped_sum = np.nansum(np.where(accepted, cube, np.nan), axis=0)
+            clipped_count = np.sum(accepted, axis=0)
+            tile = np.divide(
+                clipped_sum,
+                clipped_count,
+                out=center.astype(np.float64, copy=True),
+                where=clipped_count > 0,
+            )
+            final[y0:y1, :] = tile.astype(np.float32)
+    finally:
+        for handle in handles:
+            handle.close()
 
     header["SPSTACK"] = (True, "StellarPilot final stack")
     header["SPMETH"] = (FINAL_STACK_METHOD, "Final stack combination method")
