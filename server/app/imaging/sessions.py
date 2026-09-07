@@ -16,7 +16,9 @@ from PIL import Image
 from scipy.ndimage import gaussian_filter, shift as nd_shift
 
 from app.gps.service import gps_service
-from app.imaging.quality import analyze_fits
+from app.imaging.light_quality import analyze_light_quality
+from app.imaging.robust_stack import FINAL_STACK_METHOD, build_sigma_clipped_stack
+from app.imaging.stack_calibration import calibrate_light, select_compatible_master
 from app.indi.service import indi_service
 from app.solving.service import plate_solver
 
@@ -24,13 +26,14 @@ from app.solving.service import plate_solver
 SERVER_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_RUNTIME_ROOT = SERVER_ROOT / "tmp"
 DEFAULT_GALLERIES_ROOT = SERVER_ROOT / "data" / "galleries"
+QUALITY_BASELINE_LIMIT = 20
 
 
 class CaptureSessionService:
-    """Persistent capture workspace and first live-stacking pipeline.
+    """Persistent capture workspace and resumable calibrated live stack.
 
     Runtime files intentionally live below ``stellarpilot-server/tmp`` and
-    never below the operating-system ``/tmp``.  A session keeps every stage
+    never below the operating-system ``/tmp``. A session keeps every stage
     separated so calibration/registration algorithms can evolve without
     changing the public API.
     """
@@ -64,6 +67,52 @@ class CaptureSessionService:
         return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
     @staticmethod
+    def _parse_utc(value: str | None) -> datetime | None:
+        if not value:
+            return None
+        try:
+            instant = datetime.fromisoformat(value)
+        except ValueError:
+            return None
+        if instant.tzinfo is None:
+            instant = instant.replace(tzinfo=timezone.utc)
+        return instant.astimezone(timezone.utc)
+
+    @classmethod
+    def _acquisition_seconds(cls, metadata: dict) -> float:
+        stacking = metadata.get("stacking") or {}
+        accumulated = float(stacking.get("accumulated_active_seconds") or 0.0)
+        active_started_at = cls._parse_utc(stacking.get("active_started_at"))
+        if active_started_at is not None:
+            accumulated += max(
+                0.0,
+                (datetime.now(timezone.utc) - active_started_at).total_seconds(),
+            )
+        return round(accumulated, 3)
+
+    def _start_acquisition_segment(self, metadata: dict) -> None:
+        stacking = metadata["stacking"]
+        now = self._utc_now()
+        if not stacking.get("started_at"):
+            stacking["started_at"] = now
+        stacking["active_started_at"] = now
+        stacking["stopped_at"] = None
+        stacking["run_count"] = int(stacking.get("run_count") or 0) + 1
+        metadata["acquisition_seconds"] = self._acquisition_seconds(metadata)
+
+    def _close_acquisition_segment(self, metadata: dict) -> None:
+        stacking = metadata["stacking"]
+        active_started_at = self._parse_utc(stacking.get("active_started_at"))
+        accumulated = float(stacking.get("accumulated_active_seconds") or 0.0)
+        now = datetime.now(timezone.utc)
+        if active_started_at is not None:
+            accumulated += max(0.0, (now - active_started_at).total_seconds())
+        stacking["accumulated_active_seconds"] = round(accumulated, 3)
+        stacking["active_started_at"] = None
+        stacking["stopped_at"] = now.isoformat(timespec="seconds")
+        metadata["acquisition_seconds"] = round(accumulated, 3)
+
+    @staticmethod
     def _safe_slug(value: str) -> str:
         cleaned = "".join(
             char if char.isalnum() else "-"
@@ -73,12 +122,7 @@ class CaptureSessionService:
         return cleaned[:48] or "target"
 
     def _observation_snapshot(self) -> dict:
-        """Freeze the observing site when a session starts.
-
-        The device GPS is preferred. If it has no fix, keep the OnStep
-        coordinates as a fallback. Gallery rendering never depends on the
-        current device location after the session has been created.
-        """
+        """Freeze the observing site when a session starts."""
         try:
             gps = gps_service.status()
         except Exception:
@@ -143,6 +187,7 @@ class CaptureSessionService:
 
     def _write(self, metadata: dict) -> dict:
         metadata["updated_at"] = self._utc_now()
+        metadata["acquisition_seconds"] = self._acquisition_seconds(metadata)
         path = self._metadata_path(metadata["id"])
         path.parent.mkdir(parents=True, exist_ok=True)
         temporary = path.with_suffix(".json.tmp")
@@ -214,8 +259,10 @@ class CaptureSessionService:
                 "captured": 0,
                 "accepted": 0,
                 "rejected": 0,
+                "rejected_by_reason": {},
             },
             "integration_seconds": 0.0,
+            "acquisition_seconds": 0.0,
             "centering": {
                 "status": "not_checked",
                 "attempts": 0,
@@ -225,12 +272,24 @@ class CaptureSessionService:
                 "correction_ra_hours": None,
                 "correction_dec_deg": None,
                 "image": None,
+                "verified_at": None,
+            },
+            "calibration": {
+                "required": True,
+                "status": "pending",
+                "master_id": None,
+                "master_dark": None,
+                "temperature_delta_c": None,
+                "hot_pixels": None,
+                "calibrated_frames": 0,
+                "detail": None,
             },
             "stacking": {
                 "running": False,
-                "target_frames": 10,
-                "max_captured_frames": 20,
-                "astrometry_required": False,
+                "mode": "continuous",
+                "target_frames": None,
+                "max_captured_frames": None,
+                "astrometry_required": True,
                 "stop_requested": False,
                 "recenter_required": False,
                 "recenter_reason": None,
@@ -239,11 +298,22 @@ class CaptureSessionService:
                 "last_registration_distance_px": None,
                 "last_astrometry_frame": 0,
                 "registration_mode": "translation-even-pixel-v1",
+                "live_stack_method": "mean-v1",
+                "final_stack_method": FINAL_STACK_METHOD,
+                "quality_samples": [],
+                "run_count": 0,
+                "started_at": None,
+                "active_started_at": None,
+                "accumulated_active_seconds": 0.0,
+                "stopped_at": None,
+                "resume_verification_after": None,
             },
             "last_frame": None,
+            "last_quality": None,
             "preview": None,
             "stack_fits": None,
             "stack_preview": None,
+            "final_stack": None,
             "gallery_path": None,
         }
         return self._write(metadata)
@@ -253,9 +323,15 @@ class CaptureSessionService:
             metadata = self._read(session_id)
             thread = self._threads.get(session_id)
             if thread is not None and not thread.is_alive():
+                if metadata["stacking"].get("active_started_at"):
+                    self._close_acquisition_segment(metadata)
                 metadata["stacking"]["running"] = False
+                if metadata.get("state") in {"stacking", "stopping"}:
+                    metadata["state"] = "stopped"
                 self._threads.pop(session_id, None)
                 self._write(metadata)
+            else:
+                metadata["acquisition_seconds"] = self._acquisition_seconds(metadata)
             return metadata
 
     def list_sessions(self) -> list[dict]:
@@ -267,9 +343,9 @@ class CaptureSessionService:
             if not metadata_path.exists():
                 continue
             try:
-                sessions.append(
-                    json.loads(metadata_path.read_text(encoding="utf-8"))
-                )
+                item = json.loads(metadata_path.read_text(encoding="utf-8"))
+                item["acquisition_seconds"] = self._acquisition_seconds(item)
+                sessions.append(item)
             except (OSError, json.JSONDecodeError):
                 continue
         sessions.sort(key=lambda item: item.get("created_at", ""), reverse=True)
@@ -383,6 +459,7 @@ class CaptureSessionService:
             "solver": solution.get("solver"),
             "solver_detail": solution.get("detail"),
             "pixel_scale_arcsec": solution.get("pixel_scale_arcsec"),
+            "verified_at": None,
         }
 
         if (
@@ -399,6 +476,8 @@ class CaptureSessionService:
                     metadata["setup"]["centering_tolerance_arcsec"],
                 )
             )
+            if centering["status"] == "centered":
+                centering["verified_at"] = self._utc_now()
 
         metadata["centering"] = centering
         metadata["state"] = (
@@ -466,7 +545,6 @@ class CaptureSessionService:
     ) -> tuple[Path, Path, dict]:
         session_dir = self._session_dir(session_id)
         stack_dir = session_dir / "stack"
-        accepted_dir = session_dir / "accepted"
         registered_dir = session_dir / "registered"
         stack_dir.mkdir(parents=True, exist_ok=True)
 
@@ -527,6 +605,7 @@ class CaptureSessionService:
 
         stack_fits = stack_dir / "current.fits"
         header["SPSTACK"] = (True, "StellarPilot live stack")
+        header["SPMETH"] = ("mean-v1", "Live preview combination method")
         fits.PrimaryHDU(data=stacked, header=header).writeto(
             stack_fits,
             overwrite=True,
@@ -534,16 +613,12 @@ class CaptureSessionService:
         stack_preview = stack_dir / "current.jpg"
         stack_preview.write_bytes(self._fits_preview_bytes(stack_fits))
 
-        accepted_path = accepted_dir / image_path.name
-        if image_path.exists():
-            image_path.replace(accepted_path)
-
         return stack_fits, stack_preview, {
             "dx_px": dx,
             "dy_px": dy,
             "distance_px": round(distance, 3),
             "registered_image": str(registered_path),
-            "accepted_image": str(accepted_path),
+            "calibrated_image": str(image_path),
         }
 
     @staticmethod
@@ -630,6 +705,20 @@ class CaptureSessionService:
             metadata["setup"]["recenter_tolerance_arcsec"],
         )
 
+    @staticmethod
+    def _move_if_exists(source: Path, destination: Path) -> Path:
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        if source.exists():
+            source.replace(destination)
+        return destination
+
+    @staticmethod
+    def _record_rejection(metadata: dict, reasons: list[str]) -> None:
+        metadata["counts"]["rejected"] = int(metadata["counts"].get("rejected") or 0) + 1
+        counters = metadata["counts"].setdefault("rejected_by_reason", {})
+        for reason in reasons or ["unknown"]:
+            counters[reason] = int(counters.get(reason) or 0) + 1
+
     def _stack_worker(self, session_id: str, stop_event: threading.Event) -> None:
         try:
             while not stop_event.is_set():
@@ -637,43 +726,7 @@ class CaptureSessionService:
                     metadata = self._read(session_id)
                     if metadata["stacking"].get("recenter_required"):
                         break
-
-                    accepted_now = int(
-                        metadata["counts"]["accepted"]
-                    )
-                    captured_now = int(
-                        metadata["counts"]["captured"]
-                    )
-                    target_frames = int(
-                        metadata["stacking"].get(
-                            "target_frames",
-                            10,
-                        )
-                    )
-                    max_captured_frames = int(
-                        metadata["stacking"].get(
-                            "max_captured_frames",
-                            20,
-                        )
-                    )
-
-                    if accepted_now >= target_frames:
-                        metadata["stacking"]["running"] = False
-                        metadata["state"] = "stack_complete"
-                        self._write(metadata)
-                        break
-
-                    if captured_now >= max_captured_frames:
-                        metadata["stacking"]["running"] = False
-                        metadata["state"] = "stack_incomplete"
-                        metadata["stacking"]["error"] = (
-                            "Maximum capture count reached before "
-                            "target stack count"
-                        )
-                        self._write(metadata)
-                        break
-
-                    frame_number = captured_now + 1
+                    frame_number = int(metadata["counts"].get("captured") or 0) + 1
 
                 capture = self._capture_into(
                     metadata,
@@ -687,24 +740,110 @@ class CaptureSessionService:
                         self._write(metadata)
                     return
 
-                image_path = Path(capture["image"])
-                quality = analyze_fits(str(image_path))
+                raw_path = Path(capture["image"])
                 with self._lock:
-                    metadata["counts"]["captured"] += 1
+                    metadata = self._read(session_id)
+                    metadata["counts"]["captured"] = int(metadata["counts"].get("captured") or 0) + 1
+                    self._write(metadata)
 
-                if (
-                    quality.get("status") != "ok"
-                    or quality.get("classification") == "overexposed"
-                ):
-                    rejected_path = (
-                        self._session_dir(session_id)
-                        / "rejected"
-                        / image_path.name
+                try:
+                    snapshot = self.indi.status_snapshot()
+                except Exception:
+                    snapshot = None
+
+                preferred_master_id = metadata.get("calibration", {}).get("master_id")
+                try:
+                    selection = select_compatible_master(
+                        raw_path,
+                        exposure_s=float(metadata["setup"]["exposure_s"]),
+                        snapshot=snapshot,
+                        preferred_master_id=preferred_master_id,
                     )
-                    if image_path.exists():
-                        image_path.replace(rejected_path)
+                except Exception as exc:
+                    selection = {
+                        "status": "unavailable",
+                        "detail": f"Sélection Master Dark impossible: {exc}",
+                        "master": None,
+                    }
+
+                if selection.get("status") != "ready":
+                    rejected_path = self._move_if_exists(
+                        raw_path,
+                        self._session_dir(session_id) / "rejected" / raw_path.name,
+                    )
                     with self._lock:
-                        metadata["counts"]["rejected"] += 1
+                        metadata = self._read(session_id)
+                        self._record_rejection(metadata, ["dark_incompatible"])
+                        metadata["last_frame"] = str(rejected_path)
+                        metadata["calibration"].update(
+                            {
+                                "status": "unavailable",
+                                "detail": selection.get("detail") or "Aucun Master Dark compatible",
+                            }
+                        )
+                        metadata["stacking"]["running"] = False
+                        metadata["state"] = "paused_calibration"
+                        metadata["stacking"]["error"] = metadata["calibration"]["detail"]
+                        self._write(metadata)
+                    break
+
+                master_item = selection["master"]
+                hot_pixels = master_item.get("hot_pixels") or {}
+                calibrated_path = (
+                    self._session_dir(session_id)
+                    / "calibrated"
+                    / raw_path.name
+                )
+                try:
+                    calibration = calibrate_light(
+                        raw_path,
+                        selection,
+                        calibrated_path,
+                    )
+                except Exception as exc:
+                    rejected_path = self._move_if_exists(
+                        raw_path,
+                        self._session_dir(session_id) / "rejected" / raw_path.name,
+                    )
+                    with self._lock:
+                        metadata = self._read(session_id)
+                        self._record_rejection(metadata, ["calibration_error"])
+                        metadata["last_frame"] = str(rejected_path)
+                        metadata["calibration"]["status"] = "error"
+                        metadata["calibration"]["detail"] = str(exc)
+                        metadata["stacking"]["running"] = False
+                        metadata["state"] = "stack_error"
+                        self._write(metadata)
+                    break
+
+                with self._lock:
+                    metadata = self._read(session_id)
+                    metadata["calibration"].update(
+                        {
+                            "status": "ready",
+                            "master_id": master_item.get("id"),
+                            "master_dark": (master_item.get("master_dark") or {}).get("path"),
+                            "temperature_delta_c": selection.get("temperature_delta_c"),
+                            "hot_pixels": hot_pixels.get("count"),
+                            "detail": None,
+                        }
+                    )
+                    baseline = list(metadata["stacking"].get("quality_samples") or [])
+
+                quality = analyze_light_quality(
+                    calibrated_path,
+                    baseline=baseline,
+                )
+
+                if quality.get("status") != "ok" or not quality.get("accepted"):
+                    reasons = list(quality.get("reasons") or ["quality_rejected"])
+                    rejected_path = self._move_if_exists(
+                        raw_path,
+                        self._session_dir(session_id) / "rejected" / raw_path.name,
+                    )
+                    with self._lock:
+                        metadata = self._read(session_id)
+                        self._record_rejection(metadata, reasons)
                         metadata["last_frame"] = str(rejected_path)
                         metadata["last_quality"] = quality
                         self._write(metadata)
@@ -713,35 +852,42 @@ class CaptureSessionService:
                 try:
                     stack_fits, stack_preview, registration = self._update_stack(
                         session_id,
-                        image_path,
+                        calibrated_path,
                     )
                 except Exception as exc:
-                    rejected_path = (
-                        self._session_dir(session_id)
-                        / "rejected"
-                        / image_path.name
+                    rejected_path = self._move_if_exists(
+                        raw_path,
+                        self._session_dir(session_id) / "rejected" / raw_path.name,
                     )
-                    if image_path.exists():
-                        image_path.replace(rejected_path)
                     with self._lock:
-                        metadata["counts"]["rejected"] += 1
+                        metadata = self._read(session_id)
+                        self._record_rejection(metadata, ["registration_error"])
                         metadata["last_frame"] = str(rejected_path)
                         metadata["last_quality"] = quality
                         metadata["stacking"]["last_registration_error"] = str(exc)
                         self._write(metadata)
                     continue
 
+                accepted_path = self._move_if_exists(
+                    raw_path,
+                    self._session_dir(session_id) / "accepted" / raw_path.name,
+                )
+
                 with self._lock:
-                    metadata["counts"]["accepted"] += 1
+                    metadata = self._read(session_id)
+                    metadata["counts"]["accepted"] = int(metadata["counts"].get("accepted") or 0) + 1
                     metadata["integration_seconds"] = round(
                         metadata["counts"]["accepted"]
                         * metadata["setup"]["exposure_s"],
                         3,
                     )
+                    metadata["calibration"]["calibrated_frames"] = int(
+                        metadata["calibration"].get("calibrated_frames") or 0
+                    ) + 1
                     metadata["stack_fits"] = str(stack_fits)
                     metadata["stack_preview"] = str(stack_preview)
                     metadata["preview"] = str(stack_preview)
-                    metadata["last_frame"] = registration["accepted_image"]
+                    metadata["last_frame"] = str(accepted_path)
                     metadata["last_quality"] = quality
                     metadata["stacking"]["last_registration_dx_px"] = registration[
                         "dx_px"
@@ -752,66 +898,63 @@ class CaptureSessionService:
                     metadata["stacking"]["last_registration_distance_px"] = registration[
                         "distance_px"
                     ]
+                    samples = list(metadata["stacking"].get("quality_samples") or [])
+                    samples.append(
+                        {
+                            key: quality.get(key)
+                            for key in (
+                                "score",
+                                "star_count",
+                                "background_sigma",
+                                "fwhm_px",
+                                "ellipticity",
+                                "star_signal",
+                            )
+                        }
+                    )
+                    metadata["stacking"]["quality_samples"] = samples[-QUALITY_BASELINE_LIMIT:]
                     accepted = int(metadata["counts"]["accepted"])
 
-                    target_frames = int(
-                        metadata["stacking"].get(
-                            "target_frames",
-                            10,
-                        )
-                    )
-
                     astrometry_required = bool(
-                        metadata["stacking"].get(
-                            "astrometry_required",
-                            False,
-                        )
+                        metadata["stacking"].get("astrometry_required", True)
                     )
-
                     interval = max(
                         1,
                         int(metadata["setup"]["astrometry_interval_frames"]),
                     )
-
                     registration_trigger = (
                         astrometry_required
                         and registration["distance_px"]
                         >= metadata["setup"]["registration_recenter_pixels"]
                     )
-
                     astrometry_due = (
                         astrometry_required
                         and accepted % interval == 0
                     )
-
-                    if accepted >= target_frames:
-                        metadata["stacking"]["running"] = False
-                        metadata["state"] = "stack_complete"
-
                     self._write(metadata)
-
-                if accepted >= target_frames:
-                    break
 
                 if astrometry_due or registration_trigger:
                     drift = self._check_astrometry_drift(
                         metadata,
-                        registration["accepted_image"],
+                        registration["calibrated_image"],
                     )
                     with self._lock:
                         metadata = self._read(session_id)
                         metadata["stacking"]["last_astrometry_frame"] = accepted
                         metadata["stacking"]["last_astrometry"] = drift
                         if drift and drift["status"] == "correction_required":
+                            checkpoint = self._utc_now()
                             metadata["stacking"]["recenter_required"] = True
                             metadata["stacking"]["recenter_reason"] = (
                                 "registration_drift"
                                 if registration_trigger
                                 else "periodic_astrometry"
                             )
+                            metadata["stacking"]["resume_verification_after"] = checkpoint
                             metadata["stacking"]["running"] = False
                             metadata["state"] = "paused_recenter"
                             metadata["centering"].update(drift)
+                            metadata["centering"]["verified_at"] = None
                             self._write(metadata)
                             break
                         self._write(metadata)
@@ -820,56 +963,108 @@ class CaptureSessionService:
             with self._lock:
                 try:
                     metadata = self._read(session_id)
+                    if metadata["stacking"].get("active_started_at"):
+                        self._close_acquisition_segment(metadata)
                     metadata["stacking"]["running"] = False
-                    if metadata["state"] == "stacking":
+                    if metadata["state"] in {"stacking", "stopping"}:
                         metadata["state"] = "stopped"
+                        metadata["stacking"]["resume_verification_after"] = (
+                            metadata["stacking"].get("stopped_at")
+                        )
                     self._write(metadata)
                 except KeyError:
                     pass
                 self._threads.pop(session_id, None)
 
+    def _launch_stack_locked(self, session_id: str, metadata: dict) -> dict:
+        stop_event = threading.Event()
+        self._stop_events[session_id] = stop_event
+        metadata["stacking"]["running"] = True
+        metadata["stacking"]["stop_requested"] = False
+        metadata["stacking"].pop("error", None)
+        metadata["state"] = "stacking"
+        self._start_acquisition_segment(metadata)
+        self._write(metadata)
+
+        thread = threading.Thread(
+            target=self._stack_worker,
+            args=(session_id, stop_event),
+            name=f"stellarpilot-stack-{session_id}",
+            daemon=True,
+        )
+        self._threads[session_id] = thread
+        thread.start()
+        return {"status": "stacking", "session": metadata}
+
     def start_stack(self, session_id: str) -> dict:
         with self._lock:
             metadata = self._read(session_id)
-            metadata["stacking"]["start_centering_status"] = (
-                metadata["centering"].get("status")
-            )
             thread = self._threads.get(session_id)
             if thread is not None and thread.is_alive():
                 return {"status": "already_running", "session": metadata}
-
-            stop_event = threading.Event()
-            self._stop_events[session_id] = stop_event
-            metadata["stacking"]["running"] = True
-            metadata["stacking"]["stop_requested"] = False
-            metadata["stacking"]["recenter_required"] = False
-            metadata["stacking"]["recenter_reason"] = None
-            metadata["state"] = "stacking"
-            self._write(metadata)
-
-            thread = threading.Thread(
-                target=self._stack_worker,
-                args=(session_id, stop_event),
-                name=f"stellarpilot-stack-{session_id}",
-                daemon=True,
-            )
-            self._threads[session_id] = thread
-            thread.start()
-            return {"status": "stacking", "session": metadata}
+            if metadata.get("gallery_path") or metadata.get("state") == "completed":
+                return {
+                    "status": "finalized",
+                    "detail": "Cette session est déjà enregistrée dans la galerie",
+                    "session": metadata,
+                }
+            if int(metadata["counts"].get("accepted") or 0) > 0 and metadata.get("state") == "stopped":
+                return {
+                    "status": "resume_required",
+                    "detail": "Utilisez la reprise après une vérification de centrage",
+                    "session": metadata,
+                }
+            if metadata["centering"].get("status") != "centered":
+                return {
+                    "status": "centering_required",
+                    "detail": "Le centrage doit être vérifié avant le stacking",
+                    "session": metadata,
+                }
+            if metadata["stacking"].get("recenter_required"):
+                return {
+                    "status": "centering_required",
+                    "detail": "Un recentrage doit être vérifié avant le stacking",
+                    "session": metadata,
+                }
+            metadata["stacking"]["start_centering_status"] = "centered"
+            return self._launch_stack_locked(session_id, metadata)
 
     def resume_stack(self, session_id: str) -> dict:
         with self._lock:
             metadata = self._read(session_id)
+            thread = self._threads.get(session_id)
+            if thread is not None and thread.is_alive():
+                return {"status": "already_running", "session": metadata}
+            if metadata.get("gallery_path") or metadata.get("state") == "completed":
+                return {
+                    "status": "finalized",
+                    "detail": "Cette session est déjà finalisée",
+                    "session": metadata,
+                }
             if metadata["centering"].get("status") != "centered":
                 return {
                     "status": "centering_required",
-                    "detail": "Re-centering must be verified before resuming",
+                    "detail": "Recentrage obligatoire avant la reprise",
                     "session": metadata,
                 }
+
+            checkpoint = self._parse_utc(
+                metadata["stacking"].get("resume_verification_after")
+            )
+            verified = self._parse_utc(
+                metadata["centering"].get("verified_at")
+            )
+            if checkpoint is not None and (verified is None or verified <= checkpoint):
+                return {
+                    "status": "centering_required",
+                    "detail": "Une nouvelle pose astrométrique doit valider le centrage avant la reprise",
+                    "session": metadata,
+                }
+
             metadata["stacking"]["recenter_required"] = False
             metadata["stacking"]["recenter_reason"] = None
-            self._write(metadata)
-        return self.start_stack(session_id)
+            metadata["stacking"]["resume_verification_after"] = None
+            return self._launch_stack_locked(session_id, metadata)
 
     def stop_stack(self, session_id: str) -> dict:
         with self._lock:
@@ -878,9 +1073,25 @@ class CaptureSessionService:
             if event is not None:
                 event.set()
             metadata["stacking"]["stop_requested"] = True
-            metadata["state"] = "stopping" if metadata["stacking"]["running"] else "stopped"
+            metadata["state"] = (
+                "stopping"
+                if metadata["stacking"].get("running")
+                else "stopped"
+            )
             self._write(metadata)
             return {"status": metadata["state"], "session": metadata}
+
+    def _build_final_stack(self, session_id: str) -> tuple[dict, Path]:
+        registered_dir = self._session_dir(session_id) / "registered"
+        paths = sorted(registered_dir.glob("*.fits"))
+        if not paths:
+            raise ValueError("Aucune image acceptée à finaliser")
+        final_path = self._session_dir(session_id) / "stack" / "final.fits"
+        result = build_sigma_clipped_stack(paths, final_path)
+        preview_path = self._session_dir(session_id) / "stack" / "final.jpg"
+        preview_path.write_bytes(self._fits_preview_bytes(final_path))
+        result["preview"] = str(preview_path)
+        return result, preview_path
 
     def finalize(self, session_id: str) -> dict:
         with self._lock:
@@ -889,9 +1100,39 @@ class CaptureSessionService:
             if thread is not None and thread.is_alive():
                 return {
                     "status": "stacking_running",
-                    "detail": "Stop stacking before finalizing",
+                    "detail": "Arrêtez le stacking avant l'enregistrement",
                     "session": metadata,
                 }
+            if int(metadata["counts"].get("accepted") or 0) < 1:
+                return {
+                    "status": "error",
+                    "detail": "Aucune image acceptée à enregistrer",
+                    "session": metadata,
+                }
+            metadata["state"] = "finalizing"
+            self._write(metadata)
+
+        try:
+            final_stack, final_preview = self._build_final_stack(session_id)
+        except Exception as exc:
+            with self._lock:
+                metadata = self._read(session_id)
+                metadata["state"] = "finalize_error"
+                metadata["stacking"]["error"] = str(exc)
+                self._write(metadata)
+                return {
+                    "status": "error",
+                    "detail": f"Stack final impossible: {exc}",
+                    "session": metadata,
+                }
+
+        with self._lock:
+            metadata = self._read(session_id)
+            final_fits = Path(final_stack["path"])
+            metadata["final_stack"] = final_stack
+            metadata["stack_fits"] = str(final_fits)
+            metadata["stack_preview"] = str(final_preview)
+            metadata["preview"] = str(final_preview)
 
             created = datetime.fromisoformat(metadata["created_at"])
             gallery_dir = (
@@ -902,14 +1143,13 @@ class CaptureSessionService:
             )
             gallery_dir.mkdir(parents=True, exist_ok=True)
 
-            if metadata.get("stack_fits") and Path(metadata["stack_fits"]).exists():
-                shutil.copy2(metadata["stack_fits"], gallery_dir / "final.fits")
-            if metadata.get("stack_preview") and Path(metadata["stack_preview"]).exists():
-                shutil.copy2(metadata["stack_preview"], gallery_dir / "final.jpg")
-                shutil.copy2(metadata["stack_preview"], gallery_dir / "thumbnail.jpg")
+            shutil.copy2(final_fits, gallery_dir / "final.fits")
+            shutil.copy2(final_preview, gallery_dir / "final.jpg")
+            shutil.copy2(final_preview, gallery_dir / "thumbnail.jpg")
 
             metadata["state"] = "completed"
             metadata["gallery_path"] = str(gallery_dir)
+            metadata["stacking"]["finalized_at"] = self._utc_now()
             self._write(metadata)
             (gallery_dir / "session.json").write_text(
                 json.dumps(metadata, ensure_ascii=False, indent=2),
