@@ -58,6 +58,16 @@ class FakeSetup:
         }
 
 
+def _write_dark(path: Path, image: np.ndarray, exposure_s: float) -> None:
+    header = fits.Header()
+    header["BAYERPAT"] = "RGGB"
+    header["EXPTIME"] = exposure_s
+    header["GAIN"] = 200
+    header["OFFSET"] = 20
+    header["CCD-TEMP"] = 12.5
+    fits.writeto(path, image, header=header, overwrite=True)
+
+
 def test_dark_session_builds_master_and_hot_pixel_map(tmp_path, monkeypatch):
     monkeypatch.setattr(darks, "DARK_ROOT", tmp_path / "darks")
     monkeypatch.setattr(darks, "indi_service", FakeIndi())
@@ -73,13 +83,7 @@ def test_dark_session_builds_master_and_hot_pixel_map(tmp_path, monkeypatch):
         image = np.full((64, 64), 120, dtype=np.uint16)
         image[2, 2] = 1200
         image[10, 10] = 200 + counter["value"]
-        header = fits.Header()
-        header["BAYERPAT"] = "RGGB"
-        header["EXPTIME"] = exposure_s
-        header["GAIN"] = 200
-        header["OFFSET"] = 20
-        header["CCD-TEMP"] = 12.5
-        fits.writeto(path, image, header=header, overwrite=True)
+        _write_dark(path, image, exposure_s)
         return {
             "status": "captured",
             "image": str(path),
@@ -107,12 +111,15 @@ def test_dark_session_builds_master_and_hot_pixel_map(tmp_path, monkeypatch):
     assert third["captured_count"] == 3
     assert third["valid_count"] == 3
     assert len(third["frames"]) == 3
+    assert third["series_quality"]["status"] == "ok"
+    assert third["series_quality"]["rejected_count"] == 0
 
     master = third["master_dark"]
     hot_pixels = third["hot_pixels"]
     assert Path(master["path"]).exists()
     assert Path(master["profile"]).exists()
     assert master["method"] == darks.MASTER_METHOD
+    assert master["rejected_frames"] == 0
     assert hot_pixels["count"] >= 1
     assert Path(hot_pixels["mask_fits"]).exists()
     assert Path(hot_pixels["coordinates_csv"]).exists()
@@ -128,3 +135,49 @@ def test_dark_session_builds_master_and_hot_pixel_map(tmp_path, monkeypatch):
     library = darks.dark_library()
     assert library["count"] == 1
     assert library["masters"][0]["id"] == metadata["id"]
+
+
+def test_dark_series_rejects_level_outlier_before_master(tmp_path, monkeypatch):
+    monkeypatch.setattr(darks, "DARK_ROOT", tmp_path / "darks")
+    monkeypatch.setattr(darks, "indi_service", FakeIndi())
+    monkeypatch.setattr(darks, "setup_service", FakeSetup())
+
+    levels = [120, 121, 240, 119, 120]
+    counter = {"value": 0}
+
+    def fake_capture_dark(exposure_s, *, output_dir, prefix):
+        index = counter["value"]
+        counter["value"] += 1
+        output = Path(output_dir)
+        output.mkdir(parents=True, exist_ok=True)
+        path = output / f"{prefix}.fits"
+        image = np.full((64, 64), levels[index], dtype=np.uint16)
+        image[2, 2] = 1200
+        _write_dark(path, image, exposure_s)
+        return {
+            "status": "captured",
+            "image": str(path),
+            "exposure_s": exposure_s,
+            "frame_type": "dark",
+        }
+
+    monkeypatch.setattr(darks, "capture_dark_frame", fake_capture_dark)
+
+    metadata = darks.start_dark_session(exposure_s=4.0, requested_count=5)
+    result = metadata
+    for _ in range(5):
+        result = darks.capture_dark(metadata["id"])
+
+    assert result["status"] == "complete"
+    assert result["captured_count"] == 5
+    assert result["valid_count"] == 4
+    assert result["series_quality"]["status"] == "ok"
+    assert result["series_quality"]["rejected_count"] == 1
+
+    rejected = [frame for frame in result["frames"] if not frame["valid"]]
+    assert len(rejected) == 1
+    assert rejected[0]["index"] == 3
+    assert rejected[0]["capture_valid"] is True
+    assert "median_outlier" in rejected[0]["rejection_reasons"]
+    assert result["master_dark"]["valid_frames"] == 4
+    assert result["master_dark"]["rejected_frames"] == 1
