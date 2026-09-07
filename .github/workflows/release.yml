@@ -21,12 +21,19 @@ jobs:
         with:
           python-version: "3.13"
 
-      - name: Test server
+      - name: Install server dependencies
         working-directory: server
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          PYTHONPATH=. pytest -q
+
+      - name: Fetch pinned stellar catalogue sources
+        working-directory: server
+        run: python scripts/fetch_stellar_catalog_sources.py
+
+      - name: Test server
+        working-directory: server
+        run: PYTHONPATH=. pytest -q
 
       - name: Export OpenAPI
         working-directory: server
@@ -38,9 +45,10 @@ jobs:
               json.dump(app.openapi(), f, indent=2, ensure_ascii=False)
           PY
 
-      - name: Package server
+      - name: Package self-contained server
         run: |
-          tar --exclude='server/.venv' --exclude='server/**/__pycache__'             -czf "stellarpilot-server-${GITHUB_REF_NAME}.tar.gz" server/
+          tar --exclude='server/.venv' --exclude='server/**/__pycache__' \
+              -czf "stellarpilot-server-${GITHUB_REF_NAME}.tar.gz" server/
 
       - name: Setup Java 17
         uses: actions/setup-java@v4
@@ -71,7 +79,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           name: StellarPilot ${{ github.ref_name }}
-          body_path: docs/05-releases/v0.1.0-poc.md
+          body_path: docs/05-releases/v0.6.3-poc.md
           prerelease: true
           files: |
             StellarPilot-simulation-debug.apk
