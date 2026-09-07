@@ -19,7 +19,8 @@ data class CaptureCenteringStatus(
     val correctionDecDeg: Double?,
     val attempts: Int,
     val solverStatus: String?,
-    val solverDetail: String?
+    val solverDetail: String?,
+    val verifiedAt: String? = null
 )
 
 
@@ -33,13 +34,44 @@ data class CaptureQualityStatus(
 )
 
 
+data class CaptureLightQualityStatus(
+    val status: String,
+    val accepted: Boolean,
+    val score: Int?,
+    val starCount: Int?,
+    val backgroundSigma: Double?,
+    val saturatedPercent: Double?,
+    val fwhmPx: Double?,
+    val ellipticity: Double?,
+    val starSignal: Double?,
+    val reasons: List<String>
+)
+
+
+data class CaptureCalibrationStatus(
+    val required: Boolean,
+    val status: String,
+    val masterId: String?,
+    val masterDark: String?,
+    val temperatureDeltaC: Double?,
+    val hotPixels: Int?,
+    val calibratedFrames: Int,
+    val detail: String?
+)
+
+
 data class CaptureStackingStatus(
     val running: Boolean,
     val recenterRequired: Boolean,
     val recenterReason: String?,
     val lastRegistrationDxPx: Double?,
     val lastRegistrationDyPx: Double?,
-    val lastRegistrationDistancePx: Double?
+    val lastRegistrationDistancePx: Double?,
+    val mode: String = "continuous",
+    val runCount: Int = 0,
+    val liveStackMethod: String? = null,
+    val finalStackMethod: String? = null,
+    val resumeVerificationAfter: String? = null
 )
 
 
@@ -61,7 +93,11 @@ data class CaptureSessionStatus(
     val stacking: CaptureStackingStatus,
     val hasPreview: Boolean,
     val hasStackPreview: Boolean,
-    val galleryPath: String?
+    val galleryPath: String?,
+    val acquisitionSeconds: Double = 0.0,
+    val rejectedByReason: Map<String, Int> = emptyMap(),
+    val calibration: CaptureCalibrationStatus? = null,
+    val lastLightQuality: CaptureLightQualityStatus? = null
 )
 
 
@@ -78,7 +114,8 @@ data class GallerySession(
     val longitude: Double?,
     val altitudeM: Double?,
     val locationSource: String?,
-    val placeName: String?
+    val placeName: String?,
+    val acquisitionSeconds: Double = 0.0
 )
 
 
@@ -219,7 +256,9 @@ class CaptureSessionApiClient(
         if (
             status in setOf(
                 "centering_required",
+                "resume_required",
                 "stacking_running",
+                "finalized",
                 "error"
             )
         ) {
@@ -308,7 +347,9 @@ class CaptureSessionApiClient(
                             placeName =
                                 observation?.let {
                                     nullableString(it, "place_name")
-                                }
+                                },
+                            acquisitionSeconds =
+                                item.optDouble("acquisition_seconds", 0.0)
                         )
                     )
                 }
@@ -366,7 +407,7 @@ class CaptureSessionApiClient(
                 .get()
                 .build()
 
-        client.newCall(request)
+        client.newCall(request.build())
             .execute()
             .use { response ->
                 check(response.isSuccessful) {
@@ -384,8 +425,10 @@ class CaptureSessionApiClient(
         val centering = root.optJSONObject("centering") ?: JSONObject()
         val centeringQuality = root.optJSONObject("centering_quality")
         val stacking = root.optJSONObject("stacking") ?: JSONObject()
+        val calibration = root.optJSONObject("calibration")
+        val lastQuality = root.optJSONObject("last_quality")
 
-        val parsedQuality =
+        val parsedCenteringQuality =
             centeringQuality?.let { quality ->
                 if (quality.optString("status") != "ok") {
                     null
@@ -400,10 +443,8 @@ class CaptureSessionApiClient(
                             } else {
                                 null
                             },
-                        label =
-                            nullableString(quality, "quality_label"),
-                        classification =
-                            nullableString(quality, "classification"),
+                        label = nullableString(quality, "quality_label"),
+                        classification = nullableString(quality, "classification"),
                         starCount =
                             if (
                                 quality.has("star_count") &&
@@ -413,19 +454,65 @@ class CaptureSessionApiClient(
                             } else {
                                 null
                             },
-                        saturatedPercent =
-                            nullableDouble(
-                                quality,
-                                "saturated_percent"
-                            ),
-                        recommendedExposureFactor =
-                            nullableDouble(
-                                quality,
-                                "recommended_exposure_factor"
-                            )
+                        saturatedPercent = nullableDouble(quality, "saturated_percent"),
+                        recommendedExposureFactor = nullableDouble(
+                            quality,
+                            "recommended_exposure_factor"
+                        )
                     )
                 }
             }
+
+        val parsedCalibration =
+            calibration?.let {
+                CaptureCalibrationStatus(
+                    required = it.optBoolean("required", true),
+                    status = it.optString("status", "pending"),
+                    masterId = nullableString(it, "master_id"),
+                    masterDark = nullableString(it, "master_dark"),
+                    temperatureDeltaC = nullableDouble(it, "temperature_delta_c"),
+                    hotPixels = nullableInt(it, "hot_pixels"),
+                    calibratedFrames = it.optInt("calibrated_frames", 0),
+                    detail = nullableString(it, "detail")
+                )
+            }
+
+        val parsedLastQuality =
+            lastQuality?.let { quality ->
+                val reasonsArray = quality.optJSONArray("reasons")
+                val reasons = buildList {
+                    if (reasonsArray != null) {
+                        for (index in 0 until reasonsArray.length()) {
+                            reasonsArray.optString(index)
+                                .takeIf { it.isNotBlank() }
+                                ?.let(::add)
+                        }
+                    }
+                }
+                CaptureLightQualityStatus(
+                    status = quality.optString("status", "unknown"),
+                    accepted = quality.optBoolean("accepted", false),
+                    score = nullableInt(quality, "score"),
+                    starCount = nullableInt(quality, "star_count"),
+                    backgroundSigma = nullableDouble(quality, "background_sigma"),
+                    saturatedPercent = nullableDouble(quality, "saturated_percent"),
+                    fwhmPx = nullableDouble(quality, "fwhm_px"),
+                    ellipticity = nullableDouble(quality, "ellipticity"),
+                    starSignal = nullableDouble(quality, "star_signal"),
+                    reasons = reasons
+                )
+            }
+
+        val rejectedByReason = buildMap {
+            val reasons = counts.optJSONObject("rejected_by_reason")
+            if (reasons != null) {
+                val keys = reasons.keys()
+                while (keys.hasNext()) {
+                    val key = keys.next()
+                    put(key, reasons.optInt(key, 0))
+                }
+            }
+        }
 
         return CaptureSessionStatus(
             id = root.optString("id"),
@@ -439,42 +526,46 @@ class CaptureSessionApiClient(
             capturedFrames = counts.optInt("captured", 0),
             acceptedFrames = counts.optInt("accepted", 0),
             rejectedFrames = counts.optInt("rejected", 0),
-            integrationSeconds =
-                root.optDouble("integration_seconds", 0.0),
+            integrationSeconds = root.optDouble("integration_seconds", 0.0),
             centering = CaptureCenteringStatus(
                 status = centering.optString("status", "not_checked"),
                 errorArcsec = nullableDouble(centering, "error_arcsec"),
                 solveRaDeg = nullableDouble(centering, "solve_ra_deg"),
                 solveDecDeg = nullableDouble(centering, "solve_dec_deg"),
-                correctionRaHours =
-                    nullableDouble(centering, "correction_ra_hours"),
-                correctionDecDeg =
-                    nullableDouble(centering, "correction_dec_deg"),
+                correctionRaHours = nullableDouble(centering, "correction_ra_hours"),
+                correctionDecDeg = nullableDouble(centering, "correction_dec_deg"),
                 attempts = centering.optInt("attempts", 0),
                 solverStatus = nullableString(centering, "solver_status"),
-                solverDetail = nullableString(centering, "solver_detail")
+                solverDetail = nullableString(centering, "solver_detail"),
+                verifiedAt = nullableString(centering, "verified_at")
             ),
-            centeringQuality = parsedQuality,
+            centeringQuality = parsedCenteringQuality,
             stacking = CaptureStackingStatus(
                 running = stacking.optBoolean("running", false),
-                recenterRequired =
-                    stacking.optBoolean("recenter_required", false),
-                recenterReason =
-                    nullableString(stacking, "recenter_reason"),
-                lastRegistrationDxPx =
-                    nullableDouble(stacking, "last_registration_dx_px"),
-                lastRegistrationDyPx =
-                    nullableDouble(stacking, "last_registration_dy_px"),
-                lastRegistrationDistancePx =
-                    nullableDouble(
-                        stacking,
-                        "last_registration_distance_px"
-                    )
+                recenterRequired = stacking.optBoolean("recenter_required", false),
+                recenterReason = nullableString(stacking, "recenter_reason"),
+                lastRegistrationDxPx = nullableDouble(stacking, "last_registration_dx_px"),
+                lastRegistrationDyPx = nullableDouble(stacking, "last_registration_dy_px"),
+                lastRegistrationDistancePx = nullableDouble(
+                    stacking,
+                    "last_registration_distance_px"
+                ),
+                mode = stacking.optString("mode", "continuous"),
+                runCount = stacking.optInt("run_count", 0),
+                liveStackMethod = nullableString(stacking, "live_stack_method"),
+                finalStackMethod = nullableString(stacking, "final_stack_method"),
+                resumeVerificationAfter = nullableString(
+                    stacking,
+                    "resume_verification_after"
+                )
             ),
             hasPreview = !root.isNull("preview") && root.has("preview"),
-            hasStackPreview =
-                !root.isNull("stack_preview") && root.has("stack_preview"),
-            galleryPath = nullableString(root, "gallery_path")
+            hasStackPreview = !root.isNull("stack_preview") && root.has("stack_preview"),
+            galleryPath = nullableString(root, "gallery_path"),
+            acquisitionSeconds = root.optDouble("acquisition_seconds", 0.0),
+            rejectedByReason = rejectedByReason,
+            calibration = parsedCalibration,
+            lastLightQuality = parsedLastQuality
         )
     }
 
@@ -485,6 +576,14 @@ class CaptureSessionApiClient(
         if (!json.has(key) || json.isNull(key)) return null
         return json.optDouble(key, Double.NaN)
             .takeUnless { it.isNaN() }
+    }
+
+    private fun nullableInt(
+        json: JSONObject,
+        key: String
+    ): Int? {
+        if (!json.has(key) || json.isNull(key)) return null
+        return json.optInt(key)
     }
 
     private fun nullableString(
