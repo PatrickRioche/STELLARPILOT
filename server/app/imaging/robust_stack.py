@@ -27,8 +27,6 @@ def _safe_tile_rows(
     width: int,
     requested_rows: int,
 ) -> int:
-    # Float32 cube is the dominant allocation. Keep it near 64 MiB so long
-    # continuous sessions remain finalizable on the Raspberry Pi.
     bytes_per_row = max(1, frame_count * width * np.dtype(np.float32).itemsize)
     budget_rows = max(1, FINAL_STACK_CUBE_BUDGET_BYTES // bytes_per_row)
     return max(1, min(int(requested_rows), int(budget_rows)))
@@ -57,42 +55,40 @@ def build_sigma_clipped_stack(
     )
     final = np.zeros(shape, dtype=np.float32)
 
-    # Keep FITS memory-mapped and combine only a bounded number of rows. The
-    # robust median/MAD reference rejects satellites, cosmic rays and isolated
-    # transient pixels without loading the complete N-frame cube into RAM.
-    handles = [fits.open(path, memmap=True) for path in paths]
-    try:
-        for y0 in range(0, shape[0], effective_tile_rows):
-            y1 = min(shape[0], y0 + effective_tile_rows)
-            cube = np.stack(
-                [
-                    np.asarray(handle[0].data[y0:y1, :], dtype=np.float32)
-                    for handle in handles
-                ],
-                axis=0,
-            )
-            cube = np.where(np.isfinite(cube), cube, np.nan)
+    # One tile at a time bounds RAM. Each FITS is opened only long enough to
+    # copy that tile, so a multi-hour session cannot hit the process open-file
+    # descriptor limit when hundreds or thousands of frames are accepted.
+    for y0 in range(0, shape[0], effective_tile_rows):
+        y1 = min(shape[0], y0 + effective_tile_rows)
+        cube = np.empty(
+            (len(paths), y1 - y0, shape[1]),
+            dtype=np.float32,
+        )
+        for index, path in enumerate(paths):
+            with fits.open(path, memmap=True) as hdul:
+                cube[index, :, :] = np.asarray(
+                    hdul[0].data[y0:y1, :],
+                    dtype=np.float32,
+                )
 
-            center = np.nanmedian(cube, axis=0)
-            mad = np.nanmedian(np.abs(cube - center[None, :, :]), axis=0)
-            robust_sigma = np.maximum(1.4826 * mad, 1.0)
-            accepted = np.abs(cube - center[None, :, :]) <= (
-                float(sigma) * robust_sigma[None, :, :]
-            )
-            accepted &= np.isfinite(cube)
+        cube[~np.isfinite(cube)] = np.nan
+        center = np.nanmedian(cube, axis=0)
+        mad = np.nanmedian(np.abs(cube - center[None, :, :]), axis=0)
+        robust_sigma = np.maximum(1.4826 * mad, 1.0)
+        accepted = np.abs(cube - center[None, :, :]) <= (
+            float(sigma) * robust_sigma[None, :, :]
+        )
+        accepted &= np.isfinite(cube)
 
-            clipped_sum = np.nansum(np.where(accepted, cube, np.nan), axis=0)
-            clipped_count = np.sum(accepted, axis=0)
-            tile = np.divide(
-                clipped_sum,
-                clipped_count,
-                out=center.astype(np.float64, copy=True),
-                where=clipped_count > 0,
-            )
-            final[y0:y1, :] = tile.astype(np.float32)
-    finally:
-        for handle in handles:
-            handle.close()
+        clipped_sum = np.nansum(np.where(accepted, cube, np.nan), axis=0)
+        clipped_count = np.sum(accepted, axis=0)
+        tile = np.divide(
+            clipped_sum,
+            clipped_count,
+            out=center.astype(np.float64, copy=True),
+            where=clipped_count > 0,
+        )
+        final[y0:y1, :] = tile.astype(np.float32)
 
     header["SPSTACK"] = (True, "StellarPilot final stack")
     header["SPMETH"] = (FINAL_STACK_METHOD, "Final stack combination method")
