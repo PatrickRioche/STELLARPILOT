@@ -3,8 +3,7 @@ package fr.stellarpilot.app.feature.galleries
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.border
-import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -40,13 +39,16 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.graphics.drawscope.rotate
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import fr.stellarpilot.app.R
 import fr.stellarpilot.app.data.remote.GallerySession
 import fr.stellarpilot.app.ui.components.StellarImagePreview
 import fr.stellarpilot.app.ui.theme.StellarBackground
@@ -61,9 +63,9 @@ import java.util.Locale
 
 
 private val GalleryTextShadow = Shadow(
-    color = Color.Black.copy(alpha = 0.92f),
-    offset = Offset(1.5f, 1.5f),
-    blurRadius = 5f
+    color = Color.Black.copy(alpha = 0.88f),
+    offset = Offset(1.2f, 1.2f),
+    blurRadius = 4f
 )
 
 
@@ -111,14 +113,13 @@ fun GalleriesScreen(
         color = StellarBackground
     ) {
         Column(
-            modifier =
-                Modifier
-                    .fillMaxSize()
-                    .verticalScroll(rememberScrollState())
-                    .padding(
-                        horizontal = 12.dp,
-                        vertical = 16.dp
-                    )
+            modifier = Modifier
+                .fillMaxSize()
+                .verticalScroll(rememberScrollState())
+                .padding(
+                    horizontal = 12.dp,
+                    vertical = 16.dp
+                )
         ) {
             Text(
                 text = "GALERIES",
@@ -147,9 +148,7 @@ fun GalleriesScreen(
             Spacer(Modifier.height(12.dp))
 
             Button(
-                onClick = {
-                    viewModel.load(serverBaseUrl)
-                },
+                onClick = { viewModel.load(serverBaseUrl) },
                 enabled = !state.isLoading,
                 modifier = Modifier.fillMaxWidth(),
                 colors = ButtonDefaults.buttonColors(
@@ -166,9 +165,7 @@ fun GalleriesScreen(
             Spacer(Modifier.height(12.dp))
 
             if (state.isLoading) {
-                CircularProgressIndicator(
-                    color = StellarOrange
-                )
+                CircularProgressIndicator(color = StellarOrange)
                 Spacer(Modifier.height(10.dp))
             }
 
@@ -234,9 +231,7 @@ fun GalleriesScreen(
                         Spacer(Modifier.height(8.dp))
 
                         Button(
-                            onClick = {
-                                viewModel.exportSelected(session.id)
-                            },
+                            onClick = { viewModel.exportSelected(session.id) },
                             enabled = !state.isExporting,
                             modifier = Modifier.fillMaxWidth(),
                             colors = ButtonDefaults.buttonColors(
@@ -297,14 +292,20 @@ private fun BrandedGalleryViewer(
             }
     ) {
         val compact = maxWidth < 520.dp
+
+        // Le liseré est volontairement assez loin du bord. Les informations
+        // sont placées entre le bord de l'image et ce liseré pour ne jamais
+        // réduire la surface de l'astrophotographie.
         val borderInset = when {
-            fullScreen && compact -> 16.dp
-            fullScreen -> 22.dp
-            compact -> 10.dp
-            else -> 14.dp
+            fullScreen && compact -> 34.dp
+            fullScreen -> 42.dp
+            compact -> 32.dp
+            else -> 38.dp
         }
-        val contentInset = borderInset + if (compact) 7.dp else 10.dp
-        val logoSize = if (compact) 28.dp else 36.dp
+        val edgeInset = if (compact) 5.dp else 7.dp
+        val headerTopInset = if (compact) 3.dp else 5.dp
+        val logoSize = if (compact) 20.dp else 24.dp
+        val headerGap = if (compact) 4.dp else 5.dp
 
         StellarImagePreview(
             imageBytes = imageBytes,
@@ -339,27 +340,29 @@ private fun BrandedGalleryViewer(
             modifier = Modifier
                 .align(Alignment.TopCenter)
                 .padding(
-                    top = contentInset,
-                    start = contentInset,
-                    end = contentInset
+                    top = headerTopInset,
+                    start = edgeInset,
+                    end = edgeInset
                 ),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            StellarPilotOrangeMark(
-                modifier = Modifier.size(logoSize)
+            Image(
+                painter = painterResource(R.drawable.stellarpilot_gallery_logo),
+                contentDescription = "Logo StellarPilot",
+                modifier = Modifier.size(logoSize),
+                contentScale = ContentScale.Fit
             )
 
-            Spacer(Modifier.size(if (compact) 5.dp else 7.dp))
+            Spacer(Modifier.size(headerGap))
 
             Text(
                 text = "${stellarPilotVersionLabel()} © ${copyrightYear(session)}",
                 color = StellarOrange,
                 style = galleryTextStyle(
-                    if (compact) {
-                        MaterialTheme.typography.bodySmall
-                    } else {
-                        MaterialTheme.typography.bodyMedium
-                    }
+                    MaterialTheme.typography.bodySmall.copy(
+                        fontSize = if (compact) 10.sp else 12.sp,
+                        lineHeight = if (compact) 11.sp else 13.sp
+                    )
                 ),
                 fontWeight = FontWeight.Medium,
                 maxLines = 1,
@@ -371,21 +374,20 @@ private fun BrandedGalleryViewer(
             modifier = Modifier
                 .align(Alignment.BottomStart)
                 .padding(
-                    start = contentInset,
-                    bottom = contentInset
+                    start = edgeInset,
+                    bottom = edgeInset
                 )
-                .widthIn(max = if (compact) 220.dp else 330.dp)
+                .widthIn(max = if (compact) 205.dp else 315.dp)
         ) {
             Text(
                 text = "Objet : ${session.targetName}",
                 color = StellarOrange,
                 fontWeight = FontWeight.Bold,
                 style = galleryTextStyle(
-                    if (compact) {
-                        MaterialTheme.typography.bodyMedium
-                    } else {
-                        MaterialTheme.typography.titleMedium
-                    }
+                    MaterialTheme.typography.bodySmall.copy(
+                        fontSize = if (compact) 11.sp else 13.sp,
+                        lineHeight = if (compact) 13.sp else 15.sp
+                    )
                 ),
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
@@ -394,7 +396,12 @@ private fun BrandedGalleryViewer(
                 text =
                     "${session.capturedFrames} captures • ${session.acceptedFrames} stackées",
                 color = StellarOrange,
-                style = galleryTextStyle(MaterialTheme.typography.bodySmall),
+                style = galleryTextStyle(
+                    MaterialTheme.typography.bodySmall.copy(
+                        fontSize = if (compact) 8.sp else 10.sp,
+                        lineHeight = if (compact) 10.sp else 12.sp
+                    )
+                ),
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
@@ -404,10 +411,10 @@ private fun BrandedGalleryViewer(
             modifier = Modifier
                 .align(Alignment.BottomEnd)
                 .padding(
-                    end = contentInset,
-                    bottom = contentInset
+                    end = edgeInset,
+                    bottom = edgeInset
                 )
-                .widthIn(max = if (compact) 230.dp else 350.dp),
+                .widthIn(max = if (compact) 210.dp else 325.dp),
             horizontalAlignment = Alignment.End
         ) {
             Text(
@@ -416,71 +423,27 @@ private fun BrandedGalleryViewer(
                 fontWeight = FontWeight.Medium,
                 textAlign = TextAlign.End,
                 style = galleryTextStyle(
-                    if (compact) {
-                        MaterialTheme.typography.bodySmall
-                    } else {
-                        MaterialTheme.typography.bodyMedium
-                    }
+                    MaterialTheme.typography.bodySmall.copy(
+                        fontSize = if (compact) 9.sp else 11.sp,
+                        lineHeight = if (compact) 11.sp else 13.sp
+                    )
                 ),
                 maxLines = 1
             )
             Text(
                 text = formatGalleryLocation(session),
                 color = StellarOrange,
-                style = galleryTextStyle(MaterialTheme.typography.bodySmall),
+                style = galleryTextStyle(
+                    MaterialTheme.typography.bodySmall.copy(
+                        fontSize = if (compact) 8.sp else 10.sp,
+                        lineHeight = if (compact) 10.sp else 12.sp
+                    )
+                ),
                 textAlign = TextAlign.End,
-                maxLines = 2,
+                maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
         }
-    }
-}
-
-
-@Composable
-private fun StellarPilotOrangeMark(
-    modifier: Modifier = Modifier
-) {
-    Canvas(modifier = modifier) {
-        val shortEdge = minOf(size.width, size.height)
-        val center = Offset(
-            x = size.width * 0.46f,
-            y = size.height * 0.56f
-        )
-        val stroke = Stroke(width = shortEdge * 0.085f)
-
-        rotate(
-            degrees = -18f,
-            pivot = center
-        ) {
-            drawOval(
-                color = StellarOrange,
-                topLeft = Offset(
-                    x = size.width * 0.08f,
-                    y = size.height * 0.38f
-                ),
-                size = Size(
-                    width = size.width * 0.76f,
-                    height = size.height * 0.34f
-                ),
-                style = stroke
-            )
-        }
-
-        drawCircle(
-            color = StellarOrange,
-            radius = shortEdge * 0.18f,
-            center = center
-        )
-
-        drawCircle(
-            color = StellarOrange,
-            radius = shortEdge * 0.055f,
-            center = Offset(
-                x = size.width * 0.80f,
-                y = size.height * 0.17f
-            )
-        )
     }
 }
 
@@ -503,10 +466,9 @@ private fun GalleryCard(
         border = BorderStroke(1.dp, StellarBorder)
     ) {
         Column(
-            modifier =
-                Modifier
-                    .fillMaxWidth()
-                    .padding(10.dp)
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(10.dp)
         ) {
             content()
         }
