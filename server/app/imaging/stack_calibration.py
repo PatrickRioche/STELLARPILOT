@@ -125,6 +125,7 @@ def select_compatible_master(
     *,
     exposure_s: float,
     snapshot: dict[str, Any] | None = None,
+    preferred_master_id: str | None = None,
 ) -> dict[str, Any]:
     profile = light_profile(
         image,
@@ -134,6 +135,8 @@ def select_compatible_master(
     library = darks.dark_library()
     compatible: list[tuple[float, str, dict[str, Any]]] = []
     diagnostics: list[dict[str, Any]] = []
+    preferred_item: dict[str, Any] | None = None
+    preferred_delta: float | None = None
 
     for item in library.get("masters", []):
         master_profile = item.get("compatibility") or {}
@@ -150,6 +153,11 @@ def select_compatible_master(
         light_temperature = float(profile["temperature_c"])
         master_temperature = float(master_profile["temperature_c"])
         delta = abs(light_temperature - master_temperature)
+
+        if preferred_master_id and item.get("id") == preferred_master_id:
+            preferred_item = item
+            preferred_delta = delta
+
         compatible.append(
             (
                 delta,
@@ -157,6 +165,25 @@ def select_compatible_master(
                 item,
             )
         )
+
+    if preferred_master_id:
+        if preferred_item is None:
+            return {
+                "status": "unavailable",
+                "profile": profile,
+                "master": None,
+                "temperature_delta_c": None,
+                "diagnostics": diagnostics,
+                "detail": "Le Master Dark de la session n'est plus compatible",
+            }
+        return {
+            "status": "ready",
+            "profile": profile,
+            "master": preferred_item,
+            "temperature_delta_c": round(float(preferred_delta), 3),
+            "diagnostics": diagnostics,
+            "detail": None,
+        }
 
     if not compatible:
         return {
