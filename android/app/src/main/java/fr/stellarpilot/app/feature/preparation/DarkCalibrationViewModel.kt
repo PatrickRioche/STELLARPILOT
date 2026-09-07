@@ -14,11 +14,29 @@ data class DarkCalibrationUiState(
     val isLoading: Boolean = false,
     val sessionId: String? = null,
     val exposureSeconds: Double = 4.0,
-    val requestedCount: Int = 10,
+    val requestedCount: Int = 20,
     val capturedCount: Int = 0,
     val validCount: Int = 0,
     val complete: Boolean = false,
     val storage: String? = null,
+    val cameraName: String? = null,
+    val gain: Double? = null,
+    val offset: Double? = null,
+    val binX: Int? = null,
+    val binY: Int? = null,
+    val temperatureC: Double? = null,
+    val bayerPattern: String? = null,
+    val opticalTrainName: String? = null,
+    val telescopeName: String? = null,
+    val telescopeType: String? = null,
+    val apertureMm: Double? = null,
+    val focalLengthMm: Double? = null,
+    val focalRatio: Double? = null,
+    val reducer: Double? = null,
+    val masterDarkPath: String? = null,
+    val masterMethod: String? = null,
+    val hotPixelCount: Int? = null,
+    val hotPixelMapPath: String? = null,
     val message: String? = null,
     val error: String? = null
 )
@@ -28,7 +46,7 @@ class DarkCalibrationViewModel : ViewModel() {
 
     companion object {
         const val DARK_EXPOSURE_SECONDS = 4.0
-        const val DARK_COUNT = 10
+        const val DARK_COUNT = 20
 
         private const val BETWEEN_DARKS_DELAY_MS = 1_000L
         private const val RETRY_DELAY_MS = 1_500L
@@ -50,7 +68,7 @@ class DarkCalibrationViewModel : ViewModel() {
 
         uiState = DarkCalibrationUiState(
             isLoading = true,
-            message = "Préparation de la série de 10 darks…"
+            message = "Préparation de la série de $DARK_COUNT darks…"
         )
 
         viewModelScope.launch {
@@ -67,19 +85,47 @@ class DarkCalibrationViewModel : ViewModel() {
 
                 val sessionId = status.id
 
-                uiState = uiState.copy(
-                    isLoading = true,
-                    sessionId = sessionId,
-                    exposureSeconds = status.exposureSeconds,
-                    requestedCount = status.requestedCount,
-                    capturedCount = status.capturedCount,
-                    validCount = status.validCount,
-                    complete = status.status == "complete",
-                    storage = status.storage,
+                fun applyStatus(
+                    loading: Boolean,
+                    message: String?
+                ) {
+                    uiState = uiState.copy(
+                        isLoading = loading,
+                        sessionId = sessionId,
+                        exposureSeconds = status.exposureSeconds,
+                        requestedCount = status.requestedCount,
+                        capturedCount = status.capturedCount,
+                        validCount = status.validCount,
+                        complete = status.status == "complete",
+                        storage = status.storage,
+                        cameraName = status.cameraName,
+                        gain = status.gain,
+                        offset = status.offset,
+                        binX = status.binX,
+                        binY = status.binY,
+                        temperatureC = status.temperatureC,
+                        bayerPattern = status.bayerPattern,
+                        opticalTrainName = status.opticalTrainName,
+                        telescopeName = status.telescopeName,
+                        telescopeType = status.telescopeType,
+                        apertureMm = status.apertureMm,
+                        focalLengthMm = status.focalLengthMm,
+                        focalRatio = status.focalRatio,
+                        reducer = status.reducer,
+                        masterDarkPath = status.masterDarkPath,
+                        masterMethod = status.masterMethod,
+                        hotPixelCount = status.hotPixelCount,
+                        hotPixelMapPath = status.hotPixelMapPath,
+                        message = message,
+                        error = null
+                    )
+                }
+
+                applyStatus(
+                    loading = true,
                     message =
                         "Série automatique démarrée • " +
-                            "${status.capturedCount}/${status.requestedCount}",
-                    error = null
+                            "${status.capturedCount}/${status.requestedCount}"
                 )
 
                 while (
@@ -149,25 +195,14 @@ class DarkCalibrationViewModel : ViewModel() {
                     val complete =
                         status.status == "complete"
 
-                    uiState = uiState.copy(
-                        isLoading = !complete,
-                        exposureSeconds =
-                            status.exposureSeconds,
-                        requestedCount =
-                            status.requestedCount,
-                        capturedCount =
-                            status.capturedCount,
-                        validCount =
-                            status.validCount,
-                        complete = complete,
-                        storage = status.storage,
+                    applyStatus(
+                        loading = !complete,
                         message =
                             if (complete) {
-                                "Darks terminés • ${status.validCount}/${status.requestedCount} valides ✓"
+                                "Master Dark créé • ${status.validCount}/${status.requestedCount} valides • ${status.hotPixelCount ?: 0} pixels chauds détectés ✓"
                             } else {
                                 "Dark ${status.capturedCount}/${status.requestedCount} enregistré ✓"
-                            },
-                        error = null
+                            }
                     )
 
                     if (!complete) {
