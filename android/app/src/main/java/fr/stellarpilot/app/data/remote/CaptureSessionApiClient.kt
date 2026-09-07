@@ -121,16 +121,14 @@ data class GallerySession(
 
 class CaptureSessionApiClient(
     private val baseUrl: String,
-    private val client: OkHttpClient =
-        OkHttpClient.Builder()
-            .connectTimeout(5, TimeUnit.SECONDS)
-            .readTimeout(120, TimeUnit.SECONDS)
-            .writeTimeout(30, TimeUnit.SECONDS)
-            .callTimeout(150, TimeUnit.SECONDS)
-            .retryOnConnectionFailure(false)
-            .build()
+    private val client: OkHttpClient = OkHttpClient.Builder()
+        .connectTimeout(5, TimeUnit.SECONDS)
+        .readTimeout(120, TimeUnit.SECONDS)
+        .writeTimeout(30, TimeUnit.SECONDS)
+        .callTimeout(150, TimeUnit.SECONDS)
+        .retryOnConnectionFailure(false)
+        .build()
 ) {
-
     suspend fun createSession(
         targetName: String,
         targetRaHours: Double,
@@ -139,119 +137,73 @@ class CaptureSessionApiClient(
         trackingMode: String,
         exposureSeconds: Double
     ): CaptureSessionStatus = withContext(Dispatchers.IO) {
-        val payload =
-            JSONObject()
-                .put("target_name", targetName)
-                .put("target_ra_hours", targetRaHours)
-                .put("target_dec_deg", targetDecDeg)
-                .put("object_type", objectType)
-                .put("tracking_mode", trackingMode)
-                .put("exposure_s", exposureSeconds)
-                .put("centering_tolerance_arcsec", 30.0)
-                .put("recenter_tolerance_arcsec", 30.0)
-                .put("astrometry_interval_frames", 8)
-                .put("registration_recenter_pixels", 12.0)
-
-        parseSession(
-            executeJson(
-                path = "capture/sessions",
-                method = "POST",
-                payload = payload
-            )
-        )
+        val payload = JSONObject()
+            .put("target_name", targetName)
+            .put("target_ra_hours", targetRaHours)
+            .put("target_dec_deg", targetDecDeg)
+            .put("object_type", objectType)
+            .put("tracking_mode", trackingMode)
+            .put("exposure_s", exposureSeconds)
+            .put("centering_tolerance_arcsec", 30.0)
+            .put("recenter_tolerance_arcsec", 30.0)
+            .put("astrometry_interval_frames", 8)
+            .put("registration_recenter_pixels", 12.0)
+        parseSession(executeJson("capture/sessions", "POST", payload))
     }
 
-    suspend fun getSession(
-        sessionId: String
-    ): CaptureSessionStatus = withContext(Dispatchers.IO) {
-        parseSession(
-            executeJson(
-                path = "capture/sessions/$sessionId",
-                method = "GET"
-            )
-        )
-    }
+    suspend fun getSession(sessionId: String): CaptureSessionStatus =
+        withContext(Dispatchers.IO) {
+            parseSession(executeJson("capture/sessions/$sessionId", "GET"))
+        }
 
-    suspend fun centerStep(
-        sessionId: String
-    ): CaptureSessionStatus = withContext(Dispatchers.IO) {
-        centerAction(
-            "capture/sessions/$sessionId/center"
-        )
-    }
+    suspend fun centerStep(sessionId: String): CaptureSessionStatus =
+        withContext(Dispatchers.IO) {
+            centerAction("capture/sessions/$sessionId/center")
+        }
 
-    suspend fun captureCenterFrame(
-        sessionId: String
-    ): CaptureSessionStatus = withContext(Dispatchers.IO) {
-        centerAction(
-            "capture/sessions/$sessionId/center/capture"
-        )
-    }
+    suspend fun captureCenterFrame(sessionId: String): CaptureSessionStatus =
+        withContext(Dispatchers.IO) {
+            centerAction("capture/sessions/$sessionId/center/capture")
+        }
 
-    suspend fun solveCenterFrame(
-        sessionId: String
-    ): CaptureSessionStatus = withContext(Dispatchers.IO) {
-        centerAction(
-            "capture/sessions/$sessionId/center/solve"
-        )
-    }
+    suspend fun solveCenterFrame(sessionId: String): CaptureSessionStatus =
+        withContext(Dispatchers.IO) {
+            centerAction("capture/sessions/$sessionId/center/solve")
+        }
 
     private fun centerAction(path: String): CaptureSessionStatus {
-        val root = executeJson(
-            path = path,
-            method = "POST"
-        )
-        val status = root.optString("status")
-        if (status == "error") {
-            error(
-                root.optString(
-                    "detail",
-                    "Action de centrage impossible"
-                )
-            )
+        val root = executeJson(path, "POST")
+        if (root.optString("status") == "error") {
+            error(root.optString("detail", "Action de centrage impossible"))
         }
-        val session = root.optJSONObject("session")
-            ?: error("Réponse de centrage sans session")
-        return parseSession(session)
-    }
-
-    suspend fun startStack(
-        sessionId: String
-    ): CaptureSessionStatus = withContext(Dispatchers.IO) {
-        sessionFromAction(
-            "capture/sessions/$sessionId/stack/start"
+        return parseSession(
+            root.optJSONObject("session")
+                ?: error("Réponse de centrage sans session")
         )
     }
 
-    suspend fun resumeStack(
-        sessionId: String
-    ): CaptureSessionStatus = withContext(Dispatchers.IO) {
-        sessionFromAction(
-            "capture/sessions/$sessionId/stack/resume"
-        )
-    }
+    suspend fun startStack(sessionId: String): CaptureSessionStatus =
+        withContext(Dispatchers.IO) {
+            sessionFromAction("capture/sessions/$sessionId/stack/start")
+        }
 
-    suspend fun stopStack(
-        sessionId: String
-    ): CaptureSessionStatus = withContext(Dispatchers.IO) {
-        sessionFromAction(
-            "capture/sessions/$sessionId/stack/stop"
-        )
-    }
+    suspend fun resumeStack(sessionId: String): CaptureSessionStatus =
+        withContext(Dispatchers.IO) {
+            sessionFromAction("capture/sessions/$sessionId/stack/resume")
+        }
 
-    suspend fun finalizeSession(
-        sessionId: String
-    ): CaptureSessionStatus = withContext(Dispatchers.IO) {
-        sessionFromAction(
-            "capture/sessions/$sessionId/finalize"
-        )
-    }
+    suspend fun stopStack(sessionId: String): CaptureSessionStatus =
+        withContext(Dispatchers.IO) {
+            sessionFromAction("capture/sessions/$sessionId/stack/stop")
+        }
+
+    suspend fun finalizeSession(sessionId: String): CaptureSessionStatus =
+        withContext(Dispatchers.IO) {
+            sessionFromAction("capture/sessions/$sessionId/finalize")
+        }
 
     private fun sessionFromAction(path: String): CaptureSessionStatus {
-        val root = executeJson(
-            path = path,
-            method = "POST"
-        )
+        val root = executeJson(path, "POST")
         val status = root.optString("status")
         if (
             status in setOf(
@@ -262,43 +214,31 @@ class CaptureSessionApiClient(
                 "error"
             )
         ) {
-            error(
-                root.optString(
-                    "detail",
-                    "Action capture impossible"
-                )
-            )
+            error(root.optString("detail", "Action capture impossible"))
         }
-        val session = root.optJSONObject("session")
-            ?: error("Réponse capture sans session")
-        return parseSession(session)
+        return parseSession(
+            root.optJSONObject("session")
+                ?: error("Réponse capture sans session")
+        )
     }
 
     suspend fun getPreview(
         sessionId: String,
         stack: Boolean
     ): ByteArray = withContext(Dispatchers.IO) {
-        val suffix =
-            if (stack) "stack/preview.jpg"
-            else "preview.jpg"
-        executeBytes(
-            "capture/sessions/$sessionId/$suffix"
-        )
+        val suffix = if (stack) "stack/preview.jpg" else "preview.jpg"
+        executeBytes("capture/sessions/$sessionId/$suffix")
     }
 
     suspend fun listGalleries(): List<GallerySession> =
         withContext(Dispatchers.IO) {
-            val root = executeJson(
-                path = "galleries/sessions",
-                method = "GET"
-            )
-            val array = root.optJSONArray("sessions")
+            val array = executeJson("galleries/sessions", "GET")
+                .optJSONArray("sessions")
                 ?: return@withContext emptyList()
 
             buildList {
                 for (index in 0 until array.length()) {
-                    val item = array.optJSONObject(index)
-                        ?: continue
+                    val item = array.optJSONObject(index) ?: continue
                     val target = item.optJSONObject("target")
                     val setup = item.optJSONObject("setup")
                     val counts = item.optJSONObject("counts")
@@ -307,115 +247,73 @@ class CaptureSessionApiClient(
                         GallerySession(
                             id = item.optString("id"),
                             createdAt = item.optString("created_at"),
-                            targetName =
-                                target?.optString("name")
-                                    ?.takeIf { it.isNotBlank() }
-                                    ?: "Cible",
-                            exposureSeconds =
-                                setup?.optDouble("exposure_s", 4.0)
-                                    ?: 4.0,
-                            capturedFrames =
-                                counts?.optInt("captured", 0)
-                                    ?: 0,
-                            acceptedFrames =
-                                counts?.optInt("accepted", 0)
-                                    ?: 0,
-                            rejectedFrames =
-                                counts?.optInt("rejected", 0)
-                                    ?: 0,
-                            integrationSeconds =
-                                item.optDouble(
-                                    "integration_seconds",
-                                    0.0
-                                ),
-                            latitude =
-                                observation?.let {
-                                    nullableDouble(it, "latitude")
-                                },
-                            longitude =
-                                observation?.let {
-                                    nullableDouble(it, "longitude")
-                                },
-                            altitudeM =
-                                observation?.let {
-                                    nullableDouble(it, "altitude_m")
-                                },
-                            locationSource =
-                                observation?.let {
-                                    nullableString(it, "location_source")
-                                },
-                            placeName =
-                                observation?.let {
-                                    nullableString(it, "place_name")
-                                },
-                            acquisitionSeconds =
-                                item.optDouble("acquisition_seconds", 0.0)
+                            targetName = target?.optString("name")
+                                ?.takeIf { it.isNotBlank() } ?: "Cible",
+                            exposureSeconds = setup?.optDouble("exposure_s", 4.0) ?: 4.0,
+                            capturedFrames = counts?.optInt("captured", 0) ?: 0,
+                            acceptedFrames = counts?.optInt("accepted", 0) ?: 0,
+                            rejectedFrames = counts?.optInt("rejected", 0) ?: 0,
+                            integrationSeconds = item.optDouble("integration_seconds", 0.0),
+                            latitude = observation?.let { nullableDouble(it, "latitude") },
+                            longitude = observation?.let { nullableDouble(it, "longitude") },
+                            altitudeM = observation?.let { nullableDouble(it, "altitude_m") },
+                            locationSource = observation?.let { nullableString(it, "location_source") },
+                            placeName = observation?.let { nullableString(it, "place_name") },
+                            acquisitionSeconds = item.optDouble("acquisition_seconds", 0.0)
                         )
                     )
                 }
             }
         }
 
-    suspend fun getGalleryPreview(
-        sessionId: String
-    ): ByteArray = withContext(Dispatchers.IO) {
-        executeBytes(
-            "galleries/sessions/$sessionId/preview.jpg"
-        )
-    }
+    suspend fun getGalleryPreview(sessionId: String): ByteArray =
+        withContext(Dispatchers.IO) {
+            executeBytes("galleries/sessions/$sessionId/preview.jpg")
+        }
 
     private fun executeJson(
         path: String,
         method: String,
         payload: JSONObject? = null
     ): JSONObject {
-        val requestBuilder =
-            Request.Builder()
-                .url(endpoint(path))
-                .header("Connection", "close")
+        val builder = Request.Builder()
+            .url(endpoint(path))
+            .header("Connection", "close")
 
         if (method == "POST") {
-            val body =
-                (payload ?: JSONObject())
-                    .toString()
-                    .toRequestBody(
-                        "application/json; charset=utf-8"
-                            .toMediaType()
-                    )
-            requestBuilder.post(body)
+            val body = (payload ?: JSONObject())
+                .toString()
+                .toRequestBody("application/json; charset=utf-8".toMediaType())
+            builder.post(body)
         } else {
-            requestBuilder.get()
+            builder.get()
         }
 
-        client.newCall(requestBuilder.build())
-            .execute()
-            .use { response ->
-                check(response.isSuccessful) {
-                    "HTTP ${response.code} sur /$path"
-                }
-                val body = response.body?.string()
-                    ?: error("Réponse /$path vide")
-                return JSONObject(body)
+        client.newCall(builder.build()).execute().use { response ->
+            check(response.isSuccessful) {
+                "HTTP ${response.code} sur /$path"
             }
+            return JSONObject(
+                response.body?.string()
+                    ?: error("Réponse /$path vide")
+            )
+        }
     }
 
     private fun executeBytes(path: String): ByteArray {
-        val request =
-            Request.Builder()
-                .url(endpoint(path) + "?t=" + System.currentTimeMillis())
-                .header("Connection", "close")
-                .get()
-                .build()
+        val request = Request.Builder()
+            .url(endpoint(path) + "?t=" + System.currentTimeMillis())
+            .header("Connection", "close")
+            .get()
+            .build()
 
-        client.newCall(request.build())
-            .execute()
-            .use { response ->
-                check(response.isSuccessful) {
-                    "HTTP ${response.code} sur /$path"
-                }
-                return response.body?.bytes()
-                    ?: error("Image /$path vide")
+        client.newCall(request).execute().use { response ->
+            check(response.isSuccessful) {
+                "HTTP ${response.code} sur /$path"
             }
+            return response.body?.bytes()
+                ?: error("Image /$path vide")
+        }
     }
 
     private fun parseSession(root: JSONObject): CaptureSessionStatus {
@@ -423,85 +321,61 @@ class CaptureSessionApiClient(
         val setup = root.optJSONObject("setup") ?: JSONObject()
         val counts = root.optJSONObject("counts") ?: JSONObject()
         val centering = root.optJSONObject("centering") ?: JSONObject()
-        val centeringQuality = root.optJSONObject("centering_quality")
         val stacking = root.optJSONObject("stacking") ?: JSONObject()
-        val calibration = root.optJSONObject("calibration")
-        val lastQuality = root.optJSONObject("last_quality")
 
-        val parsedCenteringQuality =
-            centeringQuality?.let { quality ->
-                if (quality.optString("status") != "ok") {
-                    null
-                } else {
-                    CaptureQualityStatus(
-                        score =
-                            if (
-                                quality.has("astrometry_score") &&
-                                !quality.isNull("astrometry_score")
-                            ) {
-                                quality.optInt("astrometry_score")
-                            } else {
-                                null
-                            },
-                        label = nullableString(quality, "quality_label"),
-                        classification = nullableString(quality, "classification"),
-                        starCount =
-                            if (
-                                quality.has("star_count") &&
-                                !quality.isNull("star_count")
-                            ) {
-                                quality.optInt("star_count")
-                            } else {
-                                null
-                            },
-                        saturatedPercent = nullableDouble(quality, "saturated_percent"),
-                        recommendedExposureFactor = nullableDouble(
-                            quality,
-                            "recommended_exposure_factor"
-                        )
+        val centeringQuality = root.optJSONObject("centering_quality")
+            ?.takeIf { it.optString("status") == "ok" }
+            ?.let {
+                CaptureQualityStatus(
+                    score = nullableInt(it, "astrometry_score"),
+                    label = nullableString(it, "quality_label"),
+                    classification = nullableString(it, "classification"),
+                    starCount = nullableInt(it, "star_count"),
+                    saturatedPercent = nullableDouble(it, "saturated_percent"),
+                    recommendedExposureFactor = nullableDouble(
+                        it,
+                        "recommended_exposure_factor"
                     )
-                }
-            }
-
-        val parsedCalibration =
-            calibration?.let {
-                CaptureCalibrationStatus(
-                    required = it.optBoolean("required", true),
-                    status = it.optString("status", "pending"),
-                    masterId = nullableString(it, "master_id"),
-                    masterDark = nullableString(it, "master_dark"),
-                    temperatureDeltaC = nullableDouble(it, "temperature_delta_c"),
-                    hotPixels = nullableInt(it, "hot_pixels"),
-                    calibratedFrames = it.optInt("calibrated_frames", 0),
-                    detail = nullableString(it, "detail")
                 )
             }
 
-        val parsedLastQuality =
-            lastQuality?.let { quality ->
-                val reasonsArray = quality.optJSONArray("reasons")
-                val reasons = buildList {
-                    if (reasonsArray != null) {
-                        for (index in 0 until reasonsArray.length()) {
-                            reasonsArray.optString(index)
-                                .takeIf { it.isNotBlank() }
-                                ?.let(::add)
-                        }
+        val calibration = root.optJSONObject("calibration")?.let {
+            CaptureCalibrationStatus(
+                required = it.optBoolean("required", true),
+                status = it.optString("status", "pending"),
+                masterId = nullableString(it, "master_id"),
+                masterDark = nullableString(it, "master_dark"),
+                temperatureDeltaC = nullableDouble(it, "temperature_delta_c"),
+                hotPixels = nullableInt(it, "hot_pixels"),
+                calibratedFrames = it.optInt("calibrated_frames", 0),
+                detail = nullableString(it, "detail")
+            )
+        }
+
+        val lastLightQuality = root.optJSONObject("last_quality")?.let { quality ->
+            val reasonsArray = quality.optJSONArray("reasons")
+            val reasons = buildList {
+                if (reasonsArray != null) {
+                    for (index in 0 until reasonsArray.length()) {
+                        reasonsArray.optString(index)
+                            .takeIf { it.isNotBlank() }
+                            ?.let { add(it) }
                     }
                 }
-                CaptureLightQualityStatus(
-                    status = quality.optString("status", "unknown"),
-                    accepted = quality.optBoolean("accepted", false),
-                    score = nullableInt(quality, "score"),
-                    starCount = nullableInt(quality, "star_count"),
-                    backgroundSigma = nullableDouble(quality, "background_sigma"),
-                    saturatedPercent = nullableDouble(quality, "saturated_percent"),
-                    fwhmPx = nullableDouble(quality, "fwhm_px"),
-                    ellipticity = nullableDouble(quality, "ellipticity"),
-                    starSignal = nullableDouble(quality, "star_signal"),
-                    reasons = reasons
-                )
             }
+            CaptureLightQualityStatus(
+                status = quality.optString("status", "unknown"),
+                accepted = quality.optBoolean("accepted", false),
+                score = nullableInt(quality, "score"),
+                starCount = nullableInt(quality, "star_count"),
+                backgroundSigma = nullableDouble(quality, "background_sigma"),
+                saturatedPercent = nullableDouble(quality, "saturated_percent"),
+                fwhmPx = nullableDouble(quality, "fwhm_px"),
+                ellipticity = nullableDouble(quality, "ellipticity"),
+                starSignal = nullableDouble(quality, "star_signal"),
+                reasons = reasons
+            )
+        }
 
         val rejectedByReason = buildMap {
             val reasons = counts.optJSONObject("rejected_by_reason")
@@ -539,7 +413,7 @@ class CaptureSessionApiClient(
                 solverDetail = nullableString(centering, "solver_detail"),
                 verifiedAt = nullableString(centering, "verified_at")
             ),
-            centeringQuality = parsedCenteringQuality,
+            centeringQuality = centeringQuality,
             stacking = CaptureStackingStatus(
                 running = stacking.optBoolean("running", false),
                 recenterRequired = stacking.optBoolean("recenter_required", false),
@@ -559,40 +433,29 @@ class CaptureSessionApiClient(
                     "resume_verification_after"
                 )
             ),
-            hasPreview = !root.isNull("preview") && root.has("preview"),
-            hasStackPreview = !root.isNull("stack_preview") && root.has("stack_preview"),
+            hasPreview = root.has("preview") && !root.isNull("preview"),
+            hasStackPreview = root.has("stack_preview") && !root.isNull("stack_preview"),
             galleryPath = nullableString(root, "gallery_path"),
             acquisitionSeconds = root.optDouble("acquisition_seconds", 0.0),
             rejectedByReason = rejectedByReason,
-            calibration = parsedCalibration,
-            lastLightQuality = parsedLastQuality
+            calibration = calibration,
+            lastLightQuality = lastLightQuality
         )
     }
 
-    private fun nullableDouble(
-        json: JSONObject,
-        key: String
-    ): Double? {
+    private fun nullableDouble(json: JSONObject, key: String): Double? {
         if (!json.has(key) || json.isNull(key)) return null
-        return json.optDouble(key, Double.NaN)
-            .takeUnless { it.isNaN() }
+        return json.optDouble(key, Double.NaN).takeUnless { it.isNaN() }
     }
 
-    private fun nullableInt(
-        json: JSONObject,
-        key: String
-    ): Int? {
+    private fun nullableInt(json: JSONObject, key: String): Int? {
         if (!json.has(key) || json.isNull(key)) return null
         return json.optInt(key)
     }
 
-    private fun nullableString(
-        json: JSONObject,
-        key: String
-    ): String? {
+    private fun nullableString(json: JSONObject, key: String): String? {
         if (!json.has(key) || json.isNull(key)) return null
-        return json.optString(key)
-            .takeIf { it.isNotBlank() }
+        return json.optString(key).takeIf { it.isNotBlank() }
     }
 
     private fun endpoint(path: String): String =
