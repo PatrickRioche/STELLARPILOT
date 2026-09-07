@@ -9,6 +9,7 @@ from astropy.io import fits
 FINAL_STACK_METHOD = "sigma-clipped-mean-v1"
 FINAL_STACK_SIGMA = 3.0
 FINAL_STACK_TILE_ROWS = 32
+FINAL_STACK_CUBE_BUDGET_BYTES = 64 * 1024 * 1024
 
 
 def _shape_and_header(path: Path) -> tuple[tuple[int, int], fits.Header]:
@@ -18,6 +19,19 @@ def _shape_and_header(path: Path) -> tuple[tuple[int, int], fits.Header]:
         if data.ndim != 2:
             raise ValueError(f"Dimensions FITS inattendues: {data.shape}")
         return (int(data.shape[0]), int(data.shape[1])), header
+
+
+def _safe_tile_rows(
+    *,
+    frame_count: int,
+    width: int,
+    requested_rows: int,
+) -> int:
+    # Float32 cube is the dominant allocation. Keep it near 64 MiB so long
+    # continuous sessions remain finalizable on the Raspberry Pi.
+    bytes_per_row = max(1, frame_count * width * np.dtype(np.float32).itemsize)
+    budget_rows = max(1, FINAL_STACK_CUBE_BUDGET_BYTES // bytes_per_row)
+    return max(1, min(int(requested_rows), int(budget_rows)))
 
 
 def build_sigma_clipped_stack(
@@ -36,16 +50,20 @@ def build_sigma_clipped_stack(
         if other_shape != shape:
             raise ValueError("Dimensions différentes dans le stack")
 
-    tile_rows = max(1, int(tile_rows))
+    effective_tile_rows = _safe_tile_rows(
+        frame_count=len(paths),
+        width=shape[1],
+        requested_rows=max(1, int(tile_rows)),
+    )
     final = np.zeros(shape, dtype=np.float32)
 
-    # Keep the FITS files memory-mapped and combine only a few rows at a time.
-    # This gives a robust median/MAD clipping baseline without loading the full
-    # N-frame cube into RAM on the Raspberry Pi.
+    # Keep FITS memory-mapped and combine only a bounded number of rows. The
+    # robust median/MAD reference rejects satellites, cosmic rays and isolated
+    # transient pixels without loading the complete N-frame cube into RAM.
     handles = [fits.open(path, memmap=True) for path in paths]
     try:
-        for y0 in range(0, shape[0], tile_rows):
-            y1 = min(shape[0], y0 + tile_rows)
+        for y0 in range(0, shape[0], effective_tile_rows):
+            y1 = min(shape[0], y0 + effective_tile_rows)
             cube = np.stack(
                 [
                     np.asarray(handle[0].data[y0:y1, :], dtype=np.float32)
@@ -93,4 +111,5 @@ def build_sigma_clipped_stack(
         "method": FINAL_STACK_METHOD,
         "sigma": float(sigma),
         "frames": len(paths),
+        "tile_rows": effective_tile_rows,
     }
