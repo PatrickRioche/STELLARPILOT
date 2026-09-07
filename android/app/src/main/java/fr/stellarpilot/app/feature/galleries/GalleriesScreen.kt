@@ -13,7 +13,6 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.matchParentSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
@@ -306,9 +305,6 @@ private fun BrandedGalleryViewer(
             onTap = onTap
         )
 
-        // Le liseré est volontairement en retrait : l'image continue derrière
-        // lui afin de maximiser la surface utile et de créer la signature
-        // visuelle StellarPilot.
         Box(
             modifier = Modifier
                 .matchParentSize()
