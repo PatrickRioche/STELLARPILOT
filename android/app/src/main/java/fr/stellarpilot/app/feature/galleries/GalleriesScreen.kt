@@ -293,17 +293,15 @@ private fun BrandedGalleryViewer(
     ) {
         val compact = maxWidth < 520.dp
 
-        // Le liseré est volontairement assez loin du bord. Les informations
-        // sont placées entre le bord de l'image et ce liseré pour ne jamais
-        // réduire la surface de l'astrophotographie.
+        // Le liseré reste à quelques pixels du bord de l'image. Toutes les
+        // informations sont ensuite placées à l'intérieur de ce cadre.
         val borderInset = when {
-            fullScreen && compact -> 34.dp
-            fullScreen -> 42.dp
-            compact -> 32.dp
-            else -> 38.dp
+            fullScreen && compact -> 9.dp
+            fullScreen -> 11.dp
+            compact -> 7.dp
+            else -> 9.dp
         }
-        val edgeInset = if (compact) 5.dp else 7.dp
-        val headerTopInset = if (compact) 3.dp else 5.dp
+        val contentInset = borderInset + if (compact) 6.dp else 8.dp
         val logoSize = if (compact) 20.dp else 24.dp
         val headerGap = if (compact) 4.dp else 5.dp
 
@@ -340,9 +338,9 @@ private fun BrandedGalleryViewer(
             modifier = Modifier
                 .align(Alignment.TopCenter)
                 .padding(
-                    top = headerTopInset,
-                    start = edgeInset,
-                    end = edgeInset
+                    top = contentInset,
+                    start = contentInset,
+                    end = contentInset
                 ),
             verticalAlignment = Alignment.CenterVertically
         ) {
@@ -374,8 +372,8 @@ private fun BrandedGalleryViewer(
             modifier = Modifier
                 .align(Alignment.BottomStart)
                 .padding(
-                    start = edgeInset,
-                    bottom = edgeInset
+                    start = contentInset,
+                    bottom = contentInset
                 )
                 .widthIn(max = if (compact) 205.dp else 315.dp)
         ) {
@@ -411,8 +409,8 @@ private fun BrandedGalleryViewer(
             modifier = Modifier
                 .align(Alignment.BottomEnd)
                 .padding(
-                    end = edgeInset,
-                    bottom = edgeInset
+                    end = contentInset,
+                    bottom = contentInset
                 )
                 .widthIn(max = if (compact) 210.dp else 325.dp),
             horizontalAlignment = Alignment.End
