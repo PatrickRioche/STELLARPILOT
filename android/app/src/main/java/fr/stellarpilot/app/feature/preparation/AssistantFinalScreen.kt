@@ -63,6 +63,7 @@ fun AssistantFinalScreen(
     var maskInstalled by rememberSaveable { mutableStateOf(false) }
     var maskRemoved by rememberSaveable { mutableStateOf(false) }
     var telescopeCapped by rememberSaveable { mutableStateOf(false) }
+    var darkEnteredDirectly by rememberSaveable { mutableStateOf(false) }
 
     val connectionState = connectionViewModel.uiState
     val baseUrl = connectionState.serverBaseUrl
@@ -135,6 +136,28 @@ fun AssistantFinalScreen(
                 .height(5.dp),
             color = StellarOrange
         )
+
+        if (step < 3) {
+            Spacer(Modifier.height(10.dp))
+            OutlinedButton(
+                onClick = {
+                    darkEnteredDirectly = true
+                    telescopeCapped = false
+                    darkViewModel.reset()
+                    step = 3
+                },
+                enabled = !darkState.isLoading,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text("ALLER DIRECTEMENT AUX DARKS")
+            }
+            Text(
+                "Mode calibration : astrométrie et Bahtinov sont ignorés.",
+                color = StellarMuted,
+                style = androidx.compose.material3.MaterialTheme.typography.bodySmall
+            )
+        }
+
         Spacer(Modifier.height(16.dp))
 
         when (step) {
@@ -192,6 +215,7 @@ fun AssistantFinalScreen(
                 onMaskRemoved = { maskRemoved = true },
                 onPrevious = { step = 1 },
                 onContinue = {
+                    darkEnteredDirectly = false
                     telescopeCapped = false
                     darkViewModel.reset()
                     step = 3
@@ -201,10 +225,20 @@ fun AssistantFinalScreen(
             3 -> AssistantDarkStep(
                 state = darkState,
                 telescopeCapped = telescopeCapped,
+                directMode = darkEnteredDirectly,
                 onCapped = { telescopeCapped = true },
                 onStart = { darkViewModel.start(baseUrl) },
-                onPrevious = { step = 2 },
-                onContinue = { step = 4 }
+                onPrevious = {
+                    step = if (darkEnteredDirectly) 0 else 2
+                },
+                onContinue = {
+                    if (darkEnteredDirectly) {
+                        darkEnteredDirectly = false
+                        step = 0
+                    } else {
+                        step = 4
+                    }
+                }
             )
 
             else -> AssistantSummaryStep(
@@ -652,15 +686,25 @@ private fun AssistantBahtinovStep(
 private fun AssistantDarkStep(
     state: DarkCalibrationUiState,
     telescopeCapped: Boolean,
+    directMode: Boolean,
     onCapped: () -> Unit,
     onStart: () -> Unit,
     onPrevious: () -> Unit,
     onContinue: () -> Unit
 ) {
     AssistantCard("Prise de darks") {
+        if (directMode) {
+            Text(
+                "Mode darks directs • aucune validation d'astrométrie ou de mise au point n'est nécessaire.",
+                color = StellarGreen,
+                fontWeight = FontWeight.Bold
+            )
+            Spacer(Modifier.height(8.dp))
+        }
+
         if (!telescopeCapped) {
             Text(
-                "Retirez le masque Bahtinov puis placez le bouchon opaque sur le télescope.",
+                "Retirez tout masque de mise au point puis placez le bouchon opaque sur le télescope.",
                 color = StellarOrange,
                 fontWeight = FontWeight.Bold
             )
@@ -674,9 +718,43 @@ private fun AssistantDarkStep(
             }
         } else {
             StatusLine("Bouchon opaque", true)
-            StatusValue("Exposition", "4,0 s")
+            StatusValue("Exposition", "${String.format(Locale.FRANCE, "%.1f", state.exposureSeconds)} s")
             StatusValue("Darks", "${state.capturedCount}/${state.requestedCount}")
             StatusValue("Darks valides", state.validCount.toString())
+
+            if (state.sessionId != null) {
+                Spacer(Modifier.height(10.dp))
+                Text("PROFIL ARCHIVÉ", color = StellarOrange, fontWeight = FontWeight.Bold)
+                StatusValue("Caméra", state.cameraName ?: "Non disponible")
+                StatusValue(
+                    "Gain / offset",
+                    "${state.gain?.let { numberText(it) } ?: "?"} / ${state.offset?.let { numberText(it) } ?: "?"}"
+                )
+                StatusValue(
+                    "Binning",
+                    if (state.binX != null && state.binY != null) "${state.binX}×${state.binY}" else "Non disponible"
+                )
+                StatusValue(
+                    "Température",
+                    state.temperatureC?.let { String.format(Locale.FRANCE, "%.1f °C", it) } ?: "Non disponible"
+                )
+                StatusValue("Bayer", state.bayerPattern ?: "À lire dans le premier FITS")
+                StatusValue("Train KStars", state.opticalTrainName ?: "Non disponible")
+                StatusValue("Tube", state.telescopeName ?: "Non disponible")
+                StatusValue("Type", state.telescopeType ?: "Non disponible")
+                StatusValue(
+                    "Diamètre",
+                    state.apertureMm?.let { String.format(Locale.FRANCE, "%.1f mm", it) } ?: "Non disponible"
+                )
+                StatusValue(
+                    "Focale",
+                    state.focalLengthMm?.let { String.format(Locale.FRANCE, "%.1f mm", it) } ?: "Non disponible"
+                )
+                StatusValue(
+                    "F/D",
+                    state.focalRatio?.let { String.format(Locale.FRANCE, "f/%.2f", it) } ?: "Non disponible"
+                )
+            }
 
             Spacer(Modifier.height(10.dp))
             if (state.sessionId == null) {
@@ -686,7 +764,7 @@ private fun AssistantDarkStep(
                     modifier = Modifier.fillMaxWidth(),
                     colors = assistantPrimaryButtonColors()
                 ) {
-                    Text("DÉMARRER 10 DARKS")
+                    Text("DÉMARRER 20 DARKS")
                 }
             } else if (!state.complete) {
                 val progress =
@@ -721,6 +799,14 @@ private fun AssistantDarkStep(
                 )
             }
 
+            if (state.complete && state.masterDarkPath != null) {
+                Spacer(Modifier.height(12.dp))
+                Text("CALIBRATION CRÉÉE ✓", color = StellarGreen, fontWeight = FontWeight.Bold)
+                StatusValue("Master Dark", state.masterMethod ?: "Créé")
+                StatusValue("Pixels chauds", (state.hotPixelCount ?: 0).toString())
+                StatusValue("Carte pixels chauds", if (state.hotPixelMapPath != null) "Créée" else "Non disponible")
+            }
+
             state.message?.let {
                 Spacer(Modifier.height(8.dp))
                 Text(it, color = if (state.complete) StellarGreen else StellarMuted)
@@ -735,8 +821,8 @@ private fun AssistantDarkStep(
         NavigationButtons(
             onPrevious = onPrevious,
             onContinue = onContinue,
-            continueEnabled = state.complete && state.validCount == state.requestedCount,
-            continueText = "Voir le bilan"
+            continueEnabled = state.complete && state.masterDarkPath != null,
+            continueText = if (directMode) "TERMINER LES DARKS" else "Voir le bilan"
         )
     }
 }
@@ -761,9 +847,9 @@ private fun AssistantSummaryStep(
     val gpsOk = server?.devices?.gps?.status?.lowercase() == "fix"
     val astrometryOk = astrometryState.solveStatus == "solved" &&
         astrometryState.mountSyncStatus == "synced"
+    val darkOk = darkState.complete && darkState.masterDarkPath != null
     val ready = connectionOk && gpsOk && mountState.timeSyncVerified &&
-        astrometryOk && centeringState.centered && bahtinovState.focusValidated &&
-        darkState.complete && darkState.validCount == darkState.requestedCount
+        astrometryOk && centeringState.centered && bahtinovState.focusValidated && darkOk
 
     AssistantCard("Bilan de préparation") {
         StatusLine("Connexion matériel", connectionOk)
@@ -781,9 +867,9 @@ private fun AssistantSummaryStep(
             bahtinovState.focusScore?.let { "$it/100" } ?: "—"
         )
         StatusLine(
-            "Darks",
-            darkState.complete && darkState.validCount == darkState.requestedCount,
-            "${darkState.validCount}/${darkState.requestedCount}"
+            "Master Dark",
+            darkOk,
+            if (darkOk) "${darkState.validCount} darks • ${darkState.hotPixelCount ?: 0} pixels chauds" else "non créé"
         )
 
         Spacer(Modifier.height(14.dp))
@@ -809,6 +895,10 @@ private fun AssistantSummaryStep(
         )
     }
 }
+
+
+private fun numberText(value: Double): String =
+    if (value % 1.0 == 0.0) value.toInt().toString() else String.format(Locale.FRANCE, "%.2f", value)
 
 
 private fun frenchDirection(value: String): String = when (value.uppercase()) {
