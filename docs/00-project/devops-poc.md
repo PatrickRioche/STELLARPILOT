@@ -9,6 +9,20 @@ Le POC doit permettre de développer et tester indépendamment :
 3. l’intégration REST + WebSocket entre les deux ;
 4. ultérieurement la chaîne matérielle INDI réelle.
 
+## Règle de source et de déploiement
+
+GitHub est la source de vérité du projet StellarPilot.
+
+Le Raspberry Pi est uniquement une cible d’exécution et de déploiement :
+
+- ne pas initialiser de dépôt Git sur le Pi ;
+- ne pas utiliser `git pull`, `git commit`, `git checkout`, `git diff` ou toute autre commande Git sur le Pi ;
+- les modifications de code sont réalisées sur le poste de développement et/ou dans GitHub ;
+- le serveur validé est ensuite déployé vers le Pi ;
+- une correction temporairement testée directement sur le Pi doit être reportée dans GitHub avant d’être considérée comme pérenne.
+
+Cette règle évite qu’un état local du Pi diverge silencieusement de la version du dépôt.
+
 ## CI actuelle
 
 Deux workflows assurent le contrôle continu :
