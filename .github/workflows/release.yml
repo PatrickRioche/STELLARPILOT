@@ -11,8 +11,6 @@ permissions:
 jobs:
   release:
     runs-on: ubuntu-latest
-    env:
-      LOCALAPPDATA: ${{ runner.temp }}
 
     steps:
       - name: Checkout
@@ -76,18 +74,24 @@ jobs:
 
       - name: Build simulation APK
         working-directory: android
-        run: gradle --no-daemon :app:testSimulationDebugUnitTest :app:assembleSimulationDebug
+        shell: bash
+        run: |
+          export LOCALAPPDATA="$RUNNER_TEMP"
+          gradle --no-daemon :app:testSimulationDebugUnitTest :app:assembleSimulationDebug
 
       - name: Build device APK
         working-directory: android
-        run: gradle --no-daemon :app:assembleDeviceDebug
+        shell: bash
+        run: |
+          export LOCALAPPDATA="$RUNNER_TEMP"
+          gradle --no-daemon :app:assembleDeviceDebug
 
       - name: Stage release assets
         shell: bash
         run: |
           set -euo pipefail
 
-          APK_ROOT="${LOCALAPPDATA}/StellarPilot/android-build/app/outputs/apk"
+          APK_ROOT="${RUNNER_TEMP}/StellarPilot/android-build/app/outputs/apk"
           echo "APK output root: ${APK_ROOT}"
           find "${APK_ROOT}" -type f -name '*.apk' -print
 
