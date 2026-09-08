@@ -14,8 +14,6 @@ on:
 jobs:
   build-apk:
     runs-on: ubuntu-latest
-    env:
-      LOCALAPPDATA: ${{ runner.temp }}
 
     steps:
       - name: Checkout
@@ -34,22 +32,42 @@ jobs:
 
       - name: Test and build simulation debug APK
         working-directory: android
-        run: gradle --no-daemon :app:testSimulationDebugUnitTest :app:assembleSimulationDebug
+        shell: bash
+        run: |
+          export LOCALAPPDATA="$RUNNER_TEMP"
+          gradle --no-daemon :app:testSimulationDebugUnitTest :app:assembleSimulationDebug
+
+      - name: Stage simulation APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p ci-artifacts
+          cp "$RUNNER_TEMP/StellarPilot/android-build/app/outputs/apk/simulation/debug/"*.apk ci-artifacts/
 
       - name: Upload simulation APK
         uses: actions/upload-artifact@v4
         with:
           name: StellarPilot-simulation-debug
-          path: ${{ runner.temp }}/StellarPilot/android-build/app/outputs/apk/simulation/debug/*.apk
+          path: ci-artifacts/*.apk
           if-no-files-found: error
 
       - name: Build device debug APK
         working-directory: android
-        run: gradle --no-daemon :app:assembleDeviceDebug
+        shell: bash
+        run: |
+          export LOCALAPPDATA="$RUNNER_TEMP"
+          gradle --no-daemon :app:assembleDeviceDebug
+
+      - name: Stage device APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p ci-artifacts-device
+          cp "$RUNNER_TEMP/StellarPilot/android-build/app/outputs/apk/device/debug/"*.apk ci-artifacts-device/
 
       - name: Upload device APK
         uses: actions/upload-artifact@v4
         with:
           name: StellarPilot-device-debug
-          path: ${{ runner.temp }}/StellarPilot/android-build/app/outputs/apk/device/debug/*.apk
+          path: ci-artifacts-device/*.apk
           if-no-files-found: error
