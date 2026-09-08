@@ -36,8 +36,8 @@ android {
         minSdk = 26
         targetSdk = 36
 
-        versionCode = 6
-        versionName = "0.6.0"
+        versionCode = 70
+        versionName = "0.7.0-beta"
 
         buildConfigField(
             "String",
@@ -52,7 +52,6 @@ android {
         create("simulation") {
             dimension = "backend"
             applicationIdSuffix = ".simulation"
-            versionNameSuffix = "-simulation"
 
             buildConfigField(
                 "String",
@@ -69,7 +68,6 @@ android {
 
         create("device") {
             dimension = "backend"
-            versionNameSuffix = "-device"
 
             buildConfigField(
                 "String",
@@ -79,8 +77,7 @@ android {
 
             // Development / bench default. The Raspberry Pi is reached on the
             // LAN at 192.168.1.46. The field hotspot remains 10.42.0.1 and can
-            // be selected again once the V0.6 connection screen exposes the
-            // server-address selector.
+            // be selected again when working away from the bench LAN.
             buildConfigField(
                 "String",
                 "SERVER_BASE_URL",
