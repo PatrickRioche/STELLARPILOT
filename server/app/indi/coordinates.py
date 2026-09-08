@@ -70,19 +70,10 @@ def epoch_of_date_to_j2000(
     )
 
 
-def mount_equatorial_property(
-    indi_service: Any,
-) -> tuple[str, str]:
-    """Return the connected mount and the coordinate property core GOTO uses.
-
-    `_service_core.goto()` gives priority to EQUATORIAL_EOD_COORD, then falls
-    back to EQUATORIAL_COORD. Mirror that order here so coordinates are
-    transformed into exactly the frame the hardware command will receive.
-    """
-    mount_name = indi_service._find_connected_mount()
-    if mount_name is None:
-        raise RuntimeError("Aucune monture INDI connectée")
-
+def _get_exact_property(
+    property_name: str,
+) -> str:
+    """Read one exact INDI property without wildcard monitoring semantics."""
     try:
         result = subprocess.run(
             [
@@ -92,23 +83,55 @@ def mount_equatorial_property(
                 "-p",
                 "7624",
                 "-t",
-                "3",
-                f"{mount_name}.EQUATORIAL_EOD_COORD.*",
-                f"{mount_name}.EQUATORIAL_COORD.*",
+                "1",
+                property_name,
             ],
             capture_output=True,
             text=True,
-            timeout=5,
+            timeout=2,
             check=False,
         )
-    except (OSError, subprocess.SubprocessError) as exc:
+        return (result.stdout or "").strip()
+
+    except subprocess.TimeoutExpired as exc:
+        output = exc.stdout or ""
+
+        if isinstance(output, bytes):
+            output = output.decode(
+                errors="replace"
+            )
+
+        return output.strip()
+
+    except (
+        OSError,
+        subprocess.SubprocessError,
+    ) as exc:
         raise RuntimeError(str(exc)) from exc
 
-    output = result.stdout
-    if f"{mount_name}.EQUATORIAL_EOD_COORD." in output:
-        return mount_name, "EQUATORIAL_EOD_COORD"
-    if f"{mount_name}.EQUATORIAL_COORD." in output:
-        return mount_name, "EQUATORIAL_COORD"
+
+def mount_equatorial_property(
+    indi_service: Any,
+) -> tuple[str, str]:
+    """Return connected mount and coordinate property used by core GOTO."""
+    mount_name = indi_service._find_connected_mount()
+
+    if mount_name is None:
+        raise RuntimeError("Aucune monture INDI connectée")
+
+    for coordinate_property in (
+        "EQUATORIAL_EOD_COORD",
+        "EQUATORIAL_COORD",
+    ):
+        property_name = (
+            f"{mount_name}.{coordinate_property}.RA"
+        )
+        output = _get_exact_property(
+            property_name
+        )
+
+        if f"{property_name}=" in output:
+            return mount_name, coordinate_property
 
     raise RuntimeError(
         "La monture n'expose pas de coordonnées équatoriales pilotables"
@@ -158,6 +181,7 @@ def mount_position_to_j2000(
 ) -> tuple[float, float]:
     if coordinate_property == "EQUATORIAL_EOD_COORD":
         return epoch_of_date_to_j2000(ra_hours, dec_deg)
+
     return ra_hours % 24.0, dec_deg
 
 
@@ -176,28 +200,15 @@ def sync_mount_j2000(
 
     mount_name = prepared["mount"]
     coordinate_property = prepared["coordinate_property"]
+    sync_property = (
+        f"{mount_name}.ON_COORD_SET.SYNC"
+    )
 
-    try:
-        properties = subprocess.run(
-            [
-                "indi_getprop",
-                "-h",
-                "127.0.0.1",
-                "-p",
-                "7624",
-                "-t",
-                "3",
-                f"{mount_name}.ON_COORD_SET.*",
-            ],
-            capture_output=True,
-            text=True,
-            timeout=5,
-            check=False,
-        )
-    except (OSError, subprocess.SubprocessError) as exc:
-        raise RuntimeError(str(exc)) from exc
+    properties = _get_exact_property(
+        sync_property
+    )
 
-    if f"{mount_name}.ON_COORD_SET.SYNC=" not in properties.stdout:
+    if f"{sync_property}=" not in properties:
         raise RuntimeError(
             "La monture INDI n'expose pas ON_COORD_SET.SYNC"
         )
@@ -219,6 +230,7 @@ def sync_mount_j2000(
             timeout=7,
             check=False,
         )
+
         if result.returncode != 0:
             detail = (
                 result.stderr.strip()
