@@ -83,12 +83,30 @@ jobs:
       - name: Stage release assets
         shell: bash
         run: |
-          cp android/app/build/outputs/apk/simulation/debug/*.apk \
+          set -euo pipefail
+
+          echo "APK files produced by Gradle:"
+          find android/app/build/outputs/apk -type f -name '*.apk' -print || true
+
+          SIM_APK="$(find android/app/build/outputs/apk -type f -name '*.apk' -path '*/simulation/*' -print -quit)"
+          DEVICE_APK="$(find android/app/build/outputs/apk -type f -name '*.apk' -path '*/device/*' -print -quit)"
+
+          if [ -z "${SIM_APK}" ]; then
+            echo "Simulation APK not found"
+            exit 4
+          fi
+          if [ -z "${DEVICE_APK}" ]; then
+            echo "Device APK not found"
+            exit 5
+          fi
+
+          cp "${SIM_APK}" \
             "StellarPilot-${GITHUB_REF_NAME}-simulation-debug.apk"
-          cp android/app/build/outputs/apk/device/debug/*.apk \
+          cp "${DEVICE_APK}" \
             "StellarPilot-${GITHUB_REF_NAME}-device-debug.apk"
           cp server/openapi.json \
             "StellarPilot-${GITHUB_REF_NAME}-openapi.json"
+
           sha256sum \
             "StellarPilot-${GITHUB_REF_NAME}-simulation-debug.apk" \
             "StellarPilot-${GITHUB_REF_NAME}-device-debug.apk" \
