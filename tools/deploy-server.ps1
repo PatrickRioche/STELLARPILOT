@@ -21,6 +21,7 @@ function Invoke-Checked {
 }
 
 $RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
+$VersionFile = Join-Path $RepoRoot "VERSION"
 $Package = Join-Path $env:TEMP "stellarpilot-server-deploy.tar.gz"
 $RemoteScriptLocal = Join-Path $env:TEMP "stellarpilot-remote-deploy.sh"
 $RemotePackage = "/tmp/stellarpilot-server-deploy.tar.gz"
@@ -31,6 +32,14 @@ try {
     Write-Host "[StellarPilot] Server deployment from PC" -ForegroundColor Cyan
     Write-Host "[StellarPilot] Repo : $RepoRoot"
     Write-Host "[StellarPilot] Pi   : $PiHost"
+
+    if (-not (Test-Path $VersionFile)) {
+        throw "VERSION file missing: $VersionFile"
+    }
+    $version = (Get-Content $VersionFile -Raw).Trim()
+    if ([string]::IsNullOrWhiteSpace($version)) {
+        throw "VERSION file is empty."
+    }
 
     $branch = (git branch --show-current).Trim()
     if ($LASTEXITCODE -ne 0) {
@@ -44,6 +53,7 @@ try {
 
     Write-Host "[StellarPilot] Local branch : $branch"
     Write-Host "[StellarPilot] Commit       : $commit"
+    Write-Host "[StellarPilot] Version      : $version"
 
     Remove-Item $Package -Force -ErrorAction SilentlyContinue
     Remove-Item $RemoteScriptLocal -Force -ErrorAction SilentlyContinue
@@ -66,6 +76,7 @@ set -euo pipefail
 PACKAGE="__REMOTE_PACKAGE__"
 STAGE="/tmp/stellarpilot-server-stage"
 DEPLOY="__DEPLOY_DIR__"
+EXPECTED_VERSION="__EXPECTED_VERSION__"
 
 log() { printf '[StellarPilot] %s\n' "$*"; }
 fail() { printf '[StellarPilot][ERROR] %s\n' "$*" >&2; exit 1; }
@@ -191,22 +202,30 @@ log "Checking /health"
 curl --fail --silent --show-error http://127.0.0.1:8000/health
 printf '\n'
 
-log "Checking V0.6 API"
+log "Checking API version and required routes"
 curl --fail --silent --show-error http://127.0.0.1:8000/openapi.json | python3 -c '
 import json, sys
 api = json.load(sys.stdin)
 version = api.get("info", {}).get("version")
+expected = "__EXPECTED_VERSION__"
 print("version=", version)
 paths = api.get("paths", {})
-required = ["/mount/goto-mount-frame", "/mount/sync", "/mount/status"]
+required = [
+    "/mount/goto-mount-frame",
+    "/mount/goto",
+    "/mount/sync",
+    "/mount/status",
+    "/mount/time/sync",
+    "/mount/time/verification",
+]
 missing = [path for path in required if path not in paths]
-if version != "0.6.0-poc":
-    print("expected_version=0.6.0-poc")
+if version != expected:
+    print("expected_version=", expected)
     raise SystemExit(2)
 if missing:
     print("missing_routes=", ",".join(missing))
     raise SystemExit(3)
-print("routes_v06=OK")
+print("routes=OK")
 '
 
 log "Cleaning staging"
@@ -219,6 +238,7 @@ log "Deployment complete"
     $remoteBody = $remoteBody.Replace("__REMOTE_PACKAGE__", $RemotePackage)
     $remoteBody = $remoteBody.Replace("__REMOTE_SCRIPT__", $RemoteScript)
     $remoteBody = $remoteBody.Replace("__DEPLOY_DIR__", $DeployDir)
+    $remoteBody = $remoteBody.Replace("__EXPECTED_VERSION__", $version)
     $remoteBody = $remoteBody -replace "`r`n", "`n"
 
     # UTF-8 without BOM for Bash.
@@ -237,7 +257,7 @@ log "Deployment complete"
         throw "Remote deployment failed with exit code $LASTEXITCODE"
     }
 
-    Write-Host "[StellarPilot] Server V0.6 deployed successfully." -ForegroundColor Green
+    Write-Host "[StellarPilot] Server $version deployed successfully." -ForegroundColor Green
 }
 finally {
     Pop-Location
