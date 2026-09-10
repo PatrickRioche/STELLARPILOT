@@ -110,6 +110,122 @@ class IndiService(_CoreIndiService):
 
         return output
 
+    @staticmethod
+    def _park_output(
+        mount_name: str,
+    ) -> str:
+        """Read the standard INDI PARK/UNPARK state without changing it."""
+        try:
+            result = subprocess.run(
+                [
+                    "indi_getprop",
+                    "-h",
+                    "127.0.0.1",
+                    "-p",
+                    "7624",
+                    "-t",
+                    "1",
+                    f"{mount_name}.TELESCOPE_PARK.*",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=3,
+                check=False,
+            )
+        except (
+            OSError,
+            subprocess.SubprocessError,
+        ) as exc:
+            raise RuntimeError(str(exc)) from exc
+
+        return result.stdout.strip()
+
+    def ensure_unparked(
+        self,
+        mount_name: str,
+    ) -> dict:
+        """Unpark only as part of an explicit GOTO, then verify readback.
+
+        Connection/session preparation deliberately does not unpark the mount.
+        If a driver does not expose TELESCOPE_PARK, preserve the historical
+        behavior and let the driver decide whether the GOTO can proceed.
+        """
+        before = self._park_output(mount_name)
+        park_on = f"{mount_name}.TELESCOPE_PARK.PARK=On"
+        unpark_on = f"{mount_name}.TELESCOPE_PARK.UNPARK=On"
+
+        if unpark_on in before and park_on not in before:
+            return {
+                "status": "ready",
+                "supported": True,
+                "changed": False,
+                "parked_before": False,
+                "detail": None,
+            }
+
+        if park_on not in before:
+            return {
+                "status": "unavailable",
+                "supported": False,
+                "changed": False,
+                "parked_before": None,
+                "detail": "TELESCOPE_PARK non publie par la monture",
+            }
+
+        try:
+            result = subprocess.run(
+                [
+                    "indi_setprop",
+                    "-h",
+                    "127.0.0.1",
+                    "-p",
+                    "7624",
+                    "-t",
+                    "2",
+                    f"{mount_name}.TELESCOPE_PARK.UNPARK=On",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=4,
+                check=False,
+            )
+        except (
+            OSError,
+            subprocess.SubprocessError,
+        ) as exc:
+            raise RuntimeError(
+                f"Depark OnStep impossible : {exc}"
+            ) from exc
+
+        if result.returncode != 0:
+            detail = (
+                result.stderr.strip()
+                or result.stdout.strip()
+                or "Depark OnStep refuse par INDI"
+            )
+            raise RuntimeError(detail)
+
+        last_output = ""
+        for delay_s in (0.10, 0.20, 0.40, 0.80):
+            time.sleep(delay_s)
+            last_output = self._park_output(mount_name)
+
+            if (
+                unpark_on in last_output
+                and park_on not in last_output
+            ):
+                return {
+                    "status": "ready",
+                    "supported": True,
+                    "changed": True,
+                    "parked_before": True,
+                    "detail": None,
+                }
+
+        raise RuntimeError(
+            "Depark envoye mais le readback INDI ne confirme pas UNPARK"
+        )
+
     def set_tracking_mode(
         self,
         mount_name: str,
@@ -488,6 +604,9 @@ class IndiService(_CoreIndiService):
             )
 
         try:
+            park_state = self.ensure_unparked(
+                mount_name
+            )
             confirmed_mode = self.set_tracking_mode(
                 mount_name,
                 normalized,
@@ -513,6 +632,7 @@ class IndiService(_CoreIndiService):
         )
 
         result["tracking_mode"] = confirmed_mode
+        result["park"] = park_state
         return result
 
     def mount_status(self) -> dict:
