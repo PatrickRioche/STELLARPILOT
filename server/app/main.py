@@ -1,4 +1,5 @@
 import json
+import time
 from pathlib import Path
 from typing import Literal
 
@@ -24,7 +25,90 @@ from app.indi.coordinates import (
 )
 
 
+
 app = _core.app
+
+_GOTO_SESSION_TIME_MAX_AGE_SECONDS = 12 * 60 * 60
+
+
+def _goto_session_time_fallback(clock_check: dict) -> dict:
+    state = _core.state
+
+    detail = str(clock_check.get("detail") or "")
+    timed_out = (
+        "timed out" in detail.lower()
+        or "timeout" in detail.lower()
+    )
+
+    synced_at = state.mount_time_sync_monotonic_s
+    mount_setpoint_utc = state.mount_time_sync_mount_utc
+    sync_source = state.mount_time_sync_source
+    sync_offset_minutes = state.mount_time_sync_offset_minutes
+
+    age_seconds = None
+
+    if synced_at is not None:
+        age_seconds = max(
+            0.0,
+            time.monotonic() - synced_at,
+        )
+
+    client_offset_minutes = (
+        state.client_timezone_offset_minutes
+    )
+
+    offset_matches_session = None
+
+    if (
+        client_offset_minutes is not None
+        and sync_offset_minutes is not None
+    ):
+        offset_matches_session = (
+            abs(
+                float(client_offset_minutes)
+                - float(sync_offset_minutes)
+            )
+            <= 1.0
+        )
+
+    verified = (
+        timed_out
+        and clock_check.get("source") == "indi"
+        and bool(clock_check.get("mount"))
+        and synced_at is not None
+        and bool(mount_setpoint_utc)
+        and sync_source in {"gps", "android"}
+        and sync_offset_minutes is not None
+        and age_seconds is not None
+        and age_seconds <= _GOTO_SESSION_TIME_MAX_AGE_SECONDS
+        and offset_matches_session is not False
+    )
+
+    return {
+        "verified": verified,
+        "status": (
+            "verified"
+            if verified
+            else "required"
+        ),
+        "reason": (
+            "transient_live_read_timeout"
+            if verified
+            else None
+        ),
+        "age_seconds": (
+            round(age_seconds, 3)
+            if age_seconds is not None
+            else None
+        ),
+        "max_age_seconds": (
+            _GOTO_SESSION_TIME_MAX_AGE_SECONDS
+        ),
+        "mount_setpoint_utc": mount_setpoint_utc,
+        "reference_source": sync_source,
+        "timezone_offset_minutes": sync_offset_minutes,
+        "offset_matches_session": offset_matches_session,
+    }
 
 _BUILD_INFO_PATH = (
     Path(__file__).resolve().parents[1]
@@ -295,15 +379,32 @@ def mount_goto(payload: TrackingGotoPayload):
         reference_source=time_source,
     )
 
+
+    session_time_fallback = None
+
     if clock_check.get("status") != "available":
-        return {
-            "status": "error",
-            "detail": (
-                "État horaire OnStep indisponible : pointage bloqué"
-            ),
-            "time_source": time_source,
-            "time_check": clock_check,
-        }
+        session_time_fallback = (
+            _goto_session_time_fallback(
+                clock_check
+            )
+        )
+
+        if not session_time_fallback["verified"]:
+            return {
+                "status": "error",
+                "detail": (
+                    "Etat horaire OnStep indisponible : "
+                    "pointage bloque"
+                ),
+                "time_source": time_source,
+                "time_check": {
+                    **clock_check,
+                    "live_readback_fallback": False,
+                    "session_verification": (
+                        session_time_fallback
+                    ),
+                },
+            }
 
     indi_state = str(
         clock_check.get("indi_state") or ""
@@ -376,7 +477,7 @@ def mount_goto(payload: TrackingGotoPayload):
     }
     result["coordinate_transform"] = prepared
     result["time_source"] = time_source
-    result["time_check"] = {
+    result_time_check = {
         **clock_check,
         "expected_offset_hours": expected_offset_hours,
         "offset_matches_reference": (
@@ -384,10 +485,32 @@ def mount_goto(payload: TrackingGotoPayload):
             if expected_offset_hours is None
             or clock_check.get("offset_hours") is None
             else abs(
-                clock_check["offset_hours"] - expected_offset_hours
+                clock_check["offset_hours"]
+                - expected_offset_hours
             ) <= 0.01
         ),
     }
+
+    if session_time_fallback is not None:
+        result_time_check.update(
+            {
+                "live_readback_fallback": True,
+                "session_verification": (
+                    session_time_fallback
+                ),
+                "warning": (
+                    "Readback TIME_UTC live expire ; "
+                    "session verifiee utilisee"
+                ),
+            }
+        )
+    else:
+        result_time_check[
+            "live_readback_fallback"
+        ] = False
+
+    result["time_check"] = result_time_check
+
     # Kept for compatibility with clients that already display time_sync.
     result["time_sync"] = {
         "status": "preserved",
