@@ -451,6 +451,14 @@ def mount_goto(payload: TrackingGotoPayload):
     # distinguishes EQUATORIAL_COORD (J2000) and EQUATORIAL_EOD_COORD (JNow).
     # The core driver prefers EOD when it is exposed, so precess the target to
     # the same frame before sending the hardware command.
+    import logging
+    logging.getLogger("uvicorn.error").warning(
+        "GOTO REQUEST ra=%s dec=%s tracking=%s",
+        payload.ra,
+        payload.dec,
+        payload.tracking_mode,
+    )
+
     try:
         prepared = prepare_j2000_for_mount(
             _core.indi_service,

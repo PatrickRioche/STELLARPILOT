@@ -41,39 +41,46 @@ class IndiService(_CoreIndiService):
 
     def _find_connected_mount(self) -> str | None:
         """
-        Evite plusieurs lectures INDI identiques pendant un meme GOTO.
-
-        sync_mount_time(), set_tracking_mode() puis le GOTO sont executes
-        a quelques secondes d'intervalle. La lecture CONNECTION est donc
-        reutilisee sur une courte fenetre afin de ne pas cumuler les
-        timeouts de indi_getprop avant le demarrage du mouvement.
+        Detecte directement LX200 OnStep sans wildcard INDI.
         """
         now = time.monotonic()
-        cached_name = getattr(
-            self,
-            "_cached_mount_name",
-            None,
-        )
-        cached_at = getattr(
-            self,
-            "_cached_mount_at",
-            0.0,
-        )
+
+        cached_name = getattr(self, "_cached_mount_name", None)
+        cached_at = getattr(self, "_cached_mount_at", 0.0)
 
         if (
             cached_name is not None
-            and now - cached_at
-            <= self._mount_cache_ttl_s
+            and now - cached_at <= self._mount_cache_ttl_s
         ):
             return cached_name
 
-        mount_name = super()._find_connected_mount()
+        candidate = "LX200 OnStep"
+        property_name = f"{candidate}.CONNECTION.CONNECT"
 
-        if mount_name is not None:
-            self._cached_mount_name = mount_name
+        try:
+            result = subprocess.run(
+                [
+                    "indi_getprop",
+                    "-h", "127.0.0.1",
+                    "-p", "7624",
+                    "-t", "5",
+                    property_name,
+                ],
+                capture_output=True,
+                text=True,
+                timeout=7,
+                check=False,
+            )
+            output = result.stdout or ""
+        except (OSError, subprocess.SubprocessError):
+            output = ""
+
+        if f"{property_name}=On" in output:
+            self._cached_mount_name = candidate
             self._cached_mount_at = now
+            return candidate
 
-        return mount_name
+        return None
 
     @staticmethod
     def _tracking_mode_output(

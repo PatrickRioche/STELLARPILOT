@@ -73,42 +73,50 @@ def epoch_of_date_to_j2000(
 def mount_equatorial_property(
     indi_service: Any,
 ) -> tuple[str, str]:
-    """Return the connected mount and the coordinate property core GOTO uses.
-
-    `_service_core.goto()` gives priority to EQUATORIAL_EOD_COORD, then falls
-    back to EQUATORIAL_COORD. Mirror that order here so coordinates are
-    transformed into exactly the frame the hardware command will receive.
-    """
+    """Return the connected mount and the coordinate property core GOTO uses."""
     mount_name = indi_service._find_connected_mount()
     if mount_name is None:
         raise RuntimeError("Aucune monture INDI connectée")
 
-    try:
-        result = subprocess.run(
-            [
-                "indi_getprop",
-                "-h",
-                "127.0.0.1",
-                "-p",
-                "7624",
-                "-t",
-                "3",
-                f"{mount_name}.EQUATORIAL_EOD_COORD.*",
-                f"{mount_name}.EQUATORIAL_COORD.*",
-            ],
-            capture_output=True,
-            text=True,
-            timeout=5,
-            check=False,
-        )
-    except (OSError, subprocess.SubprocessError) as exc:
-        raise RuntimeError(str(exc)) from exc
+    candidates = (
+        "EQUATORIAL_EOD_COORD",
+        "EQUATORIAL_COORD",
+    )
 
-    output = result.stdout
-    if f"{mount_name}.EQUATORIAL_EOD_COORD." in output:
-        return mount_name, "EQUATORIAL_EOD_COORD"
-    if f"{mount_name}.EQUATORIAL_COORD." in output:
-        return mount_name, "EQUATORIAL_COORD"
+    for coordinate_property in candidates:
+        property_name = (
+            f"{mount_name}.{coordinate_property}.RA"
+        )
+
+        try:
+            result = subprocess.run(
+                [
+                    "indi_getprop",
+                    "-h",
+                    "127.0.0.1",
+                    "-p",
+                    "7624",
+                    "-t",
+                    "2",
+                    property_name,
+                ],
+                capture_output=True,
+                text=True,
+                timeout=4,
+                check=False,
+            )
+            output = result.stdout or ""
+
+        except subprocess.TimeoutExpired as exc:
+            output = exc.stdout or ""
+            if isinstance(output, bytes):
+                output = output.decode(errors="replace")
+
+        except (OSError, subprocess.SubprocessError):
+            output = ""
+
+        if f"{property_name}=" in output:
+            return mount_name, coordinate_property
 
     raise RuntimeError(
         "La monture n'expose pas de coordonnées équatoriales pilotables"
