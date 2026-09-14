@@ -1,5 +1,6 @@
 package fr.stellarpilot.app.feature.capture
 
+import android.content.Context
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -19,11 +20,18 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -38,6 +46,14 @@ import fr.stellarpilot.app.ui.theme.StellarRed
 import fr.stellarpilot.app.ui.theme.StellarSurface
 import fr.stellarpilot.app.ui.theme.StellarText
 import java.util.Locale
+import kotlin.math.roundToInt
+
+private const val ASTROMETRY_PREFS_NAME = "stellarpilot_astrometry"
+private const val PREF_ASTROMETRY_MIN_STARS = "minimum_stars"
+private const val DEFAULT_ASTROMETRY_MIN_STARS = 80
+private const val MIN_ASTROMETRY_STARS = 10
+private const val MAX_ASTROMETRY_STARS = 200
+private const val ASTROMETRY_STAR_STEP = 5
 
 
 @Composable
@@ -49,6 +65,20 @@ fun CaptureV067Screen(
     val target = state.target
     val session = state.session
     val centering = session?.centering
+
+    val context = LocalContext.current
+    val astrometryPreferences = remember {
+        context.getSharedPreferences(ASTROMETRY_PREFS_NAME, Context.MODE_PRIVATE)
+    }
+    var minimumStars by rememberSaveable {
+        mutableIntStateOf(
+            astrometryPreferences
+                .getInt(PREF_ASTROMETRY_MIN_STARS, DEFAULT_ASTROMETRY_MIN_STARS)
+                .coerceIn(MIN_ASTROMETRY_STARS, MAX_ASTROMETRY_STARS)
+        )
+    }
+    val detectedStars = session?.centeringQuality?.starCount
+    val thresholdReached = detectedStars != null && detectedStars >= minimumStars
 
     LaunchedEffect(Unit) {
         viewModel.loadSelectedTarget()
@@ -188,6 +218,48 @@ fun CaptureV067Screen(
                     fontWeight = FontWeight.Bold
                 )
 
+                Spacer(Modifier.height(10.dp))
+                Text(
+                    "Seuil astrométrie : $minimumStars étoiles",
+                    color = StellarText,
+                    fontWeight = FontWeight.Bold
+                )
+                Slider(
+                    value = minimumStars.toFloat(),
+                    onValueChange = { raw ->
+                        val snapped = (
+                            ((raw - MIN_ASTROMETRY_STARS) / ASTROMETRY_STAR_STEP)
+                                .roundToInt() * ASTROMETRY_STAR_STEP + MIN_ASTROMETRY_STARS
+                            ).coerceIn(MIN_ASTROMETRY_STARS, MAX_ASTROMETRY_STARS)
+                        minimumStars = snapped
+                        astrometryPreferences.edit()
+                            .putInt(PREF_ASTROMETRY_MIN_STARS, snapped)
+                            .apply()
+                    },
+                    valueRange = MIN_ASTROMETRY_STARS.toFloat()..MAX_ASTROMETRY_STARS.toFloat(),
+                    steps = ((MAX_ASTROMETRY_STARS - MIN_ASTROMETRY_STARS) / ASTROMETRY_STAR_STEP) - 1,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Text(
+                    "Minimum 10 • Maximum 200 • pas de 5",
+                    color = StellarMuted,
+                    style = MaterialTheme.typography.bodySmall
+                )
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    when {
+                        detectedStars == null -> "Étoiles détectées : —"
+                        thresholdReached -> "Étoiles détectées : $detectedStars • astrométrie autorisée"
+                        else -> "Étoiles détectées : $detectedStars • seuil non atteint"
+                    },
+                    color = when {
+                        detectedStars == null -> StellarMuted
+                        thresholdReached -> StellarGreen
+                        else -> StellarOrange
+                    },
+                    fontWeight = if (detectedStars != null) FontWeight.SemiBold else FontWeight.Normal
+                )
+
                 centering?.errorArcsec?.let {
                     Spacer(Modifier.height(4.dp))
                     Text(
@@ -219,11 +291,20 @@ fun CaptureV067Screen(
                 } else {
                     Button(
                         onClick = { viewModel.launchAstrometry(serverBaseUrl) },
-                        enabled = centering?.status in setOf("captured", "unsolved", "cancelled") && !state.isCapturing,
+                        enabled = thresholdReached &&
+                            centering?.status in setOf("captured", "unsolved", "cancelled") &&
+                            !state.isCapturing,
                         modifier = Modifier.fillMaxWidth(),
                         colors = v067PrimaryColors()
                     ) {
                         Text("LANCER L'ASTROMÉTRIE", fontWeight = FontWeight.Bold)
+                    }
+                    if (centering?.status in setOf("captured", "unsolved", "cancelled") && !thresholdReached) {
+                        Spacer(Modifier.height(6.dp))
+                        Text(
+                            "Abaissez le seuil ou refaites une capture pour détecter davantage d'étoiles.",
+                            color = StellarMuted
+                        )
                     }
                 }
             }
