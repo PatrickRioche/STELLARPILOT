@@ -21,17 +21,13 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
-import fr.stellarpilot.app.domain.model.SkyStar
 import fr.stellarpilot.app.feature.connection.ConnectionViewModel
-import fr.stellarpilot.app.feature.sky.SkyViewModel
 import fr.stellarpilot.app.ui.components.StellarImagePreview
 import fr.stellarpilot.app.ui.theme.StellarBackground
 import fr.stellarpilot.app.ui.theme.StellarBorder
@@ -43,15 +39,13 @@ import fr.stellarpilot.app.ui.theme.StellarSurface
 import fr.stellarpilot.app.ui.theme.StellarText
 import java.util.Locale
 
-
 private val assistantSteps = listOf(
     "Connexion",
     "Astrométrie",
-    "Bahtinov",
+    "Bahtinov via Capture",
     "Darks",
     "Bilan"
 )
-
 
 @Composable
 fun AssistantFinalScreen(
@@ -59,11 +53,8 @@ fun AssistantFinalScreen(
     connectionViewModel: ConnectionViewModel = viewModel()
 ) {
     var step by rememberSaveable { mutableIntStateOf(0) }
-    var selectedStarId by rememberSaveable { mutableStateOf<String?>(null) }
-    var maskInstalled by rememberSaveable { mutableStateOf(false) }
-    var maskRemoved by rememberSaveable { mutableStateOf(false) }
-    var telescopeCapped by rememberSaveable { mutableStateOf(false) }
-    var darkEnteredDirectly by rememberSaveable { mutableStateOf(false) }
+    var telescopeCapped by rememberSaveable { androidx.compose.runtime.mutableStateOf(false) }
+    var darkEnteredDirectly by rememberSaveable { androidx.compose.runtime.mutableStateOf(false) }
 
     val connectionState = connectionViewModel.uiState
     val baseUrl = connectionState.serverBaseUrl
@@ -74,15 +65,6 @@ fun AssistantFinalScreen(
     val astrometryViewModel: CameraPreviewViewModel = viewModel()
     val astrometryState = astrometryViewModel.uiState
 
-    val skyViewModel: SkyViewModel = viewModel()
-    val skyState = skyViewModel.uiState
-
-    val centeringViewModel: AssistantCenteringViewModel = viewModel()
-    val centeringState = centeringViewModel.uiState
-
-    val bahtinovViewModel: BahtinovViewModel = viewModel()
-    val bahtinovState = bahtinovViewModel.uiState
-
     val darkViewModel: DarkCalibrationViewModel = viewModel()
     val darkState = darkViewModel.uiState
 
@@ -92,24 +74,10 @@ fun AssistantFinalScreen(
     }
 
     LaunchedEffect(step, baseUrl) {
-        when (step) {
-            0 -> mountViewModel.refresh(baseUrl)
-            2 -> skyViewModel.load(baseUrl)
+        if (step == 0) {
+            mountViewModel.refresh(baseUrl)
         }
     }
-
-    val focusStars = remember(skyState.sky) {
-        skyState.sky?.stars
-            .orEmpty()
-            .filter { it.aboveHorizon && it.altitudeDeg >= 20.0 }
-            .sortedWith(
-                compareBy<SkyStar> { it.magnitude }
-                    .thenByDescending { it.altitudeDeg }
-            )
-            .take(10)
-    }
-
-    val selectedStar = focusStars.firstOrNull { it.id == selectedStarId }
 
     Column(
         modifier = Modifier
@@ -152,7 +120,7 @@ fun AssistantFinalScreen(
                 Text("ALLER DIRECTEMENT AUX DARKS")
             }
             Text(
-                "Mode calibration : astrométrie et Bahtinov sont ignorés.",
+                "Mode calibration : les étapes d'astrométrie et de mise au point sont ignorées.",
                 color = StellarMuted,
                 style = androidx.compose.material3.MaterialTheme.typography.bodySmall
             )
@@ -180,40 +148,9 @@ fun AssistantFinalScreen(
                 onContinue = { step = 2 }
             )
 
-            2 -> AssistantBahtinovStep(
-                stars = focusStars,
-                selectedStar = selectedStar,
-                selectedStarId = selectedStarId,
-                skyLoading = skyState.isLoading,
-                skyError = skyState.error,
-                centeringState = centeringState,
-                bahtinovState = bahtinovState,
-                maskInstalled = maskInstalled,
-                maskRemoved = maskRemoved,
-                onSelectStar = {
-                    selectedStarId = it.id
-                    maskInstalled = false
-                    maskRemoved = false
-                    centeringViewModel.reset()
-                },
-                onRefreshStars = { skyViewModel.load(baseUrl) },
-                onGotoAndCenter = {
-                    selectedStar?.let {
-                        centeringViewModel.gotoAndCenter(baseUrl, it)
-                    }
-                },
-                onVerifyCentering = {
-                    centeringViewModel.verifyManualCentering(baseUrl)
-                },
-                onMaskInstalled = {
-                    maskInstalled = true
-                    maskRemoved = false
-                },
-                onFocusCapture = {
-                    bahtinovViewModel.captureFocus(baseUrl)
-                },
-                onMaskRemoved = { maskRemoved = true },
+            2 -> AssistantBahtinovRedirectStep(
                 onPrevious = { step = 1 },
+                onOpenSky = onOpenSky,
                 onContinue = {
                     darkEnteredDirectly = false
                     telescopeCapped = false
@@ -245,9 +182,6 @@ fun AssistantFinalScreen(
                 connectionViewModel = connectionViewModel,
                 mountState = mountState,
                 astrometryState = astrometryState,
-                selectedStar = selectedStar,
-                centeringState = centeringState,
-                bahtinovState = bahtinovState,
                 darkState = darkState,
                 onPrevious = { step = 3 },
                 onOpenSky = onOpenSky
@@ -255,7 +189,6 @@ fun AssistantFinalScreen(
         }
     }
 }
-
 
 @Composable
 private fun AssistantConnectionStep(
@@ -326,7 +259,6 @@ private fun AssistantConnectionStep(
     }
 }
 
-
 @Composable
 private fun AssistantAstrometryStep(
     state: CameraPreviewUiState,
@@ -339,9 +271,9 @@ private fun AssistantAstrometryStep(
     val synced = state.mountSyncStatus == "synced"
     val validated = solved && synced
 
-    AssistantCard("Astrométrie") {
+    AssistantCard("Astrométrie de préparation") {
         Text(
-            "Positionnez librement la monture. StellarPilot lit automatiquement AD et DEC via INDI, puis résout le champ réel de l'image.",
+            "Cette vérification de préparation reste disponible ici. Dans l'onglet Capture, l'astrométrie V0.6.7 est désormais lancée uniquement par un bouton dédié.",
             color = StellarText
         )
         Spacer(Modifier.height(12.dp))
@@ -372,35 +304,6 @@ private fun AssistantAstrometryStep(
             Text(if (state.imageBytes == null) "CAPTURER • 4 s" else "ENCORE • 4 s")
         }
 
-        Spacer(Modifier.height(14.dp))
-        Text(
-            "Position courante de la monture",
-            color = StellarText,
-            fontWeight = FontWeight.Bold
-        )
-        Text(
-            "Ces coordonnées servent uniquement d'indice au solveur ; la solution astrométrique de l'image reste la référence.",
-            color = StellarMuted
-        )
-
-        Spacer(Modifier.height(8.dp))
-        StatusValue(
-            "RA OnStep",
-            mountState.status?.raHours?.let {
-                String.format(Locale.FRANCE, "%.6f h", it)
-            } ?: "?"
-        )
-        StatusValue(
-            "DEC OnStep",
-            mountState.status?.decDeg?.let {
-                String.format(Locale.FRANCE, "%+.5f°", it)
-            } ?: "?"
-        )
-        StatusValue(
-            "État OnStep",
-            mountState.status?.status ?: "?"
-        )
-
         state.error?.let {
             Spacer(Modifier.height(8.dp))
             Text(it, color = StellarRed)
@@ -415,270 +318,53 @@ private fun AssistantAstrometryStep(
             onPrevious = onPrevious,
             onContinue = onContinue,
             continueEnabled = validated,
-            continueText = "Suite • mise au point"
+            continueText = "Suite • Bahtinov via Capture"
         )
     }
 }
 
-
 @Composable
-private fun AssistantBahtinovStep(
-    stars: List<SkyStar>,
-    selectedStar: SkyStar?,
-    selectedStarId: String?,
-    skyLoading: Boolean,
-    skyError: String?,
-    centeringState: AssistantCenteringUiState,
-    bahtinovState: BahtinovUiState,
-    maskInstalled: Boolean,
-    maskRemoved: Boolean,
-    onSelectStar: (SkyStar) -> Unit,
-    onRefreshStars: () -> Unit,
-    onGotoAndCenter: () -> Unit,
-    onVerifyCentering: () -> Unit,
-    onMaskInstalled: () -> Unit,
-    onFocusCapture: () -> Unit,
-    onMaskRemoved: () -> Unit,
+private fun AssistantBahtinovRedirectStep(
     onPrevious: () -> Unit,
+    onOpenSky: () -> Unit,
     onContinue: () -> Unit
 ) {
-    AssistantCard("Mise au point Bahtinov") {
+    AssistantCard("Mise au point Bahtinov déplacée dans Ciel + Capture") {
         Text(
-            "Choisissez une étoile brillante. StellarPilot fait le GOTO puis tente de la centrer automatiquement.",
+            "Le choix automatique des 10 étoiles a été supprimé de l'assistant.",
+            color = StellarGreen,
+            fontWeight = FontWeight.Bold
+        )
+        Spacer(Modifier.height(8.dp))
+        Text(
+            "Choisissez maintenant votre étoile dans Ciel, effectuez le GOTO, puis ouvrez Capture. Vous pourrez y déclarer le masque Bahtinov installé et lancer autant de poses de 4 s que nécessaire.",
             color = StellarText
         )
-        Spacer(Modifier.height(10.dp))
+        Spacer(Modifier.height(8.dp))
+        Text(
+            "Cette étape n'effectue plus aucun GOTO ni recentrage automatique.",
+            color = StellarOrange,
+            fontWeight = FontWeight.Bold
+        )
 
-        if (skyLoading) {
-            Text("Calcul des étoiles visibles…", color = StellarMuted)
-        }
-
-        stars.forEach { star ->
-            val selected = selectedStarId == star.id
-            val direction = frenchDirection(star.azimuthDirection)
-            val label = String.format(
-                Locale.FRANCE,
-                "%s • mag %.2f • %s • %s • h %.0f°",
-                star.name,
-                star.magnitude,
-                star.constellation,
-                direction,
-                star.altitudeDeg
-            )
-
-            if (selected) {
-                Button(
-                    onClick = { onSelectStar(star) },
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = assistantPrimaryButtonColors()
-                ) {
-                    Text("✓ $label")
-                }
-            } else {
-                OutlinedButton(
-                    onClick = { onSelectStar(star) },
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Text(label)
-                }
-            }
-            Spacer(Modifier.height(5.dp))
-        }
-
-        if (stars.isEmpty() && !skyLoading) {
-            Text("Aucune étoile utilisable reçue.", color = StellarRed)
-        }
-        skyError?.let { Text(it, color = StellarRed) }
-
-        Spacer(Modifier.height(6.dp))
-        OutlinedButton(
-            onClick = onRefreshStars,
+        Spacer(Modifier.height(12.dp))
+        Button(
+            onClick = onOpenSky,
             modifier = Modifier.fillMaxWidth(),
-            enabled = !skyLoading
+            colors = assistantPrimaryButtonColors()
         ) {
-            Text("Actualiser les 10 étoiles")
+            Text("OUVRIR CIEL", fontWeight = FontWeight.Bold)
         }
 
-        if (selectedStar != null) {
-            Spacer(Modifier.height(12.dp))
-            Button(
-                onClick = onGotoAndCenter,
-                enabled = !centeringState.isLoading,
-                modifier = Modifier.fillMaxWidth(),
-                colors = assistantPrimaryButtonColors()
-            ) {
-                Text(
-                    if (centeringState.centered) {
-                        "${selectedStar.name} centrée ✓"
-                    } else {
-                        "GOTO + RECENTRAGE • ${selectedStar.name}"
-                    }
-                )
-            }
-        }
-
-        if (
-            centeringState.imageBytes != null ||
-            centeringState.isLoading ||
-            centeringState.manualRequired
-        ) {
-            Spacer(Modifier.height(12.dp))
-            StellarImagePreview(
-                imageBytes = centeringState.imageBytes,
-                contentDescription = "Centrage étoile",
-                loadingText = if (centeringState.isLoading) "Pose 4 s / recentrage…" else null,
-                showCrosshair = true
-            )
-            Spacer(Modifier.height(6.dp))
-            StatusValue("Centrage", centeringState.status ?: "en cours")
-            StatusValue(
-                "Erreur",
-                centeringState.errorArcsec?.let {
-                    String.format(Locale.FRANCE, "%.1f arcsec", it)
-                } ?: "—"
-            )
-            StatusValue("Tentatives", centeringState.attempts.toString())
-        }
-
-        centeringState.message?.let {
-            Spacer(Modifier.height(6.dp))
-            Text(it, color = if (centeringState.centered) StellarGreen else StellarMuted)
-        }
-        centeringState.error?.let {
-            Spacer(Modifier.height(6.dp))
-            Text(it, color = StellarRed)
-        }
-
-        if (centeringState.manualRequired && !centeringState.centered) {
-            Spacer(Modifier.height(12.dp))
-
-            Text(
-                "Recentrage manuel via MLAstro Hub",
-                color = StellarOrange,
-                fontWeight = FontWeight.Bold
-            )
-
-            Spacer(Modifier.height(6.dp))
-
-            Text(
-                "Déplacez précisément la monture avec MLAstro Hub, puis revenez dans StellarPilot.",
-                color = StellarText
-            )
-
-            Spacer(Modifier.height(8.dp))
-
-            Button(
-                onClick = onVerifyCentering,
-                enabled = !centeringState.isLoading,
-                modifier = Modifier.fillMaxWidth(),
-                colors = assistantPrimaryButtonColors()
-            ) {
-                Text("VÉRIFIER LE CENTRAGE • pose 4 s")
-            }
-        }
-
-        if (centeringState.centered && !maskInstalled) {
-            Spacer(Modifier.height(16.dp))
-            Text(
-                "Étoile centrée. Posez maintenant le masque de Bahtinov devant l'objectif.",
-                color = StellarOrange,
-                fontWeight = FontWeight.Bold
-            )
-            Spacer(Modifier.height(8.dp))
-            Button(
-                onClick = onMaskInstalled,
-                modifier = Modifier.fillMaxWidth(),
-                colors = assistantPrimaryButtonColors()
-            ) {
-                Text("MASQUE BAHTINOV INSTALLÉ")
-            }
-        }
-
-        if (centeringState.centered && maskInstalled && !maskRemoved) {
-            Spacer(Modifier.height(14.dp))
-            StellarImagePreview(
-                imageBytes = bahtinovState.imageBytes,
-                contentDescription = "Motif Bahtinov",
-                loadingText = if (bahtinovState.isLoading) "Pose Bahtinov 4 s…" else null,
-                showCrosshair = true
-            )
-            Spacer(Modifier.height(8.dp))
-            StatusValue("Pose", "4,0 s")
-            StatusValue(
-                "Score focus",
-                bahtinovState.focusScore?.let {
-                    "$it/100 • ${bahtinovState.focusLabel ?: ""}"
-                } ?: "à mesurer"
-            )
-            StatusValue(
-                "Écart optimum",
-                bahtinovState.focusErrorPx?.let {
-                    String.format(Locale.FRANCE, "%+.2f px", it)
-                } ?: "—"
-            )
-            StatusValue("Confirmation optimum", "${bahtinovState.optimumStreak}/2")
-
-            bahtinovState.message?.let {
-                Spacer(Modifier.height(6.dp))
-                Text(
-                    it,
-                    color = if (bahtinovState.focusValidated) StellarGreen else StellarOrange,
-                    fontWeight = FontWeight.Bold
-                )
-            }
-            bahtinovState.error?.let {
-                Spacer(Modifier.height(6.dp))
-                Text(it, color = StellarRed)
-            }
-
-            Spacer(Modifier.height(8.dp))
-            Button(
-                onClick = onFocusCapture,
-                enabled = !bahtinovState.isLoading,
-                modifier = Modifier.fillMaxWidth(),
-                colors = assistantPrimaryButtonColors()
-            ) {
-                Text(
-                    if (bahtinovState.imageBytes == null) {
-                        "MESURER LA MISE AU POINT • 4 s"
-                    } else {
-                        "ENCORE • 4 s"
-                    }
-                )
-            }
-
-            if (bahtinovState.focusValidated) {
-                Spacer(Modifier.height(12.dp))
-                Text(
-                    "OPTIMUM VALIDÉ ✓ • retirez maintenant le masque de Bahtinov.",
-                    color = StellarGreen,
-                    fontWeight = FontWeight.Bold
-                )
-                Spacer(Modifier.height(8.dp))
-                Button(
-                    onClick = onMaskRemoved,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Text("MASQUE RETIRÉ")
-                }
-            }
-        }
-
-        if (maskRemoved) {
-            Spacer(Modifier.height(12.dp))
-            Text("Masque retiré ✓ • prêt pour les darks", color = StellarGreen)
-        }
-
-        Spacer(Modifier.height(14.dp))
+        Spacer(Modifier.height(12.dp))
         NavigationButtons(
             onPrevious = onPrevious,
             onContinue = onContinue,
-            continueEnabled = bahtinovState.focusValidated && maskRemoved,
-            continueText = "Suite • Darks"
+            continueEnabled = true,
+            continueText = "Continuer vers les darks"
         )
     }
 }
-
 
 @Composable
 private fun AssistantDarkStep(
@@ -765,13 +451,11 @@ private fun AssistantDarkStep(
                     Text("DÉMARRER 20 DARKS")
                 }
             } else if (!state.complete) {
-                val progress =
-                    if (state.requestedCount > 0) {
-                        state.capturedCount.toFloat() /
-                            state.requestedCount.toFloat()
-                    } else {
-                        0f
-                    }
+                val progress = if (state.requestedCount > 0) {
+                    state.capturedCount.toFloat() / state.requestedCount.toFloat()
+                } else {
+                    0f
+                }
 
                 LinearProgressIndicator(
                     progress = progress,
@@ -782,15 +466,12 @@ private fun AssistantDarkStep(
                 )
 
                 Spacer(Modifier.height(8.dp))
-
                 Text(
                     "Acquisition automatique • ${state.capturedCount}/${state.requestedCount}",
                     color = StellarOrange,
                     fontWeight = FontWeight.Bold
                 )
-
                 Spacer(Modifier.height(3.dp))
-
                 Text(
                     state.message ?: "Acquisition en cours…",
                     color = StellarMuted
@@ -825,15 +506,11 @@ private fun AssistantDarkStep(
     }
 }
 
-
 @Composable
 private fun AssistantSummaryStep(
     connectionViewModel: ConnectionViewModel,
     mountState: MountDiagnosticsUiState,
     astrometryState: CameraPreviewUiState,
-    selectedStar: SkyStar?,
-    centeringState: AssistantCenteringUiState,
-    bahtinovState: BahtinovUiState,
     darkState: DarkCalibrationUiState,
     onPrevious: () -> Unit,
     onOpenSky: () -> Unit
@@ -846,23 +523,17 @@ private fun AssistantSummaryStep(
     val astrometryOk = astrometryState.solveStatus == "solved" &&
         astrometryState.mountSyncStatus == "synced"
     val darkOk = darkState.complete && darkState.masterDarkPath != null
-    val ready = connectionOk && gpsOk && mountState.timeSyncVerified &&
-        astrometryOk && centeringState.centered && bahtinovState.focusValidated && darkOk
+    val ready = connectionOk && gpsOk && mountState.timeSyncVerified && astrometryOk && darkOk
 
     AssistantCard("Bilan de préparation") {
         StatusLine("Connexion matériel", connectionOk)
         StatusLine("GPS", gpsOk)
         StatusLine("Heure OnStep", mountState.timeSyncVerified)
-        StatusLine("Astrométrie + SYNC", astrometryOk)
+        StatusLine("Astrométrie + SYNC de préparation", astrometryOk)
         StatusLine(
-            "Étoile de focus",
-            selectedStar != null && centeringState.centered,
-            selectedStar?.name ?: "—"
-        )
-        StatusLine(
-            "Mise au point Bahtinov",
-            bahtinovState.focusValidated,
-            bahtinovState.focusScore?.let { "$it/100" } ?: "—"
+            "Bahtinov",
+            true,
+            "à effectuer dans Ciel → Capture sur l'étoile choisie"
         )
         StatusLine(
             "Master Dark",
@@ -873,13 +544,13 @@ private fun AssistantSummaryStep(
         Spacer(Modifier.height(14.dp))
         if (ready) {
             Text(
-                "Préparation terminée ✓",
+                "Préparation terminée ✓ • choisissez ensuite votre cible dans Ciel.",
                 color = StellarGreen,
                 fontWeight = FontWeight.Bold
             )
         } else {
             Text(
-                "Une ou plusieurs validations sont encore manquantes.",
+                "Une ou plusieurs validations de préparation sont encore manquantes.",
                 color = StellarRed
             )
         }
@@ -894,18 +565,9 @@ private fun AssistantSummaryStep(
     }
 }
 
-
 private fun numberText(value: Double): String =
-    if (value % 1.0 == 0.0) value.toInt().toString() else String.format(Locale.FRANCE, "%.2f", value)
-
-
-private fun frenchDirection(value: String): String = when (value.uppercase()) {
-    "SW" -> "SO"
-    "W" -> "O"
-    "NW" -> "NO"
-    else -> value.uppercase()
-}
-
+    if (value % 1.0 == 0.0) value.toInt().toString()
+    else String.format(Locale.FRANCE, "%.2f", value)
 
 @Composable
 private fun AssistantCard(
@@ -930,7 +592,6 @@ private fun AssistantCard(
     }
 }
 
-
 @Composable
 private fun StatusLine(
     label: String,
@@ -947,12 +608,10 @@ private fun StatusLine(
     )
 }
 
-
 @Composable
 private fun StatusValue(label: String, value: String) {
     Text("$label : $value", color = StellarMuted)
 }
-
 
 @Composable
 private fun NavigationButtons(
@@ -977,7 +636,6 @@ private fun NavigationButtons(
         Text(continueText, fontWeight = FontWeight.Bold)
     }
 }
-
 
 @Composable
 private fun assistantPrimaryButtonColors() =
