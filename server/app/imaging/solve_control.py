@@ -53,47 +53,59 @@ def solve_robust_cancellable(
     dec_hint: float | None = None,
     expected_scale_arcsec: float = 1.218,
 ) -> dict[str, Any]:
-    """Run the StellarPilot robust solve sequence with explicit cancellation.
+    """Run plate solving with explicit field-test cancellation support.
 
-    The normal solver uses three sequential solve-field strategies. A cancel
-    request kills the active solve-field process and this wrapper prevents any
-    later fallback strategy from being started.
+    Production ``PlateSolverService`` exposes ``solve`` and therefore uses the
+    cancellable three-strategy sequence below. Unit-test or alternate solver
+    doubles that expose only ``solve_robust`` retain the historical contract;
+    this keeps the centering boundary independently testable without coupling
+    tests to astrometry.net process-management internals.
     """
     begin_solve(session_id)
     attempts: list[dict[str, Any]] = []
     total_start = perf_counter()
 
-    narrow_low = expected_scale_arcsec * 0.74
-    narrow_high = expected_scale_arcsec * 1.24
-
-    strategies = [
-        {
-            "name": "scale_narrow_position",
-            "scale_low": narrow_low,
-            "scale_high": narrow_high,
-            "radius": 8.0,
-            "timeout": 20,
-            "use_position": True,
-        },
-        {
-            "name": "scale_narrow_blind",
-            "scale_low": narrow_low,
-            "scale_high": narrow_high,
-            "radius": None,
-            "timeout": 90,
-            "use_position": False,
-        },
-        {
-            "name": "scale_wide_blind",
-            "scale_low": 0.50,
-            "scale_high": 2.50,
-            "radius": None,
-            "timeout": 120,
-            "use_position": False,
-        },
-    ]
-
     try:
+        if not callable(getattr(solver, "solve", None)):
+            result = solver.solve_robust(
+                image,
+                ra_hint=ra_hint,
+                dec_hint=dec_hint,
+            )
+            if is_cancelled(session_id):
+                return _cancelled_result(image, attempts, total_start)
+            return result
+
+        narrow_low = expected_scale_arcsec * 0.74
+        narrow_high = expected_scale_arcsec * 1.24
+
+        strategies = [
+            {
+                "name": "scale_narrow_position",
+                "scale_low": narrow_low,
+                "scale_high": narrow_high,
+                "radius": 8.0,
+                "timeout": 20,
+                "use_position": True,
+            },
+            {
+                "name": "scale_narrow_blind",
+                "scale_low": narrow_low,
+                "scale_high": narrow_high,
+                "radius": None,
+                "timeout": 90,
+                "use_position": False,
+            },
+            {
+                "name": "scale_wide_blind",
+                "scale_low": 0.50,
+                "scale_high": 2.50,
+                "radius": None,
+                "timeout": 120,
+                "use_position": False,
+            },
+        ]
+
         for strategy in strategies:
             if is_cancelled(session_id):
                 return _cancelled_result(image, attempts, total_start)
