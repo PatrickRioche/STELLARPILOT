@@ -414,8 +414,25 @@ fun CaptureV067Screen(
                 }
                 Spacer(Modifier.height(8.dp))
 
+                if (centering?.status != "centered") {
+                    Text(
+                        "MODE TEST • cible non centrée : le stacking reste autorisé, mais l'alignement peut être dégradé.",
+                        color = StellarOrange,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Spacer(Modifier.height(8.dp))
+                }
+
                 if (session?.stacking?.running == true) {
-                    Text("STACKING ACTIF ✓", color = StellarGreen, fontWeight = FontWeight.Bold)
+                    Text(
+                        if (centering?.status == "centered") {
+                            "STACKING ACTIF ✓"
+                        } else {
+                            "STACKING ACTIF • MODE TEST"
+                        },
+                        color = if (centering?.status == "centered") StellarGreen else StellarOrange,
+                        fontWeight = FontWeight.Bold
+                    )
                     Spacer(Modifier.height(8.dp))
                     OutlinedButton(
                         onClick = { viewModel.stopStacking(serverBaseUrl) },
@@ -427,7 +444,6 @@ fun CaptureV067Screen(
                     Button(
                         onClick = { viewModel.startStacking(serverBaseUrl) },
                         enabled = target != null &&
-                            centering?.status == "centered" &&
                             !state.isCapturing &&
                             !state.isSolving &&
                             !state.bahtinovIsLoading,
@@ -435,13 +451,6 @@ fun CaptureV067Screen(
                         colors = v067PrimaryColors()
                     ) {
                         Text("DÉMARRER LE STACKING", fontWeight = FontWeight.Bold)
-                    }
-                    if (centering?.status != "centered") {
-                        Spacer(Modifier.height(6.dp))
-                        Text(
-                            "Le stacking sera activable dès qu'une astrométrie aura confirmé le centrage.",
-                            color = StellarMuted
-                        )
                     }
                 }
             }
