@@ -1,5 +1,6 @@
 package fr.stellarpilot.app.feature.preparation
 
+import android.content.Context
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
@@ -16,14 +17,18 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -39,12 +44,14 @@ import fr.stellarpilot.app.ui.theme.StellarSurface
 import fr.stellarpilot.app.ui.theme.StellarText
 import java.util.Locale
 
+private const val DEFAULT_SERVER = "10.42.0.1"
+private const val PREFS_NAME = "stellarpilot_connection"
+private const val PREF_SERVER = "server_base_url"
+
 private val assistantSteps = listOf(
     "Connexion",
     "Astrométrie",
-    "Bahtinov via Capture",
-    "Darks",
-    "Bilan"
+    "Darks"
 )
 
 @Composable
@@ -53,8 +60,8 @@ fun AssistantFinalScreen(
     connectionViewModel: ConnectionViewModel = viewModel()
 ) {
     var step by rememberSaveable { mutableIntStateOf(0) }
-    var telescopeCapped by rememberSaveable { androidx.compose.runtime.mutableStateOf(false) }
-    var darkEnteredDirectly by rememberSaveable { androidx.compose.runtime.mutableStateOf(false) }
+    var telescopeCapped by rememberSaveable { mutableStateOf(false) }
+    var darkEnteredDirectly by rememberSaveable { mutableStateOf(false) }
 
     val connectionState = connectionViewModel.uiState
     val baseUrl = connectionState.serverBaseUrl
@@ -67,11 +74,6 @@ fun AssistantFinalScreen(
 
     val darkViewModel: DarkCalibrationViewModel = viewModel()
     val darkState = darkViewModel.uiState
-
-    LaunchedEffect(Unit) {
-        connectionViewModel.connect()
-        mountViewModel.refresh(baseUrl)
-    }
 
     LaunchedEffect(step, baseUrl) {
         if (step == 0) {
@@ -105,14 +107,14 @@ fun AssistantFinalScreen(
             color = StellarOrange
         )
 
-        if (step < 3) {
+        if (step < 2) {
             Spacer(Modifier.height(10.dp))
             OutlinedButton(
                 onClick = {
                     darkEnteredDirectly = true
                     telescopeCapped = false
                     darkViewModel.reset()
-                    step = 3
+                    step = 2
                 },
                 enabled = !darkState.isLoading,
                 modifier = Modifier.fillMaxWidth()
@@ -120,7 +122,7 @@ fun AssistantFinalScreen(
                 Text("ALLER DIRECTEMENT AUX DARKS")
             }
             Text(
-                "Mode calibration : les étapes d'astrométrie et de mise au point sont ignorées.",
+                "Mode calibration : l'astrométrie de préparation est ignorée.",
                 color = StellarMuted,
                 style = androidx.compose.material3.MaterialTheme.typography.bodySmall
             )
@@ -145,46 +147,22 @@ fun AssistantFinalScreen(
                     )
                 },
                 onPrevious = { step = 0 },
-                onContinue = { step = 2 }
-            )
-
-            2 -> AssistantBahtinovRedirectStep(
-                onPrevious = { step = 1 },
-                onOpenSky = onOpenSky,
                 onContinue = {
                     darkEnteredDirectly = false
                     telescopeCapped = false
                     darkViewModel.reset()
-                    step = 3
+                    step = 2
                 }
             )
 
-            3 -> AssistantDarkStep(
+            else -> AssistantDarkStep(
                 state = darkState,
                 telescopeCapped = telescopeCapped,
                 directMode = darkEnteredDirectly,
                 onCapped = { telescopeCapped = true },
                 onStart = { darkViewModel.start(baseUrl) },
-                onPrevious = {
-                    step = if (darkEnteredDirectly) 0 else 2
-                },
-                onContinue = {
-                    if (darkEnteredDirectly) {
-                        darkEnteredDirectly = false
-                        step = 0
-                    } else {
-                        step = 4
-                    }
-                }
-            )
-
-            else -> AssistantSummaryStep(
-                connectionViewModel = connectionViewModel,
-                mountState = mountState,
-                astrometryState = astrometryState,
-                darkState = darkState,
-                onPrevious = { step = 3 },
-                onOpenSky = onOpenSky
+                onPrevious = { step = if (darkEnteredDirectly) 0 else 1 },
+                onContinue = onOpenSky
             )
         }
     }
@@ -196,6 +174,12 @@ private fun AssistantConnectionStep(
     mountViewModel: MountDiagnosticsViewModel,
     onContinue: () -> Unit
 ) {
+    val context = LocalContext.current
+    val preferences = remember {
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+    }
+    var serverAddress by rememberSaveable { mutableStateOf(DEFAULT_SERVER) }
+
     val state = connectionViewModel.uiState
     val server = state.server
     val mount = server?.devices?.mount
@@ -203,12 +187,59 @@ private fun AssistantConnectionStep(
     val gps = server?.devices?.gps
     val mountState = mountViewModel.uiState
 
+    val activeAddress = state.serverBaseUrl
+        .removePrefix("http://")
+        .removePrefix("https://")
+        .removeSuffix("/")
+        .removeSuffix(":8000")
+
     val mountReady = mount?.status?.lowercase() in setOf("ready", "ok", "online")
     val cameraReady = camera?.status?.lowercase() in setOf("ready", "ok", "online")
     val gpsReady = gps?.status?.lowercase() in setOf("fix", "available")
     val timeReady = mountState.timeSyncVerified
 
+    fun applyServer(address: String) {
+        val clean = address.trim().ifBlank { DEFAULT_SERVER }
+        preferences.edit().putString(PREF_SERVER, clean).apply()
+        serverAddress = clean
+        connectionViewModel.setServerAddress(clean)
+        connectionViewModel.connect()
+        mountViewModel.refresh(connectionViewModel.uiState.serverBaseUrl)
+    }
+
+    LaunchedEffect(Unit) {
+        val saved = preferences.getString(PREF_SERVER, null)
+            ?.takeIf { it.isNotBlank() }
+            ?: DEFAULT_SERVER
+        serverAddress = saved
+        connectionViewModel.setServerAddress(saved)
+        connectionViewModel.connect()
+        mountViewModel.refresh(connectionViewModel.uiState.serverBaseUrl)
+    }
+
     AssistantCard("Connexion et contrôle du setup") {
+        Text("Serveur StellarPilot", color = StellarText, fontWeight = FontWeight.Bold)
+        Spacer(Modifier.height(3.dp))
+        Text("Adresse active • $activeAddress", color = StellarMuted)
+        Spacer(Modifier.height(8.dp))
+        OutlinedTextField(
+            value = serverAddress,
+            onValueChange = { serverAddress = it },
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = true,
+            label = { Text("Autre adresse") },
+            supportingText = { Text("Par défaut : 10.42.0.1") }
+        )
+        Spacer(Modifier.height(8.dp))
+        Button(
+            onClick = { applyServer(serverAddress) },
+            modifier = Modifier.fillMaxWidth(),
+            colors = assistantPrimaryButtonColors()
+        ) {
+            Text("UTILISER CETTE ADRESSE", fontWeight = FontWeight.Bold)
+        }
+
+        Spacer(Modifier.height(12.dp))
         StatusLine("Serveur StellarPilot", server?.status == "ok" || server?.status == "ready")
         StatusLine("Monture OnStep", mountReady, mount?.status ?: "indisponible")
         StatusLine("Caméra", cameraReady, camera?.name ?: camera?.status ?: "indisponible")
@@ -267,13 +298,9 @@ private fun AssistantAstrometryStep(
     onPrevious: () -> Unit,
     onContinue: () -> Unit
 ) {
-    val solved = state.solveStatus == "solved"
-    val synced = state.mountSyncStatus == "synced"
-    val validated = solved && synced
-
     AssistantCard("Astrométrie de préparation") {
         Text(
-            "Cette vérification de préparation reste disponible ici. Dans l'onglet Capture, l'astrométrie V0.6.7 est désormais lancée uniquement par un bouton dédié.",
+            "Cette vérification reste facultative. Le contrôle Bahtinov se fera ensuite dans Ciel → Capture.",
             color = StellarText
         )
         Spacer(Modifier.height(12.dp))
@@ -317,51 +344,8 @@ private fun AssistantAstrometryStep(
         NavigationButtons(
             onPrevious = onPrevious,
             onContinue = onContinue,
-            continueEnabled = validated,
-            continueText = "Suite • Bahtinov via Capture"
-        )
-    }
-}
-
-@Composable
-private fun AssistantBahtinovRedirectStep(
-    onPrevious: () -> Unit,
-    onOpenSky: () -> Unit,
-    onContinue: () -> Unit
-) {
-    AssistantCard("Mise au point Bahtinov déplacée dans Ciel + Capture") {
-        Text(
-            "Le choix automatique des 10 étoiles a été supprimé de l'assistant.",
-            color = StellarGreen,
-            fontWeight = FontWeight.Bold
-        )
-        Spacer(Modifier.height(8.dp))
-        Text(
-            "Choisissez maintenant votre étoile dans Ciel, effectuez le GOTO, puis ouvrez Capture. Vous pourrez y déclarer le masque Bahtinov installé et lancer autant de poses de 4 s que nécessaire.",
-            color = StellarText
-        )
-        Spacer(Modifier.height(8.dp))
-        Text(
-            "Cette étape n'effectue plus aucun GOTO ni recentrage automatique.",
-            color = StellarOrange,
-            fontWeight = FontWeight.Bold
-        )
-
-        Spacer(Modifier.height(12.dp))
-        Button(
-            onClick = onOpenSky,
-            modifier = Modifier.fillMaxWidth(),
-            colors = assistantPrimaryButtonColors()
-        ) {
-            Text("OUVRIR CIEL", fontWeight = FontWeight.Bold)
-        }
-
-        Spacer(Modifier.height(12.dp))
-        NavigationButtons(
-            onPrevious = onPrevious,
-            onContinue = onContinue,
             continueEnabled = true,
-            continueText = "Continuer vers les darks"
+            continueText = "Suite • Bahtinov via Capture"
         )
     }
 }
@@ -379,7 +363,7 @@ private fun AssistantDarkStep(
     AssistantCard("Prise de darks") {
         if (directMode) {
             Text(
-                "Mode darks directs • aucune validation d'astrométrie ou de mise au point n'est nécessaire.",
+                "Mode darks directs • aucune validation d'astrométrie n'est nécessaire.",
                 color = StellarGreen,
                 fontWeight = FontWeight.Bold
             )
@@ -501,66 +485,7 @@ private fun AssistantDarkStep(
             onPrevious = onPrevious,
             onContinue = onContinue,
             continueEnabled = state.complete && state.masterDarkPath != null,
-            continueText = if (directMode) "TERMINER LES DARKS" else "Voir le bilan"
-        )
-    }
-}
-
-@Composable
-private fun AssistantSummaryStep(
-    connectionViewModel: ConnectionViewModel,
-    mountState: MountDiagnosticsUiState,
-    astrometryState: CameraPreviewUiState,
-    darkState: DarkCalibrationUiState,
-    onPrevious: () -> Unit,
-    onOpenSky: () -> Unit
-) {
-    val server = connectionViewModel.uiState.server
-    val connectionOk = server != null &&
-        server.devices.mount.status.lowercase() in setOf("ready", "ok", "online") &&
-        server.devices.camera.status.lowercase() in setOf("ready", "ok", "online")
-    val gpsOk = server?.devices?.gps?.status?.lowercase() == "fix"
-    val astrometryOk = astrometryState.solveStatus == "solved" &&
-        astrometryState.mountSyncStatus == "synced"
-    val darkOk = darkState.complete && darkState.masterDarkPath != null
-    val ready = connectionOk && gpsOk && mountState.timeSyncVerified && astrometryOk && darkOk
-
-    AssistantCard("Bilan de préparation") {
-        StatusLine("Connexion matériel", connectionOk)
-        StatusLine("GPS", gpsOk)
-        StatusLine("Heure OnStep", mountState.timeSyncVerified)
-        StatusLine("Astrométrie + SYNC de préparation", astrometryOk)
-        StatusLine(
-            "Bahtinov",
-            true,
-            "à effectuer dans Ciel → Capture sur l'étoile choisie"
-        )
-        StatusLine(
-            "Master Dark",
-            darkOk,
-            if (darkOk) "${darkState.validCount} darks • ${darkState.hotPixelCount ?: 0} pixels chauds" else "non créé"
-        )
-
-        Spacer(Modifier.height(14.dp))
-        if (ready) {
-            Text(
-                "Préparation terminée ✓ • choisissez ensuite votre cible dans Ciel.",
-                color = StellarGreen,
-                fontWeight = FontWeight.Bold
-            )
-        } else {
-            Text(
-                "Une ou plusieurs validations de préparation sont encore manquantes.",
-                color = StellarRed
-            )
-        }
-
-        Spacer(Modifier.height(12.dp))
-        NavigationButtons(
-            onPrevious = onPrevious,
-            onContinue = onOpenSky,
-            continueEnabled = ready,
-            continueText = "ALLER À CIEL"
+            continueText = "TERMINER • ALLER À CIEL"
         )
     }
 }
