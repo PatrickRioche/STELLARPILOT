@@ -167,7 +167,8 @@ class CameraPreviewViewModel(
 
     fun load(
         serverBaseUrl: String,
-        exposureSeconds: Double
+        exposureSeconds: Double,
+        minimumStars: Int = 80
     ) {
         if (uiState.isLoading) return
 
@@ -223,6 +224,9 @@ class CameraPreviewViewModel(
                     currentExposureSeconds = capture.exposureSeconds,
                     quality = quality
                 )
+                val detectedStars = quality.starCount ?: 0
+                val threshold = minimumStars.coerceIn(10, 200)
+                val thresholdReached = detectedStars >= threshold
 
                 uiState = uiState.copy(
                     qualityScore = quality.score,
@@ -232,12 +236,15 @@ class CameraPreviewViewModel(
                     qualitySaturatedPercent = quality.saturatedPercent,
                     recommendedExposureFactor = quality.recommendedExposureFactor,
                     suggestedExposureMs = suggestions,
-                    solveStatus = if (quality.astrometryReady) "solving" else "quality_insufficient",
-                    solveDetail = if (quality.astrometryReady) null else
-                        "Qualité insuffisante pour lancer automatiquement astrometry.net"
+                    solveStatus = if (thresholdReached) "solving" else "quality_insufficient",
+                    solveDetail = if (thresholdReached) {
+                        "Seuil atteint : $detectedStars étoiles détectées pour $threshold requises"
+                    } else {
+                        "Seuil non atteint : $detectedStars étoiles détectées pour $threshold requises"
+                    }
                 )
 
-                if (!quality.astrometryReady) {
+                if (!thresholdReached) {
                     uiState = uiState.copy(isLoading = false, solver = null, error = null)
                     return@launch
                 }
