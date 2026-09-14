@@ -5,6 +5,10 @@ from typing import Any
 
 from app.imaging.quality import analyze_fits
 from app.imaging.sessions import CaptureSessionService, capture_session_service
+from app.imaging.solve_control import (
+    request_cancel,
+    solve_robust_cancellable,
+)
 
 
 def capture_centering_frame(
@@ -13,9 +17,9 @@ def capture_centering_frame(
 ) -> dict[str, Any]:
     """Capture one centering frame and expose its preview immediately.
 
-    Capture and Assistant 3 now use the same runtime FITS preview renderer.
-    The FITS is also scored before plate solving so the Capture screen can
-    display the same astrometry-quality indicator as Preparation.
+    V0.6.7 deliberately separates capture from plate solving: this function
+    never starts astrometry.net. The FITS is scored and kept ready for an
+    explicit later solve request.
     """
     service = service or capture_session_service
 
@@ -81,7 +85,7 @@ def solve_centering_frame(
     session_id: str,
     service: CaptureSessionService | None = None,
 ) -> dict[str, Any]:
-    """Plate-solve the most recently captured centering frame."""
+    """Plate-solve the most recently captured centering frame on demand."""
     service = service or capture_session_service
 
     with service._lock:
@@ -98,14 +102,17 @@ def solve_centering_frame(
         }
 
     target = metadata["target"]
-    solution = service.solver.solve_robust(
-        image,
+    solution = solve_robust_cancellable(
+        session_id=session_id,
+        solver=service.solver,
+        image=image,
         ra_hint=target["ra_hours"] * 15.0,
         dec_hint=target["dec_deg"],
     )
 
+    cancelled = solution.get("status") == "cancelled"
     centering = {
-        "status": "unsolved",
+        "status": "cancelled" if cancelled else "unsolved",
         "attempts": int(current.get("attempts", 0)),
         "error_arcsec": None,
         "solve_ra_deg": solution.get("ra"),
@@ -121,7 +128,8 @@ def solve_centering_frame(
     }
 
     if (
-        solution.get("status") == "solved"
+        not cancelled
+        and solution.get("status") == "solved"
         and solution.get("ra") is not None
         and solution.get("dec") is not None
     ):
@@ -154,10 +162,51 @@ def solve_centering_frame(
     }
 
 
+def cancel_centering_solve(
+    session_id: str,
+    service: CaptureSessionService | None = None,
+) -> dict[str, Any]:
+    """Stop the active solve-field process and keep the captured FITS usable."""
+    service = service or capture_session_service
+    request_cancel(session_id)
+
+    with service._lock:
+        metadata = service._read(session_id)
+        current = dict(metadata.get("centering") or {})
+
+        if not current.get("image") and metadata.get("last_frame"):
+            current["image"] = metadata["last_frame"]
+
+        current.update(
+            {
+                "status": "cancelled",
+                "error_arcsec": None,
+                "solve_ra_deg": None,
+                "solve_dec_deg": None,
+                "correction_ra_hours": None,
+                "correction_dec_deg": None,
+                "solver_status": "cancelled",
+                "solver_detail": "Résolution astrométrique arrêtée par l'utilisateur",
+                "verified_at": None,
+            }
+        )
+
+        metadata["centering"] = current
+        metadata["state"] = "framing"
+        service._write(metadata)
+
+    return {
+        "status": "cancelled",
+        "centering": current,
+        "session": metadata,
+    }
+
+
 # app.main imports this module only after app._main_core has finished creating
 # the FastAPI instance. Register Assistant extension routes at this late point
 # to avoid circular imports during INDI/imaging package initialization.
 from app.imaging import assistant_reference_routes as _assistant_reference_routes  # noqa: E402,F401
 from app.imaging import bahtinov_routes as _bahtinov_routes  # noqa: E402,F401
+from app.imaging import cancel_routes as _cancel_routes  # noqa: E402,F401
 from app.imaging import dark_routes as _dark_routes  # noqa: E402,F401
 from app.setup import routes as _setup_routes  # noqa: E402,F401
