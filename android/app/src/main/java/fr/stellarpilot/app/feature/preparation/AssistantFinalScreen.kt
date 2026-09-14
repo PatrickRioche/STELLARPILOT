@@ -18,6 +18,7 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -43,10 +44,17 @@ import fr.stellarpilot.app.ui.theme.StellarRed
 import fr.stellarpilot.app.ui.theme.StellarSurface
 import fr.stellarpilot.app.ui.theme.StellarText
 import java.util.Locale
+import kotlin.math.roundToInt
 
 private const val DEFAULT_SERVER = "10.42.0.1"
 private const val PREFS_NAME = "stellarpilot_connection"
 private const val PREF_SERVER = "server_base_url"
+private const val ASTROMETRY_PREFS_NAME = "stellarpilot_astrometry"
+private const val PREF_ASTROMETRY_MIN_STARS = "minimum_stars"
+private const val DEFAULT_ASTROMETRY_MIN_STARS = 80
+private const val MIN_ASTROMETRY_STARS = 10
+private const val MAX_ASTROMETRY_STARS = 200
+private const val ASTROMETRY_STAR_STEP = 5
 
 private val assistantSteps = listOf(
     "Connexion",
@@ -63,6 +71,18 @@ fun AssistantFinalScreen(
     var step by rememberSaveable { mutableIntStateOf(0) }
     var telescopeCapped by rememberSaveable { mutableStateOf(false) }
     var darkEnteredDirectly by rememberSaveable { mutableStateOf(false) }
+
+    val context = LocalContext.current
+    val astrometryPreferences = remember {
+        context.getSharedPreferences(ASTROMETRY_PREFS_NAME, Context.MODE_PRIVATE)
+    }
+    var astrometryMinimumStars by rememberSaveable {
+        mutableIntStateOf(
+            astrometryPreferences
+                .getInt(PREF_ASTROMETRY_MIN_STARS, DEFAULT_ASTROMETRY_MIN_STARS)
+                .coerceIn(MIN_ASTROMETRY_STARS, MAX_ASTROMETRY_STARS)
+        )
+    }
 
     val connectionState = connectionViewModel.uiState
     val baseUrl = connectionState.serverBaseUrl
@@ -156,10 +176,18 @@ fun AssistantFinalScreen(
             2 -> AssistantAstrometryStep(
                 state = astrometryState,
                 mountState = mountState,
+                minimumStars = astrometryMinimumStars,
+                onMinimumStarsChange = { value ->
+                    astrometryMinimumStars = value
+                    astrometryPreferences.edit()
+                        .putInt(PREF_ASTROMETRY_MIN_STARS, value)
+                        .apply()
+                },
                 onCapture = {
                     astrometryViewModel.load(
                         serverBaseUrl = baseUrl,
-                        exposureSeconds = 4.0
+                        exposureSeconds = 4.0,
+                        minimumStars = astrometryMinimumStars
                     )
                 },
                 onPrevious = { step = 1 },
@@ -382,17 +410,61 @@ private fun AssistantPointingStep(
 private fun AssistantAstrometryStep(
     state: CameraPreviewUiState,
     mountState: MountDiagnosticsUiState,
+    minimumStars: Int,
+    onMinimumStarsChange: (Int) -> Unit,
     onCapture: () -> Unit,
     onPrevious: () -> Unit,
     onContinue: () -> Unit
 ) {
+    val detectedStars = state.qualityStarCount
+    val thresholdReached = detectedStars != null && detectedStars >= minimumStars
+
     AssistantCard("Astrométrie de préparation") {
         Text(
-            "Cette vérification reste facultative. Le contrôle Bahtinov se fera ensuite dans Ciel → Capture.",
+            "Le nombre d'étoiles détectées décide maintenant si astrometry.net est lancé. Le score qualité reste seulement informatif.",
             color = StellarText
         )
         Spacer(Modifier.height(12.dp))
 
+        Text(
+            "Seuil astrométrie : $minimumStars étoiles",
+            color = StellarText,
+            fontWeight = FontWeight.Bold
+        )
+        Slider(
+            value = minimumStars.toFloat(),
+            onValueChange = { raw ->
+                val snapped = (
+                    ((raw - MIN_ASTROMETRY_STARS) / ASTROMETRY_STAR_STEP)
+                        .roundToInt() * ASTROMETRY_STAR_STEP + MIN_ASTROMETRY_STARS
+                    ).coerceIn(MIN_ASTROMETRY_STARS, MAX_ASTROMETRY_STARS)
+                onMinimumStarsChange(snapped)
+            },
+            valueRange = MIN_ASTROMETRY_STARS.toFloat()..MAX_ASTROMETRY_STARS.toFloat(),
+            steps = ((MAX_ASTROMETRY_STARS - MIN_ASTROMETRY_STARS) / ASTROMETRY_STAR_STEP) - 1,
+            modifier = Modifier.fillMaxWidth()
+        )
+        Text(
+            "Minimum 10 • Maximum 200 • pas de 5",
+            color = StellarMuted,
+            style = androidx.compose.material3.MaterialTheme.typography.bodySmall
+        )
+        Spacer(Modifier.height(4.dp))
+        Text(
+            when {
+                detectedStars == null -> "Étoiles détectées : —"
+                thresholdReached -> "Étoiles détectées : $detectedStars • astrométrie autorisée"
+                else -> "Étoiles détectées : $detectedStars • seuil non atteint"
+            },
+            color = when {
+                detectedStars == null -> StellarMuted
+                thresholdReached -> StellarGreen
+                else -> StellarOrange
+            },
+            fontWeight = if (detectedStars != null) FontWeight.SemiBold else FontWeight.Normal
+        )
+
+        Spacer(Modifier.height(12.dp))
         StellarImagePreview(
             imageBytes = state.imageBytes,
             contentDescription = "Capture astrométrique",
@@ -419,6 +491,10 @@ private fun AssistantAstrometryStep(
             Text(if (state.imageBytes == null) "CAPTURER • 4 s" else "ENCORE • 4 s")
         }
 
+        state.solveDetail?.takeIf { it.isNotBlank() }?.let {
+            Spacer(Modifier.height(8.dp))
+            Text(it, color = if (thresholdReached) StellarGreen else StellarOrange)
+        }
         state.error?.let {
             Spacer(Modifier.height(8.dp))
             Text(it, color = StellarRed)
