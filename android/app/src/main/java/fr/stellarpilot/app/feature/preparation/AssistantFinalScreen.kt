@@ -50,6 +50,7 @@ private const val PREF_SERVER = "server_base_url"
 
 private val assistantSteps = listOf(
     "Connexion",
+    "Pointage",
     "Astrométrie",
     "Darks"
 )
@@ -65,6 +66,7 @@ fun AssistantFinalScreen(
 
     val connectionState = connectionViewModel.uiState
     val baseUrl = connectionState.serverBaseUrl
+    val server = connectionState.server
 
     val mountViewModel: MountDiagnosticsViewModel = viewModel()
     val mountState = mountViewModel.uiState
@@ -107,14 +109,14 @@ fun AssistantFinalScreen(
             color = StellarOrange
         )
 
-        if (step < 2) {
+        if (step < 3) {
             Spacer(Modifier.height(10.dp))
             OutlinedButton(
                 onClick = {
                     darkEnteredDirectly = true
                     telescopeCapped = false
                     darkViewModel.reset()
-                    step = 2
+                    step = 3
                 },
                 enabled = !darkState.isLoading,
                 modifier = Modifier.fillMaxWidth()
@@ -122,7 +124,7 @@ fun AssistantFinalScreen(
                 Text("ALLER DIRECTEMENT AUX DARKS")
             }
             Text(
-                "Mode calibration : l'astrométrie de préparation est ignorée.",
+                "Mode calibration : les étapes de pointage et d'astrométrie sont ignorées.",
                 color = StellarMuted,
                 style = androidx.compose.material3.MaterialTheme.typography.bodySmall
             )
@@ -137,7 +139,21 @@ fun AssistantFinalScreen(
                 onContinue = { step = 1 }
             )
 
-            1 -> AssistantAstrometryStep(
+            1 -> AssistantPointingStep(
+                mountFamily = server?.session?.mountFamily
+                    ?: server?.devices?.mount?.family,
+                startupTarget = server?.session?.startupTarget
+                    ?: server?.devices?.mount?.startupTarget,
+                mountTypeLabel = server?.devices?.mount?.typeLabel,
+                mountType = server?.session?.mountType
+                    ?: server?.devices?.mount?.type,
+                latitude = server?.session?.latitude
+                    ?: server?.devices?.gps?.latitude,
+                onPrevious = { step = 0 },
+                onContinue = { step = 2 }
+            )
+
+            2 -> AssistantAstrometryStep(
                 state = astrometryState,
                 mountState = mountState,
                 onCapture = {
@@ -146,12 +162,12 @@ fun AssistantFinalScreen(
                         exposureSeconds = 4.0
                     )
                 },
-                onPrevious = { step = 0 },
+                onPrevious = { step = 1 },
                 onContinue = {
                     darkEnteredDirectly = false
                     telescopeCapped = false
                     darkViewModel.reset()
-                    step = 2
+                    step = 3
                 }
             )
 
@@ -161,7 +177,7 @@ fun AssistantFinalScreen(
                 directMode = darkEnteredDirectly,
                 onCapped = { telescopeCapped = true },
                 onStart = { darkViewModel.start(baseUrl) },
-                onPrevious = { step = if (darkEnteredDirectly) 0 else 1 },
+                onPrevious = { step = if (darkEnteredDirectly) 0 else 2 },
                 onContinue = onOpenSky
             )
         }
@@ -285,8 +301,80 @@ private fun AssistantConnectionStep(
             modifier = Modifier.fillMaxWidth(),
             colors = assistantPrimaryButtonColors()
         ) {
-            Text("Continuer vers l'astrométrie", fontWeight = FontWeight.Bold)
+            Text("SUITE • POINTAGE", fontWeight = FontWeight.Bold)
         }
+    }
+}
+
+@Composable
+private fun AssistantPointingStep(
+    mountFamily: String?,
+    startupTarget: String?,
+    mountTypeLabel: String?,
+    mountType: String?,
+    latitude: Double?,
+    onPrevious: () -> Unit,
+    onContinue: () -> Unit
+) {
+    val family = mountFamily?.lowercase()
+    val isEq = family == "eq"
+    val isAz = family == "az"
+
+    val familyLabel = when {
+        isEq -> "Équatoriale (EQ)"
+        isAz -> "Alt-Az (AZ)"
+        else -> "Inconnue"
+    }
+
+    val target = when {
+        startupTarget == "zenith" || isAz -> "Zénith"
+        startupTarget == "celestial_pole" || isEq -> when {
+            latitude == null -> "Pôle céleste"
+            latitude >= 0.0 -> "Pôle céleste Nord"
+            else -> "Pôle céleste Sud"
+        }
+        else -> "À déterminer selon la monture"
+    }
+
+    val instruction = when {
+        isEq && latitude == null ->
+            "Orientez la monture vers le pôle céleste. Nord ou Sud sera déterminé dès que la latitude sera disponible."
+        isEq -> "Orientez la monture vers le $target avant de poursuivre."
+        isAz -> "Orientez le tube vers le zénith avant de poursuivre."
+        else ->
+            "Le type de monture n'est pas encore déterminé. Vérifiez la position de départ adaptée à votre monture avant de poursuivre."
+    }
+
+    AssistantCard("Pointage initial de la monture") {
+        Text(
+            when {
+                isEq -> "Monture équatoriale détectée"
+                isAz -> "Monture Alt-Az détectée"
+                else -> "Type de monture non détecté"
+            },
+            color = if (isEq || isAz) StellarGreen else StellarOrange,
+            fontWeight = FontWeight.Bold
+        )
+        Spacer(Modifier.height(10.dp))
+        StatusValue("Famille", familyLabel)
+        StatusValue("Type", mountTypeLabel ?: mountType ?: "Non disponible")
+        StatusValue("Position de départ", target)
+        latitude?.let {
+            StatusValue("Latitude", String.format(Locale.FRANCE, "%+.5f°", it))
+        }
+
+        Spacer(Modifier.height(12.dp))
+        Text("Consigne", color = StellarOrange, fontWeight = FontWeight.Bold)
+        Spacer(Modifier.height(4.dp))
+        Text(instruction, color = StellarText)
+
+        Spacer(Modifier.height(14.dp))
+        NavigationButtons(
+            onPrevious = onPrevious,
+            onContinue = onContinue,
+            continueEnabled = true,
+            continueText = "SUITE • ASTROMÉTRIE"
+        )
     }
 }
 
@@ -345,7 +433,7 @@ private fun AssistantAstrometryStep(
             onPrevious = onPrevious,
             onContinue = onContinue,
             continueEnabled = true,
-            continueText = "Suite • Bahtinov via Capture"
+            continueText = "SUITE • DARKS"
         )
     }
 }
@@ -363,7 +451,7 @@ private fun AssistantDarkStep(
     AssistantCard("Prise de darks") {
         if (directMode) {
             Text(
-                "Mode darks directs • aucune validation d'astrométrie n'est nécessaire.",
+                "Mode darks directs • aucune validation de pointage ou d'astrométrie n'est nécessaire.",
                 color = StellarGreen,
                 fontWeight = FontWeight.Bold
             )
@@ -484,7 +572,7 @@ private fun AssistantDarkStep(
         NavigationButtons(
             onPrevious = onPrevious,
             onContinue = onContinue,
-            continueEnabled = state.complete && state.masterDarkPath != null,
+            continueEnabled = true,
             continueText = "TERMINER • ALLER À CIEL"
         )
     }
