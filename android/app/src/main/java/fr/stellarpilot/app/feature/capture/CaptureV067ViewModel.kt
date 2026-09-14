@@ -12,6 +12,7 @@ import fr.stellarpilot.app.data.remote.CaptureSessionStatus
 import fr.stellarpilot.app.data.remote.CameraPreviewApiClient
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
@@ -53,6 +54,7 @@ class CaptureV067ViewModel(
         private set
 
     private var solveJob: Job? = null
+    private var stackMonitorJob: Job? = null
 
     init {
         loadSelectedTarget()
@@ -84,6 +86,8 @@ class CaptureV067ViewModel(
                 uiState.target?.decDeg != target?.decDeg
 
         uiState = if (targetChanged) {
+            stackMonitorJob?.cancel()
+            stackMonitorJob = null
             CaptureV067UiState(target = target)
         } else {
             uiState.copy(target = target, error = null)
@@ -306,6 +310,60 @@ class CaptureV067ViewModel(
         }
     }
 
+    private fun startStackMonitor(serverBaseUrl: String, sessionId: String) {
+        stackMonitorJob?.cancel()
+        stackMonitorJob = viewModelScope.launch {
+            val api = CaptureSessionApiClient(serverBaseUrl)
+
+            while (true) {
+                delay(1000)
+                try {
+                    val refreshed = api.getSession(sessionId)
+                    val stackPreview = if (refreshed.hasStackPreview) {
+                        runCatching {
+                            api.getPreview(sessionId, stack = true)
+                        }.getOrNull()
+                    } else {
+                        null
+                    }
+
+                    val message = when {
+                        refreshed.stacking.running ->
+                            "Stacking actif • Capturées ${refreshed.capturedFrames} • " +
+                                "Acceptées ${refreshed.acceptedFrames} • Rejetées ${refreshed.rejectedFrames}"
+                        refreshed.state == "paused_calibration" ->
+                            "Stacking arrêté • ${refreshed.calibration?.detail ?: "Master Dark incompatible ou indisponible"}"
+                        refreshed.state == "paused_recenter" ->
+                            "Stacking en pause • recentrage requis"
+                        refreshed.state == "stack_error" ->
+                            "Stacking arrêté • erreur du pipeline serveur"
+                        else ->
+                            "Stacking arrêté • Capturées ${refreshed.capturedFrames} • " +
+                                "Acceptées ${refreshed.acceptedFrames} • Rejetées ${refreshed.rejectedFrames}"
+                    }
+
+                    uiState = uiState.copy(
+                        session = refreshed,
+                        imageBytes = stackPreview ?: uiState.imageBytes,
+                        statusMessage = message,
+                        error = null
+                    )
+
+                    if (!refreshed.stacking.running) {
+                        break
+                    }
+                } catch (error: Exception) {
+                    uiState = uiState.copy(
+                        error = error.message ?: "Impossible de rafraîchir l'état du stacking"
+                    )
+                    break
+                }
+            }
+
+            stackMonitorJob = null
+        }
+    }
+
     fun startStacking(serverBaseUrl: String) {
         if (uiState.isCapturing || uiState.isSolving || uiState.bahtinovIsLoading) return
         if (uiState.session?.stacking?.running == true) return
@@ -329,6 +387,7 @@ class CaptureV067ViewModel(
                     },
                     error = null
                 )
+                startStackMonitor(serverBaseUrl, session.id)
             } catch (error: Exception) {
                 uiState = uiState.copy(error = error.message ?: "Démarrage du stacking impossible")
             }
@@ -343,9 +402,12 @@ class CaptureV067ViewModel(
             try {
                 val stopped = CaptureSessionApiClient(serverBaseUrl)
                     .stopStack(session.id)
+                stackMonitorJob?.cancel()
+                stackMonitorJob = null
                 uiState = uiState.copy(
                     session = stopped,
-                    statusMessage = "Stacking arrêté",
+                    statusMessage = "Stacking arrêté • Capturées ${stopped.capturedFrames} • " +
+                        "Acceptées ${stopped.acceptedFrames} • Rejetées ${stopped.rejectedFrames}",
                     error = null
                 )
             } catch (error: Exception) {
