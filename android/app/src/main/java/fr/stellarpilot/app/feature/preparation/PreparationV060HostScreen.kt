@@ -2,10 +2,8 @@ package fr.stellarpilot.app.feature.preparation
 
 import android.content.Context
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -16,7 +14,6 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -38,8 +35,7 @@ import fr.stellarpilot.app.ui.theme.StellarOrange
 import fr.stellarpilot.app.ui.theme.StellarSurface
 import fr.stellarpilot.app.ui.theme.StellarText
 
-private const val HOME_SERVER = "192.168.1.46"
-private const val FIELD_SERVER = "10.42.0.1"
+private const val DEFAULT_SERVER = "10.42.0.1"
 private const val PREFS_NAME = "stellarpilot_connection"
 private const val PREF_SERVER = "server_base_url"
 
@@ -53,8 +49,7 @@ fun PreparationV060HostScreen(
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
     }
 
-    var showCustomAddress by rememberSaveable { mutableStateOf(false) }
-    var customAddress by rememberSaveable { mutableStateOf("") }
+    var serverAddress by rememberSaveable { mutableStateOf(DEFAULT_SERVER) }
 
     val state = connectionViewModel.uiState
     val activeAddress = state.serverBaseUrl
@@ -63,34 +58,24 @@ fun PreparationV060HostScreen(
         .removeSuffix("/")
         .removeSuffix(":8000")
 
-    val profileLabel = when (activeAddress) {
-        HOME_SERVER -> "Maison LAN"
-        FIELD_SERVER -> "Terrain / campagne"
-        else -> "Personnalisé"
-    }
-
     fun applyServer(address: String) {
-        val clean = address.trim()
-        if (clean.isBlank()) return
+        val clean = address.trim().ifBlank { DEFAULT_SERVER }
 
         preferences.edit()
             .putString(PREF_SERVER, clean)
             .apply()
 
+        serverAddress = clean
         connectionViewModel.setServerAddress(clean)
-        customAddress = clean
-        showCustomAddress = false
     }
 
     LaunchedEffect(Unit) {
         val saved = preferences.getString(PREF_SERVER, null)
-        if (!saved.isNullOrBlank()) {
-            customAddress = saved
-            connectionViewModel.setServerAddress(saved)
-        } else {
-            customAddress = activeAddress
-            connectionViewModel.connect()
-        }
+            ?.takeIf { it.isNotBlank() }
+            ?: DEFAULT_SERVER
+
+        serverAddress = saved
+        connectionViewModel.setServerAddress(saved)
     }
 
     Column(modifier = Modifier.fillMaxSize()) {
@@ -109,72 +94,36 @@ fun PreparationV060HostScreen(
                     fontWeight = FontWeight.Bold
                 )
                 Spacer(Modifier.height(3.dp))
-                Text("$profileLabel • $activeAddress", color = StellarMuted)
+                Text(
+                    "Adresse active • $activeAddress",
+                    color = StellarMuted
+                )
                 Spacer(Modifier.height(10.dp))
 
-                Row(
+                OutlinedTextField(
+                    value = serverAddress,
+                    onValueChange = { serverAddress = it },
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Button(
-                        onClick = { applyServer(HOME_SERVER) },
-                        modifier = Modifier.weight(1f),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = if (activeAddress == HOME_SERVER) StellarOrange else StellarSurface,
-                            contentColor = if (activeAddress == HOME_SERVER) StellarBackground else StellarText
-                        ),
-                        border = BorderStroke(1.dp, StellarOrange)
-                    ) {
-                        Text("Maison\n192.168.1.46")
+                    singleLine = true,
+                    label = { Text("Autre adresse") },
+                    supportingText = {
+                        Text("Par défaut : 10.42.0.1 • IP ou URL complète acceptée")
                     }
-
-                    Button(
-                        onClick = { applyServer(FIELD_SERVER) },
-                        modifier = Modifier.weight(1f),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = if (activeAddress == FIELD_SERVER) StellarOrange else StellarSurface,
-                            contentColor = if (activeAddress == FIELD_SERVER) StellarBackground else StellarText
-                        ),
-                        border = BorderStroke(1.dp, StellarOrange)
-                    ) {
-                        Text("Terrain\n10.42.0.1")
-                    }
-                }
+                )
 
                 Spacer(Modifier.height(8.dp))
-                OutlinedButton(
-                    onClick = {
-                        customAddress = activeAddress
-                        showCustomAddress = !showCustomAddress
-                    },
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Text("Autre adresse serveur")
-                }
-
-                if (showCustomAddress) {
-                    Spacer(Modifier.height(8.dp))
-                    OutlinedTextField(
-                        value = customAddress,
-                        onValueChange = { customAddress = it },
-                        modifier = Modifier.fillMaxWidth(),
-                        singleLine = true,
-                        label = { Text("Adresse IP ou URL") },
-                        supportingText = {
-                            Text("Ex. 192.168.1.46, 10.42.0.1 ou http://adresse:8000")
-                        }
+                Button(
+                    onClick = { applyServer(serverAddress) },
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = StellarOrange,
+                        contentColor = StellarBackground
                     )
-                    Spacer(Modifier.height(6.dp))
-                    Button(
-                        onClick = { applyServer(customAddress) },
-                        modifier = Modifier.fillMaxWidth(),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = StellarOrange,
-                            contentColor = StellarBackground
-                        )
-                    ) {
-                        Text("Utiliser cette adresse", fontWeight = FontWeight.Bold)
-                    }
+                ) {
+                    Text(
+                        "UTILISER CETTE ADRESSE",
+                        fontWeight = FontWeight.Bold
+                    )
                 }
             }
         }
