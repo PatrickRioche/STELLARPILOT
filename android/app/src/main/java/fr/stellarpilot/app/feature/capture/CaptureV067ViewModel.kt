@@ -307,16 +307,26 @@ class CaptureV067ViewModel(
     }
 
     fun startStacking(serverBaseUrl: String) {
-        val session = uiState.session ?: return
-        if (session.centering.status != "centered" || session.stacking.running) return
+        if (uiState.isCapturing || uiState.isSolving || uiState.bahtinovIsLoading) return
+        if (uiState.session?.stacking?.running == true) return
 
         viewModelScope.launch {
             try {
+                val session = ensureSession(serverBaseUrl)
+                if (session.stacking.running) return@launch
+
+                val centered = session.centering.status == "centered"
+                StackingTestApiClient(serverBaseUrl).start(session.id)
                 val started = CaptureSessionApiClient(serverBaseUrl)
-                    .startStack(session.id)
+                    .getSession(session.id)
+
                 uiState = uiState.copy(
                     session = started,
-                    statusMessage = "Stacking démarré",
+                    statusMessage = if (centered) {
+                        "Stacking démarré"
+                    } else {
+                        "Stacking démarré • mode test, cible non centrée"
+                    },
                     error = null
                 )
             } catch (error: Exception) {
@@ -343,6 +353,41 @@ class CaptureV067ViewModel(
             }
         }
     }
+}
+
+
+private class StackingTestApiClient(
+    private val baseUrl: String,
+    private val client: OkHttpClient = OkHttpClient.Builder()
+        .connectTimeout(5, TimeUnit.SECONDS)
+        .readTimeout(15, TimeUnit.SECONDS)
+        .writeTimeout(10, TimeUnit.SECONDS)
+        .callTimeout(20, TimeUnit.SECONDS)
+        .build()
+) {
+    suspend fun start(sessionId: String) =
+        withContext(Dispatchers.IO) {
+            val request = Request.Builder()
+                .url(baseUrl.trimEnd('/') + "/capture/sessions/$sessionId/stack/start-test")
+                .post(
+                    JSONObject().toString()
+                        .toRequestBody("application/json; charset=utf-8".toMediaType())
+                )
+                .build()
+
+            client.newCall(request).execute().use { response ->
+                check(response.isSuccessful) {
+                    "HTTP ${response.code} pendant le démarrage du stacking"
+                }
+                val root = JSONObject(
+                    response.body?.string() ?: error("Réponse stacking vide")
+                )
+                val status = root.optString("status")
+                if (status in setOf("finalized", "error")) {
+                    error(root.optString("detail", "Démarrage du stacking impossible"))
+                }
+            }
+        }
 }
 
 
