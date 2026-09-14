@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import sqlite3
 
-from app.catalog.bright_stars import BRIGHT_STARS
 from app.catalog.service import CatalogService
+from app.catalog.stellar_migration import (
+    bright_stars_from_database,
+    ensure_stellar_catalog,
+)
 
 
 def _create_catalog(path) -> None:
@@ -38,15 +41,14 @@ def _create_catalog(path) -> None:
         )
 
 
-def test_named_bright_stars_are_seeded_and_searchable(tmp_path):
+def test_named_bright_stars_are_searchable(tmp_path):
     database = tmp_path / "catalog.sqlite3"
     _create_catalog(database)
+
+    result = ensure_stellar_catalog(database)
+    assert result["status"] == "ready"
+
     service = CatalogService(database)
-
-    inserted = service.ensure_builtin_bright_stars()
-
-    assert inserted == len(BRIGHT_STARS)
-    assert service.ensure_builtin_bright_stars() == 0
 
     expected = {
         "Vega": "Vega",
@@ -61,6 +63,7 @@ def test_named_bright_stars_are_seeded_and_searchable(tmp_path):
 
     for query, name in expected.items():
         result = service.search(query, limit=5)
+
         assert result["objects"]
         assert result["objects"][0]["name"] == name
         assert result["objects"][0]["object_type"] == "star"
@@ -69,9 +72,15 @@ def test_named_bright_stars_are_seeded_and_searchable(tmp_path):
 def test_bright_star_catalog_contains_named_alignment_stars(tmp_path):
     database = tmp_path / "catalog.sqlite3"
     _create_catalog(database)
-    service = CatalogService(database)
 
-    stars = service.bright_stars(max_magnitude=2.5)
+    result = ensure_stellar_catalog(database)
+    assert result["status"] == "ready"
+
+    stars = bright_stars_from_database(
+        database,
+        max_magnitude=2.5,
+    )
+
     names = {star["name"] for star in stars}
 
     assert {

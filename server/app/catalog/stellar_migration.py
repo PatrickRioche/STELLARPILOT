@@ -4,7 +4,10 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
-from app.catalog.bright_stars import BRIGHT_STAR_SOURCE
+from app.catalog.bright_stars import (
+    BRIGHT_STARS,
+    BRIGHT_STAR_SOURCE,
+)
 from app.catalog.constellations import constellation_fr
 from app.catalog.stellar_catalog import (
     MAX_VISUAL_MAGNITUDE,
@@ -15,6 +18,18 @@ from app.catalog.stellar_catalog import (
     stellar_source_version,
 )
 
+
+# Immutable snapshot kept before app.catalog.__init__ clears BRIGHT_STARS.
+# It preserves the curated StellarPilot aliases/identifiers when the full
+# stellar catalogue replaces the legacy bright-star fallback.
+_LEGACY_BRIGHT_STAR_TERMS = tuple(
+    {
+        "name": str(star["name"]),
+        "aliases": tuple(star.get("aliases") or ()),
+        "identifiers": tuple(star.get("identifiers") or ()),
+    }
+    for star in BRIGHT_STARS
+)
 
 METADATA_COLUMNS = {
     "common_name_fr": "TEXT",
@@ -67,6 +82,110 @@ def _ensure_columns(connection: sqlite3.Connection) -> set[str]:
         columns.add(name)
 
     return columns
+
+
+def _merge_semicolon_values(
+    existing: str | None,
+    additions: tuple[str, ...],
+) -> str | None:
+    values: list[str] = []
+    seen: set[str] = set()
+
+    for value in [
+        *(
+            item.strip()
+            for item in (existing or "").split(";")
+            if item.strip()
+        ),
+        *additions,
+    ]:
+        cleaned = str(value).strip()
+        if not cleaned:
+            continue
+
+        key = cleaned.casefold()
+        if key in seen:
+            continue
+
+        seen.add(key)
+        values.append(cleaned)
+
+    return "; ".join(values) or None
+
+
+def _ensure_legacy_bright_star_terms(
+    connection: sqlite3.Connection,
+) -> int:
+    updated = 0
+    expected_version = stellar_source_version()
+
+    for star in _LEGACY_BRIGHT_STAR_TERMS:
+        row = connection.execute(
+            """
+            SELECT
+                id,
+                search_text,
+                aliases_fr,
+                identifiers
+            FROM objects
+            WHERE source = ?
+              AND source_version = ?
+              AND lower(name) = lower(?)
+            LIMIT 1
+            """,
+            (
+                STELLAR_SOURCE,
+                expected_version,
+                star["name"],
+            ),
+        ).fetchone()
+
+        if row is None:
+            continue
+
+        aliases_fr = _merge_semicolon_values(
+            row["aliases_fr"],
+            star["aliases"],
+        )
+        identifiers = _merge_semicolon_values(
+            row["identifiers"],
+            star["identifiers"],
+        )
+
+        search_text = str(row["search_text"] or "").strip()
+        search_text_folded = search_text.casefold()
+
+        for value in (
+            *star["aliases"],
+            *star["identifiers"],
+        ):
+            term = str(value).strip().casefold()
+
+            if term and term not in search_text_folded:
+                search_text = (
+                    f"{search_text} {term}".strip()
+                )
+                search_text_folded = search_text.casefold()
+
+        connection.execute(
+            """
+            UPDATE objects
+            SET aliases_fr = ?,
+                identifiers = ?,
+                search_text = ?
+            WHERE id = ?
+            """,
+            (
+                aliases_fr,
+                identifiers,
+                search_text,
+                row["id"],
+            ),
+        )
+
+        updated += 1
+
+    return updated
 
 
 def stellar_catalog_status(database: Path) -> dict[str, Any]:
@@ -190,6 +309,8 @@ def ensure_stellar_catalog(database: Path) -> dict[str, Any]:
         ).fetchone()
 
         if int(current["count"] or 0) >= 4000:
+            _ensure_legacy_bright_star_terms(connection)
+            connection.commit()
             return stellar_catalog_status(database)
 
     # Build before touching persistent rows. A parsing/source failure leaves
@@ -333,6 +454,8 @@ def ensure_stellar_catalog(database: Path) -> dict[str, Any]:
             ON objects(hd)
             """
         )
+
+        _ensure_legacy_bright_star_terms(connection)
 
         connection.commit()
 
