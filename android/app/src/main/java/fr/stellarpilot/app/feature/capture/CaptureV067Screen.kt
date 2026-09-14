@@ -316,6 +316,56 @@ fun CaptureV067Screen(
             }
 
             Spacer(Modifier.height(12.dp))
+            V067Card("4 • STACKING") {
+                Text(
+                    "Le stacking reste disponible en permanence dans Capture pour les tests.",
+                    color = StellarText,
+                    fontWeight = FontWeight.Bold
+                )
+                Spacer(Modifier.height(8.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    V067Value("Capturées", "${session?.capturedFrames ?: 0}")
+                    V067Value("Acceptées", "${session?.acceptedFrames ?: 0}")
+                    V067Value("Rejetées", "${session?.rejectedFrames ?: 0}")
+                }
+                Spacer(Modifier.height(8.dp))
+
+                if (session?.stacking?.running == true) {
+                    Text("STACKING ACTIF ✓", color = StellarGreen, fontWeight = FontWeight.Bold)
+                    Spacer(Modifier.height(8.dp))
+                    OutlinedButton(
+                        onClick = { viewModel.stopStacking(serverBaseUrl) },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("ARRÊTER LE STACKING")
+                    }
+                } else {
+                    Button(
+                        onClick = { viewModel.startStacking(serverBaseUrl) },
+                        enabled = target != null &&
+                            centering?.status == "centered" &&
+                            !state.isCapturing &&
+                            !state.isSolving &&
+                            !state.bahtinovIsLoading,
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = v067PrimaryColors()
+                    ) {
+                        Text("DÉMARRER LE STACKING", fontWeight = FontWeight.Bold)
+                    }
+                    if (centering?.status != "centered") {
+                        Spacer(Modifier.height(6.dp))
+                        Text(
+                            "Le stacking sera activable dès qu'une astrométrie aura confirmé le centrage.",
+                            color = StellarMuted
+                        )
+                    }
+                }
+            }
+
+            Spacer(Modifier.height(12.dp))
             V067Card("IMAGE") {
                 StellarImagePreview(
                     imageBytes = state.bahtinovImageBytes ?: state.imageBytes,
@@ -329,37 +379,6 @@ fun CaptureV067Screen(
                     emptyText = "Aucune image",
                     showCrosshair = false
                 )
-            }
-
-            if (centering?.status == "centered") {
-                Spacer(Modifier.height(12.dp))
-                V067Card("STACKING") {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        V067Value("Capturées", "${session.capturedFrames}")
-                        V067Value("Acceptées", "${session.acceptedFrames}")
-                        V067Value("Rejetées", "${session.rejectedFrames}")
-                    }
-                    Spacer(Modifier.height(8.dp))
-                    if (session.stacking.running) {
-                        OutlinedButton(
-                            onClick = { viewModel.stopStacking(serverBaseUrl) },
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Text("ARRÊTER LE STACKING")
-                        }
-                    } else {
-                        Button(
-                            onClick = { viewModel.startStacking(serverBaseUrl) },
-                            modifier = Modifier.fillMaxWidth(),
-                            colors = v067PrimaryColors()
-                        ) {
-                            Text("DÉMARRER LE STACKING", fontWeight = FontWeight.Bold)
-                        }
-                    }
-                }
             }
 
             state.statusMessage?.let {
