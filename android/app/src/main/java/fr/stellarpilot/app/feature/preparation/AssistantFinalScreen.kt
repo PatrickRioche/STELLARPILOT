@@ -2,6 +2,7 @@ package fr.stellarpilot.app.feature.preparation
 
 import android.content.Context
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -29,10 +30,13 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import fr.stellarpilot.app.R
 import fr.stellarpilot.app.feature.connection.ConnectionViewModel
 import fr.stellarpilot.app.ui.components.StellarImagePreview
 import fr.stellarpilot.app.ui.theme.StellarBackground
@@ -389,6 +393,24 @@ private fun AssistantPointingStep(
         StatusValue("Position de départ", target)
         latitude?.let {
             StatusValue("Latitude", String.format(Locale.FRANCE, "%+.5f°", it))
+        }
+
+        if (isEq || isAz) {
+            Spacer(Modifier.height(14.dp))
+            Image(
+                painter = painterResource(
+                    id = if (isEq) R.drawable.ic_mount_eq else R.drawable.ic_mount_az
+                ),
+                contentDescription = if (isEq) {
+                    "Monture équatoriale pointée vers le pôle céleste"
+                } else {
+                    "Monture Alt-Az pointée vers le zénith"
+                },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(260.dp),
+                contentScale = ContentScale.Fit
+            )
         }
 
         Spacer(Modifier.height(12.dp))
