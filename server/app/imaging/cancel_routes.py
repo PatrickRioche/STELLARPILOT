@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from fastapi.responses import Response
+
 from app import _main_core as _core
 from app.imaging.centering_capture import cancel_centering_solve
 from app.imaging.sessions import CaptureSessionService, capture_session_service
@@ -58,3 +60,23 @@ def start_capture_session_stack_test(session_id: str):
             "status": "error",
             "detail": "Session de capture introuvable",
         }
+
+
+@_core.app.get("/capture/sessions/{session_id}/last-preview.jpg")
+def capture_session_last_preview(session_id: str):
+    """Render the most recently captured frame, accepted or rejected."""
+    try:
+        metadata = capture_session_service.get_session(session_id)
+        source = metadata.get("last_frame")
+        if not source:
+            return Response(status_code=404)
+        content = capture_session_service._fits_preview_bytes(
+            __import__("pathlib").Path(source)
+        )
+        return Response(
+            content=content,
+            media_type="image/jpeg",
+            headers={"Cache-Control": "no-store"},
+        )
+    except (FileNotFoundError, KeyError, OSError, ValueError):
+        return Response(status_code=404)
