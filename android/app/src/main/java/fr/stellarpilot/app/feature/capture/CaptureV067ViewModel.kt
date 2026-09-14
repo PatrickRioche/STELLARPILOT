@@ -20,7 +20,6 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
-import java.util.Locale
 import java.util.concurrent.TimeUnit
 
 private const val V067_EXPOSURE_SECONDS = 4.0
@@ -310,27 +309,61 @@ class CaptureV067ViewModel(
         }
     }
 
+    private fun qualityReasonLabel(reasons: List<String>): String {
+        if (reasons.isEmpty()) return "qualité insuffisante"
+        return reasons.joinToString(", ") { reason ->
+            when (reason) {
+                "too_few_stars" -> "trop peu d'étoiles"
+                "trailed" -> "étoiles allongées"
+                "blurred" -> "image floue"
+                "overexposed" -> "surexposition"
+                "transparency_drop" -> "transparence dégradée"
+                "signal_drop" -> "signal trop faible"
+                "focus_or_seeing_degraded" -> "mise au point / seeing dégradé"
+                "tracking_degraded" -> "suivi dégradé"
+                "background_degraded" -> "fond de ciel dégradé"
+                "registration_error" -> "erreur d'alignement"
+                "dark_incompatible" -> "Master Dark incompatible"
+                "calibration_error" -> "erreur de calibration"
+                else -> reason
+            }
+        }
+    }
+
     private fun startStackMonitor(serverBaseUrl: String, sessionId: String) {
         stackMonitorJob?.cancel()
         stackMonitorJob = viewModelScope.launch {
             val api = CaptureSessionApiClient(serverBaseUrl)
+            val lastFrameApi = StackingLastFrameApiClient(serverBaseUrl)
+            var lastCaptured = uiState.session?.capturedFrames ?: 0
 
             while (true) {
-                delay(1000)
+                delay(750)
                 try {
                     val refreshed = api.getSession(sessionId)
-                    val stackPreview = if (refreshed.hasStackPreview) {
+                    val capturedChanged = refreshed.capturedFrames != lastCaptured
+                    val latestPreview = if (capturedChanged && refreshed.capturedFrames > 0) {
                         runCatching {
-                            api.getPreview(sessionId, stack = true)
+                            lastFrameApi.get(sessionId)
                         }.getOrNull()
                     } else {
                         null
                     }
+                    lastCaptured = refreshed.capturedFrames
+
+                    val qualitySuffix = refreshed.lastLightQuality?.let { quality ->
+                        if (quality.accepted) {
+                            " • dernière pose ACCEPTÉE"
+                        } else {
+                            " • dernière pose REJETÉE : ${qualityReasonLabel(quality.reasons)}"
+                        }
+                    }.orEmpty()
 
                     val message = when {
                         refreshed.stacking.running ->
                             "Stacking actif • Capturées ${refreshed.capturedFrames} • " +
-                                "Acceptées ${refreshed.acceptedFrames} • Rejetées ${refreshed.rejectedFrames}"
+                                "Acceptées ${refreshed.acceptedFrames} • Rejetées ${refreshed.rejectedFrames}" +
+                                qualitySuffix
                         refreshed.state == "paused_calibration" ->
                             "Stacking arrêté • ${refreshed.calibration?.detail ?: "Master Dark incompatible ou indisponible"}"
                         refreshed.state == "paused_recenter" ->
@@ -339,12 +372,13 @@ class CaptureV067ViewModel(
                             "Stacking arrêté • erreur du pipeline serveur"
                         else ->
                             "Stacking arrêté • Capturées ${refreshed.capturedFrames} • " +
-                                "Acceptées ${refreshed.acceptedFrames} • Rejetées ${refreshed.rejectedFrames}"
+                                "Acceptées ${refreshed.acceptedFrames} • Rejetées ${refreshed.rejectedFrames}" +
+                                qualitySuffix
                     }
 
                     uiState = uiState.copy(
                         session = refreshed,
-                        imageBytes = stackPreview ?: uiState.imageBytes,
+                        imageBytes = latestPreview ?: uiState.imageBytes,
                         statusMessage = message,
                         error = null
                     )
@@ -448,6 +482,36 @@ private class StackingTestApiClient(
                 if (status in setOf("finalized", "error")) {
                     error(root.optString("detail", "Démarrage du stacking impossible"))
                 }
+            }
+        }
+}
+
+
+private class StackingLastFrameApiClient(
+    private val baseUrl: String,
+    private val client: OkHttpClient = OkHttpClient.Builder()
+        .connectTimeout(5, TimeUnit.SECONDS)
+        .readTimeout(15, TimeUnit.SECONDS)
+        .callTimeout(20, TimeUnit.SECONDS)
+        .build()
+) {
+    suspend fun get(sessionId: String): ByteArray =
+        withContext(Dispatchers.IO) {
+            val request = Request.Builder()
+                .url(
+                    baseUrl.trimEnd('/') +
+                        "/capture/sessions/$sessionId/last-preview.jpg?t=${System.currentTimeMillis()}"
+                )
+                .header("Connection", "close")
+                .get()
+                .build()
+
+            client.newCall(request).execute().use { response ->
+                check(response.isSuccessful) {
+                    "HTTP ${response.code} pendant le rafraîchissement de la dernière pose"
+                }
+                response.body?.bytes()
+                    ?: error("Preview de la dernière pose vide")
             }
         }
 }
