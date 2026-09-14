@@ -40,8 +40,8 @@ android {
         minSdk = 26
         targetSdk = 36
 
-        versionCode = 12
-        versionName = "0.6.6"
+        versionCode = 13
+        versionName = "0.6.7"
 
         buildConfigField(
             "String",
@@ -75,10 +75,9 @@ android {
             dimension = "backend"
             versionNameSuffix = "-device-$buildTimestamp"
 
-            // Development / bench default. The Raspberry Pi is reached on the
-            // LAN at 192.168.1.46. The field hotspot remains 10.42.0.1 and can
-            // be selected again once the V0.6 connection screen exposes the
-            // server-address selector.
+            // Field default for StellarPilot Pi hotspot. The Preparation
+            // screen exposes one editable address field and persists any
+            // alternative address chosen by the observer.
             buildConfigField(
                 "String",
                 "BACKEND_MODE",
@@ -88,7 +87,7 @@ android {
             buildConfigField(
                 "String",
                 "SERVER_BASE_URL",
-                "\"http://192.168.1.46:8000/\""
+                "\"http://10.42.0.1:8000/\""
             )
         }
     }
