@@ -7,6 +7,7 @@ import androidx.compose.runtime.setValue
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import fr.stellarpilot.app.BuildConfig
+import fr.stellarpilot.app.data.remote.MountSessionApiClient
 import fr.stellarpilot.app.data.remote.StellarPilotApiClient
 import fr.stellarpilot.app.feature.demo.DemoModeState
 import kotlinx.coroutines.Job
@@ -22,6 +23,7 @@ class ConnectionViewModel : ViewModel() {
 
     companion object {
         private const val TAG = "StellarPilotConnection"
+        private const val STATUS_REFRESH_SECONDS = 5L
         private val RECONNECT_DELAYS_SECONDS =
             longArrayOf(1L, 2L, 3L, 5L, 8L, 10L)
     }
@@ -31,10 +33,17 @@ class ConnectionViewModel : ViewModel() {
             BuildConfig.SERVER_BASE_URL
         )
 
+    private var mountSessionApi =
+        MountSessionApiClient(
+            BuildConfig.SERVER_BASE_URL
+        )
+
     private var webSocket: WebSocket? = null
     private var reconnectJob: Job? = null
     private var handshakeTimeoutJob: Job? = null
+    private var statusRefreshJob: Job? = null
     private var webSocketGeneration = 0L
+    private var mountSessionPrepared = false
     private var stopped = false
     private var destroyed = false
 
@@ -78,12 +87,15 @@ class ConnectionViewModel : ViewModel() {
         reconnectJob = null
         handshakeTimeoutJob?.cancel()
         handshakeTimeoutJob = null
+        stopStatusRefresh()
+        mountSessionPrepared = false
 
         invalidateCurrentWebSocket(
             reason = "Adresse serveur modifiée"
         )
 
         api = StellarPilotApiClient(baseUrl)
+        mountSessionApi = MountSessionApiClient(baseUrl)
 
         uiState = uiState.copy(
             serverBaseUrl = baseUrl,
@@ -165,6 +177,17 @@ class ConnectionViewModel : ViewModel() {
         reconnectJob?.cancel()
         reconnectJob = null
 
+        if (
+            uiState.connectionState == ConnectionState.CONNECTED &&
+            webSocket != null
+        ) {
+            startStatusRefresh()
+            viewModelScope.launch {
+                refreshStatusOnce()
+            }
+            return
+        }
+
         startConnection(
             reconnecting = false
         )
@@ -181,6 +204,9 @@ class ConnectionViewModel : ViewModel() {
         ) {
             return
         }
+
+        stopStatusRefresh()
+        mountSessionPrepared = false
 
         uiState = uiState.copy(
             connectionState =
@@ -202,17 +228,7 @@ class ConnectionViewModel : ViewModel() {
                     return@launch
                 }
 
-                try {
-                    api.syncClientTime()
-                } catch (error: Exception) {
-                    if (!networkDisabled()) {
-                        Log.w(
-                            TAG,
-                            "Synchronisation heure Android impossible",
-                            error
-                        )
-                    }
-                }
+                prepareMountSessionIfPossible()
 
                 if (networkDisabled()) {
                     return@launch
@@ -226,33 +242,7 @@ class ConnectionViewModel : ViewModel() {
                 connectWebSocket()
 
                 viewModelScope.launch {
-                    try {
-                        val status = api.getStatus()
-
-                        if (networkDisabled()) {
-                            return@launch
-                        }
-
-                        uiState = uiState.copy(
-                            server = status,
-                            restStatus = "OK"
-                        )
-                    } catch (error: Exception) {
-                        if (networkDisabled()) {
-                            return@launch
-                        }
-
-                        Log.e(
-                            TAG,
-                            "Connexion établie mais /status indisponible",
-                            error
-                        )
-
-                        uiState = uiState.copy(
-                            restStatus =
-                                "OK - télémétrie indisponible"
-                        )
-                    }
+                    refreshStatusOnce()
                 }
 
             } catch (error: Exception) {
@@ -265,6 +255,9 @@ class ConnectionViewModel : ViewModel() {
                     "Serveur StellarPilot inaccessible",
                     error
                 )
+
+                stopStatusRefresh()
+                mountSessionPrepared = false
 
                 uiState = uiState.copy(
                     connectionState = ConnectionState.DISCONNECTED,
@@ -282,6 +275,102 @@ class ConnectionViewModel : ViewModel() {
                 )
             }
         }
+    }
+
+    private suspend fun prepareMountSessionIfPossible() {
+        try {
+            api.syncClientTime()
+            mountSessionApi.prepare()
+            mountSessionPrepared = true
+
+            Log.i(
+                TAG,
+                "Session monture préparée : TIME_UTC vérifié, slew 6 confirmé"
+            )
+        } catch (error: Exception) {
+            mountSessionPrepared = false
+
+            if (!networkDisabled()) {
+                Log.w(
+                    TAG,
+                    "Préparation monture différée ; nouvel essai au prochain /status",
+                    error
+                )
+            }
+        }
+    }
+
+    private suspend fun refreshStatusOnce() {
+        try {
+            val status = api.getStatus()
+
+            if (networkDisabled()) {
+                return
+            }
+
+            uiState = uiState.copy(
+                server = status,
+                restStatus = "OK"
+            )
+
+            if (
+                status.devices.mount.status == "ready" &&
+                !mountSessionPrepared
+            ) {
+                prepareMountSessionIfPossible()
+            }
+        } catch (error: Exception) {
+            if (networkDisabled()) {
+                return
+            }
+
+            Log.e(
+                TAG,
+                "Connexion établie mais /status indisponible",
+                error
+            )
+
+            // Conserver le dernier instantané valide : une panne temporaire
+            // de télémétrie ne doit pas effacer monture/caméra ni simuler une
+            // perte du serveur.
+            uiState = uiState.copy(
+                restStatus =
+                    "OK - télémétrie indisponible"
+            )
+        }
+    }
+
+    private fun startStatusRefresh() {
+        if (
+            networkDisabled() ||
+            statusRefreshJob?.isActive == true
+        ) {
+            return
+        }
+
+        statusRefreshJob =
+            viewModelScope.launch {
+                while (
+                    !networkDisabled() &&
+                    uiState.connectionState == ConnectionState.CONNECTED
+                ) {
+                    delay(STATUS_REFRESH_SECONDS * 1000L)
+
+                    if (
+                        networkDisabled() ||
+                        uiState.connectionState != ConnectionState.CONNECTED
+                    ) {
+                        break
+                    }
+
+                    refreshStatusOnce()
+                }
+            }
+    }
+
+    private fun stopStatusRefresh() {
+        statusRefreshJob?.cancel()
+        statusRefreshJob = null
     }
 
     private fun connectWebSocket() {
@@ -387,6 +476,8 @@ class ConnectionViewModel : ViewModel() {
                         }
 
                         webSocket = null
+                        stopStatusRefresh()
+                        mountSessionPrepared = false
 
                         uiState = uiState.copy(
                             connectionState =
@@ -420,6 +511,8 @@ class ConnectionViewModel : ViewModel() {
                         )
 
                         webSocket = null
+                        stopStatusRefresh()
+                        mountSessionPrepared = false
 
                         uiState = uiState.copy(
                             connectionState =
@@ -465,6 +558,9 @@ class ConnectionViewModel : ViewModel() {
                         )
 
                     if (protocol != "proto-1") {
+                        stopStatusRefresh()
+                        mountSessionPrepared = false
+
                         uiState = uiState.copy(
                             connectionState =
                                 ConnectionState.DISCONNECTED,
@@ -496,6 +592,8 @@ class ConnectionViewModel : ViewModel() {
                         reconnectDelaySeconds = null,
                         error = null
                     )
+
+                    startStatusRefresh()
                 }
             }
         } catch (error: Exception) {
@@ -560,12 +658,15 @@ class ConnectionViewModel : ViewModel() {
         if (destroyed) return
 
         stopped = true
+        mountSessionPrepared = false
 
         reconnectJob?.cancel()
         reconnectJob = null
 
         handshakeTimeoutJob?.cancel()
         handshakeTimeoutJob = null
+
+        stopStatusRefresh()
 
         invalidateCurrentWebSocket(
             reason = "Mode démonstration local"
@@ -588,6 +689,7 @@ class ConnectionViewModel : ViewModel() {
         if (destroyed) return
 
         stopped = false
+        mountSessionPrepared = false
 
         uiState = uiState.copy(
             connectionState = ConnectionState.DISCONNECTED,
@@ -613,6 +715,7 @@ class ConnectionViewModel : ViewModel() {
         reason: String
     ) {
         webSocketGeneration++
+        stopStatusRefresh()
 
         val socket = webSocket
         webSocket = null
@@ -626,6 +729,7 @@ class ConnectionViewModel : ViewModel() {
     override fun onCleared() {
         destroyed = true
         stopped = true
+        mountSessionPrepared = false
 
         DemoModeState.removeListener(
             demoModeListener
@@ -636,6 +740,8 @@ class ConnectionViewModel : ViewModel() {
 
         handshakeTimeoutJob?.cancel()
         handshakeTimeoutJob = null
+
+        stopStatusRefresh()
 
         invalidateCurrentWebSocket(
             reason = "ViewModel détruit"

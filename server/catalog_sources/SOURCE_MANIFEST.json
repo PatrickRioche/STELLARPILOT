@@ -1,0 +1,31 @@
+{
+  "catalog_version": "2026.09-stellar-v1",
+  "max_visual_magnitude": 6.0,
+  "runtime_offline": true,
+  "sources": [
+    {
+      "file": "skymap_stars.csv",
+      "url": "https://raw.githubusercontent.com/sky-map-team/stardroid/f606b788989a674391040fc1b2b4205e3ad5142e/stardroid-v2/source-data/stars.csv",
+      "source": "Sky Map star catalogue",
+      "license": "factual/public-domain stellar data"
+    },
+    {
+      "file": "bsc5_extract.txt",
+      "url": "https://raw.githubusercontent.com/sky-map-team/stardroid/f606b788989a674391040fc1b2b4205e3ad5142e/stardroid-v2/tools/star-names/data/bsc5_extract.txt",
+      "source": "Yale Bright Star Catalogue 5th ed. extract",
+      "license": "public-domain catalogue data"
+    },
+    {
+      "file": "iau_proper_stars.csv",
+      "url": "https://raw.githubusercontent.com/cyschneck/iau-star-names/8bb9c7414e045675ab89490287f5785cdafc8372/iau_proper_stars.csv",
+      "source": "IAU/WGSN proper-name inventory mirror",
+      "license": "MIT repository; IAU name data attribution retained"
+    },
+    {
+      "file": "iau_stars_with_data.csv",
+      "url": "https://raw.githubusercontent.com/cyschneck/iau-star-names/8bb9c7414e045675ab89490287f5785cdafc8372/stars_with_data.csv",
+      "source": "IAU named stars with coordinates and identifiers",
+      "license": "MIT repository"
+    }
+  ]
+}

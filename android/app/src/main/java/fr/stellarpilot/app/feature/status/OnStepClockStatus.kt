@@ -23,6 +23,8 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import fr.stellarpilot.app.data.remote.MountTimeApiClient
+import fr.stellarpilot.app.data.remote.OnStepFirmwareApiClient
+import fr.stellarpilot.app.data.remote.OnStepFirmwareInfo
 import fr.stellarpilot.app.data.remote.TimeSourceStatus
 import fr.stellarpilot.app.data.remote.TimeSynchronizationStatus
 import fr.stellarpilot.app.ui.theme.StellarGreen
@@ -37,6 +39,7 @@ import java.util.Locale
 data class MountClockUiState(
     val isLoading: Boolean = false,
     val synchronization: TimeSynchronizationStatus? = null,
+    val firmware: OnStepFirmwareInfo? = null,
     val error: String? = null
 )
 
@@ -44,6 +47,8 @@ data class MountClockUiState(
 class MountClockViewModel : ViewModel() {
     var uiState by mutableStateOf(MountClockUiState())
         private set
+
+    private var firmwareBaseUrl: String? = null
 
     fun load(serverBaseUrl: String) {
         if (uiState.isLoading) return
@@ -55,6 +60,32 @@ class MountClockViewModel : ViewModel() {
             )
 
             try {
+                val firmware =
+                    if (
+                        firmwareBaseUrl == serverBaseUrl &&
+                        uiState.firmware?.status == "available"
+                    ) {
+                        uiState.firmware
+                    } else {
+                        try {
+                            OnStepFirmwareApiClient(serverBaseUrl)
+                                .getStatus()
+                                .also { result ->
+                                    if (result.status == "available") {
+                                        firmwareBaseUrl = serverBaseUrl
+                                    }
+                                }
+                        } catch (_: Exception) {
+                            null
+                        }
+                    }
+
+                // Publish the static firmware readback immediately so it is
+                // not lost if the independent time diagnostic later fails.
+                uiState = uiState.copy(
+                    firmware = firmware
+                )
+
                 val synchronization =
                     MountTimeApiClient(serverBaseUrl)
                         .getSynchronizationStatus()
@@ -62,6 +93,7 @@ class MountClockViewModel : ViewModel() {
                 uiState = MountClockUiState(
                     isLoading = false,
                     synchronization = synchronization,
+                    firmware = firmware,
                     error = null
                 )
             } catch (error: Exception) {
@@ -84,12 +116,56 @@ fun OnStepClockStatusBlock(
 ) {
     val state = viewModel.uiState
     val synchronization = state.synchronization
+    val firmware = state.firmware
 
     LaunchedEffect(serverBaseUrl, refreshKey) {
         while (true) {
             viewModel.load(serverBaseUrl)
             delay(5_000)
         }
+    }
+
+    Spacer(Modifier.height(14.dp))
+
+    Text(
+        text = "ONSTEP",
+        style = MaterialTheme.typography.labelLarge,
+        fontWeight = FontWeight.Bold,
+        color = StellarOrange
+    )
+
+    Spacer(Modifier.height(4.dp))
+
+    ClockStatusLine(
+        label = "Firmware OnStepX",
+        value = when {
+            firmware?.number != null ->
+                firmware.number.uppercase(Locale.ROOT)
+
+            state.isLoading -> "LECTURE…"
+            else -> "NON DISPONIBLE"
+        },
+        good = firmware?.status == "available" &&
+            !firmware.number.isNullOrBlank()
+    )
+
+    firmware?.name?.let { name ->
+        ClockInfoLine(
+            label = "Nom firmware",
+            value = name
+        )
+    }
+
+    val firmwareBuild = listOfNotNull(
+        firmware?.date,
+        firmware?.time
+    ).joinToString(" · ")
+
+    if (firmwareBuild.isNotBlank()) {
+        ClockInfoLine(
+            label = "Build firmware",
+            value = firmwareBuild
+        )
     }
 
     Spacer(Modifier.height(14.dp))

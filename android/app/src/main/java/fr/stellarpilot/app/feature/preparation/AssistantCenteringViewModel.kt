@@ -35,7 +35,6 @@ class AssistantCenteringViewModel : ViewModel() {
 
     companion object {
         const val CENTERING_EXPOSURE_SECONDS = 4.0
-        private const val MAX_AUTO_CORRECTIONS = 3
         private const val MANUAL_STEP_DEG = 0.10
     }
 
@@ -84,11 +83,11 @@ class AssistantCenteringViewModel : ViewModel() {
 
                 uiState = uiState.copy(
                     sessionId = session.id,
-                    actionLabel = "Recentrage automatique",
+                    actionLabel = "Mesure du centrage",
                     message = "Pose 4 s et astrométrie de centrage…"
                 )
 
-                session = autoCenterLoop(
+                session = autoCenterOnce(
                     baseUrl = base,
                     captureApi = captureApi,
                     initialSession = session
@@ -116,7 +115,7 @@ class AssistantCenteringViewModel : ViewModel() {
                         errorArcsec = session.centering.errorArcsec,
                         attempts = session.centering.attempts,
                         message =
-                            "Recentrage automatique non validé. Utilisez le joystick puis Vérifier.",
+                            "Correction automatique unique non validée. Utilisez le joystick puis Vérifier.",
                         error = null
                     )
                 }
@@ -133,58 +132,76 @@ class AssistantCenteringViewModel : ViewModel() {
         }
     }
 
-    private suspend fun autoCenterLoop(
+    private suspend fun autoCenterOnce(
         baseUrl: String,
         captureApi: CaptureSessionApiClient,
         initialSession: CaptureSessionStatus
     ): CaptureSessionStatus {
         var session = initialSession
 
-        for (attempt in 1..MAX_AUTO_CORRECTIONS) {
-            uiState = uiState.copy(
-                actionLabel = "Centrage $attempt/$MAX_AUTO_CORRECTIONS",
-                message = "Pose 4 s • résolution • mesure de l'écart…"
-            )
+        uiState = uiState.copy(
+            actionLabel = "Mesure initiale",
+            message = "Pose 4 s • résolution • mesure de l'écart…"
+        )
 
-            session = captureApi.centerStep(session.id)
-            val preview = runCatching {
-                captureApi.getPreview(session.id, stack = false)
-            }.getOrNull()
+        session = captureApi.centerStep(session.id)
+        updateCenteringPreview(captureApi, session)
 
-            uiState = uiState.copy(
-                imageBytes = preview ?: uiState.imageBytes,
-                status = session.centering.status,
-                errorArcsec = session.centering.errorArcsec,
-                attempts = session.centering.attempts
-            )
-
-            if (session.centering.status == "centered") {
-                return session
-            }
-
-            val correctionRa = session.centering.correctionRaHours
-            val correctionDec = session.centering.correctionDecDeg
-            if (
-                session.centering.status != "correction_required" ||
-                correctionRa == null ||
-                correctionDec == null
-            ) {
-                return session
-            }
-
-            // Server centering returns a J2000 correction. Each automatic move
-            // is followed by a fresh 4 s capture and solve; never chain blind
-            // corrections without measuring again.
-            MountGotoCommandClient(baseUrl).gotoMount(
-                raHours = correctionRa,
-                decDeg = correctionDec,
-                trackingMode = "sidereal",
-                coordinateFrame = "j2000"
-            )
-            waitForMount(baseUrl)
+        if (session.centering.status == "centered") {
+            return session
         }
 
+        val correctionRa = session.centering.correctionRaHours
+        val correctionDec = session.centering.correctionDecDeg
+        if (
+            session.centering.status != "correction_required" ||
+            correctionRa == null ||
+            correctionDec == null
+        ) {
+            return session
+        }
+
+        uiState = uiState.copy(
+            actionLabel = "Correction automatique 1/1",
+            message = "Correction du pointage puis contrôle obligatoire…"
+        )
+
+        MountGotoCommandClient(baseUrl).gotoMount(
+            raHours = correctionRa,
+            decDeg = correctionDec,
+            trackingMode = "sidereal",
+            coordinateFrame = "j2000"
+        )
+        waitForMount(baseUrl)
+
+        uiState = uiState.copy(
+            actionLabel = "Vérification après correction",
+            message = "Nouvelle pose 4 s • résolution • validation du centrage…"
+        )
+
+        session = captureApi.centerStep(session.id)
+        updateCenteringPreview(captureApi, session)
+
+        // Safety invariant: never chain a second automatic correction. The
+        // fresh post-GOTO solve is authoritative; a remaining offset becomes
+        // a manual-centering request.
         return session
+    }
+
+    private suspend fun updateCenteringPreview(
+        captureApi: CaptureSessionApiClient,
+        session: CaptureSessionStatus
+    ) {
+        val preview = runCatching {
+            captureApi.getPreview(session.id, stack = false)
+        }.getOrNull()
+
+        uiState = uiState.copy(
+            imageBytes = preview ?: uiState.imageBytes,
+            status = session.centering.status,
+            errorArcsec = session.centering.errorArcsec,
+            attempts = session.centering.attempts
+        )
     }
 
     fun nudgeManual(

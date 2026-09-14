@@ -4,6 +4,12 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
+from app.catalog.bright_stars import (
+    BRIGHT_STARS,
+    BRIGHT_STAR_SOURCE,
+    BRIGHT_STAR_SOURCE_VERSION,
+)
+from app.catalog.constellations import constellation_fr
 from app.catalog.types import object_type_label_fr
 
 
@@ -43,6 +49,247 @@ class CatalogService:
 
         return dict(row)
 
+    def ensure_builtin_bright_stars(self) -> int:
+        """Add StellarPilot's named bright stars to an existing catalogue.
+
+        The catalogue SQLite file lives in persistent data on the Pi and is
+        deliberately preserved by deployments. This idempotent migration lets
+        a server update enrich that existing database without replacing it.
+        """
+
+        if not self.database.exists():
+            return 0
+
+        with self._connect() as connection:
+            table = connection.execute(
+                """
+                SELECT name
+                FROM sqlite_master
+                WHERE type = 'table'
+                  AND name = 'objects'
+                LIMIT 1
+                """
+            ).fetchone()
+
+            if table is None:
+                return 0
+
+            columns = {
+                row["name"]
+                for row in connection.execute(
+                    "PRAGMA table_info(objects)"
+                )
+            }
+
+            if "common_name_fr" not in columns:
+                connection.execute(
+                    """
+                    ALTER TABLE objects
+                    ADD COLUMN common_name_fr TEXT
+                    """
+                )
+                columns.add("common_name_fr")
+
+            if "aliases_fr" not in columns:
+                connection.execute(
+                    """
+                    ALTER TABLE objects
+                    ADD COLUMN aliases_fr TEXT
+                    """
+                )
+                columns.add("aliases_fr")
+
+            required_columns = {
+                "source",
+                "source_version",
+                "source_type",
+                "name",
+                "object_type",
+                "object_type_label_fr",
+                "ra_hours",
+                "dec_deg",
+                "constellation_code",
+                "constellation_fr",
+                "magnitude",
+                "magnitude_band",
+                "major_axis_arcmin",
+                "minor_axis_arcmin",
+                "position_angle_deg",
+                "messier",
+                "ngc",
+                "ic",
+                "common_names",
+                "identifiers",
+                "search_text",
+                "common_name_fr",
+                "aliases_fr",
+            }
+
+            if not required_columns.issubset(columns):
+                return 0
+
+            inserted = 0
+
+            for star in BRIGHT_STARS:
+                existing = connection.execute(
+                    """
+                    SELECT id
+                    FROM objects
+                    WHERE lower(name) = lower(?)
+                    LIMIT 1
+                    """,
+                    (star["name"],),
+                ).fetchone()
+
+                if existing is not None:
+                    continue
+
+                aliases = tuple(
+                    star.get("aliases") or ()
+                )
+                identifiers = tuple(
+                    star.get("identifiers") or ()
+                )
+
+                aliases_text = (
+                    "; ".join(aliases)
+                    if aliases
+                    else None
+                )
+                identifiers_text = (
+                    "; ".join(identifiers)
+                    if identifiers
+                    else None
+                )
+
+                constellation_code = star.get(
+                    "constellation_code"
+                )
+                constellation_name_fr = (
+                    constellation_fr(
+                        constellation_code
+                    )
+                    or star.get("constellation")
+                )
+
+                search_text = " ".join(
+                    str(value).strip()
+                    for value in (
+                        star["name"],
+                        aliases_text,
+                        identifiers_text,
+                        constellation_code,
+                        constellation_name_fr,
+                        star.get("constellation"),
+                    )
+                    if value
+                ).lower()
+
+                connection.execute(
+                    """
+                    INSERT INTO objects (
+                        source,
+                        source_version,
+                        source_type,
+                        name,
+                        object_type,
+                        object_type_label_fr,
+                        ra_hours,
+                        dec_deg,
+                        constellation_code,
+                        constellation_fr,
+                        magnitude,
+                        magnitude_band,
+                        major_axis_arcmin,
+                        minor_axis_arcmin,
+                        position_angle_deg,
+                        messier,
+                        ngc,
+                        ic,
+                        common_names,
+                        identifiers,
+                        search_text,
+                        common_name_fr,
+                        aliases_fr
+                    )
+                    VALUES (
+                        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                    )
+                    """,
+                    (
+                        BRIGHT_STAR_SOURCE,
+                        BRIGHT_STAR_SOURCE_VERSION,
+                        "*",
+                        star["name"],
+                        "star",
+                        "Étoile",
+                        star["ra_hours"],
+                        star["dec_deg"],
+                        constellation_code,
+                        constellation_name_fr,
+                        star["magnitude"],
+                        "V",
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                        aliases_text,
+                        identifiers_text,
+                        search_text,
+                        star["name"],
+                        aliases_text,
+                    ),
+                )
+                inserted += 1
+
+            connection.commit()
+
+        return inserted
+
+    def bright_stars(
+        self,
+        max_magnitude: float = 2.5,
+    ) -> list[dict[str, Any]]:
+        self.ensure_builtin_bright_stars()
+
+        if not self.database.exists():
+            return []
+
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT
+                    id,
+                    name,
+                    object_type,
+                    constellation_fr AS constellation,
+                    constellation_code,
+                    magnitude,
+                    ra_hours,
+                    dec_deg
+                FROM objects
+                WHERE source = ?
+                  AND source_version = ?
+                  AND object_type = 'star'
+                  AND magnitude IS NOT NULL
+                  AND magnitude <= ?
+                ORDER BY magnitude ASC, name ASC
+                """,
+                (
+                    BRIGHT_STAR_SOURCE,
+                    BRIGHT_STAR_SOURCE_VERSION,
+                    max_magnitude,
+                ),
+            ).fetchall()
+
+        return [
+            dict(row)
+            for row in rows
+        ]
+
     def status(self) -> dict[str, Any]:
 
         if not self.database.exists():
@@ -63,6 +310,8 @@ class CatalogService:
                 "types": {},
                 "type_details": [],
             }
+
+        self.ensure_builtin_bright_stars()
 
         try:
             database_size_bytes = self.database.stat().st_size
@@ -119,9 +368,22 @@ class CatalogService:
                     source,
                     source_version
                 FROM objects
+                WHERE source <> ?
                 LIMIT 1
-                """
+                """,
+                (BRIGHT_STAR_SOURCE,),
             ).fetchone()
+
+            if source_row is None:
+                source_row = connection.execute(
+                    """
+                    SELECT
+                        source,
+                        source_version
+                    FROM objects
+                    LIMIT 1
+                    """
+                ).fetchone()
 
         types = {
             row["object_type"]: row["count"]
@@ -178,7 +440,6 @@ class CatalogService:
             "type_details": type_details,
         }
 
-
     def search(
         self,
         query: str,
@@ -195,6 +456,8 @@ class CatalogService:
                 "count": 0,
                 "objects": [],
             }
+
+        self.ensure_builtin_bright_stars()
 
         limit = max(
             1,
@@ -303,6 +566,8 @@ class CatalogService:
         object_id: int,
     ) -> dict[str, Any] | None:
 
+        self.ensure_builtin_bright_stars()
+
         with self._connect() as connection:
 
             row = connection.execute(
@@ -323,3 +588,4 @@ class CatalogService:
 
 
 catalog_service = CatalogService()
+catalog_service.ensure_builtin_bright_stars()

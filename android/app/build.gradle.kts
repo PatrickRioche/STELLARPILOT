@@ -27,6 +27,10 @@ fun gitShortSha(): String {
 
 val gitSha = gitShortSha()
 
+val buildTimestamp =
+    System.getenv("STELLARPILOT_BUILD_TIMESTAMP")
+        ?: "local"
+
 android {
     namespace = "fr.stellarpilot.app"
     compileSdk = 36
@@ -36,8 +40,8 @@ android {
         minSdk = 26
         targetSdk = 36
 
-        versionCode = 71
-        versionName = "0.7.1-beta"
+        versionCode = 12
+        versionName = "0.6.6"
 
         buildConfigField(
             "String",
@@ -52,6 +56,7 @@ android {
         create("simulation") {
             dimension = "backend"
             applicationIdSuffix = ".simulation"
+            versionNameSuffix = "-simulation-$buildTimestamp"
 
             buildConfigField(
                 "String",
@@ -68,16 +73,18 @@ android {
 
         create("device") {
             dimension = "backend"
+            versionNameSuffix = "-device-$buildTimestamp"
 
+            // Development / bench default. The Raspberry Pi is reached on the
+            // LAN at 192.168.1.46. The field hotspot remains 10.42.0.1 and can
+            // be selected again once the V0.6 connection screen exposes the
+            // server-address selector.
             buildConfigField(
                 "String",
                 "BACKEND_MODE",
                 "\"DEVICE\""
             )
 
-            // Development / bench default. The Raspberry Pi is reached on the
-            // LAN at 192.168.1.46. The field hotspot remains 10.42.0.1 and can
-            // be selected again when working away from the bench LAN.
             buildConfigField(
                 "String",
                 "SERVER_BASE_URL",

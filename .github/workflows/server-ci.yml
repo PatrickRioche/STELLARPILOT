@@ -30,6 +30,10 @@ jobs:
         working-directory: server
         run: python -m pip install -r requirements.txt
 
+      - name: Fetch pinned stellar catalogue sources
+        working-directory: server
+        run: python scripts/fetch_stellar_catalog_sources.py
+
       - name: Run API tests
         working-directory: server
         env:

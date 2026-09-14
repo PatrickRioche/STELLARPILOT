@@ -36,7 +36,7 @@ def test_assistant3_uses_current_mount_position_as_astrometry_hint(monkeypatch):
     result = service.solve_robust("assistant3.fits")
 
     assert result["status"] == "solved"
-    assert result["strategy"] == "scale_narrow"
+    assert result["strategy"] == "scale_narrow_position"
     assert result["position_hint"]["source"] == "indi_mount_readback"
     assert result["position_hint"]["ra_hours"] == 5.5
     assert result["position_hint"]["ra_deg"] == 82.5
@@ -45,8 +45,9 @@ def test_assistant3_uses_current_mount_position_as_astrometry_hint(monkeypatch):
     assert calls[0]["ra_hint"] == 82.5
     assert calls[0]["dec_hint"] == 22.0
     assert calls[0]["radius_deg"] == 8.0
-    assert calls[0]["scale_low_arcsec"] == 1.22 * 0.70
-    assert calls[0]["scale_high_arcsec"] == 1.22 * 1.40
+    assert 0.89 < calls[0]["scale_low_arcsec"] < 0.92
+    assert 1.50 < calls[0]["scale_high_arcsec"] < 1.52
+    assert calls[0]["timeout_s"] == 20
 
     attempt = result["attempts"][0]
     assert attempt["position_hint_used"] is True
@@ -81,14 +82,17 @@ def test_assistant3_falls_back_when_mount_hint_is_unavailable(monkeypatch):
     result = service.solve_robust("assistant3.fits")
 
     assert result["status"] == "solved"
+    assert result["strategy"] == "scale_narrow_blind"
     assert result["position_hint"] is None
+    assert len(calls) == 1
     assert calls[0]["ra_hint"] is None
     assert calls[0]["dec_hint"] is None
     assert calls[0]["radius_deg"] is None
+    assert calls[0]["timeout_s"] == 90
     assert result["attempts"][0]["position_hint_used"] is False
 
 
-def test_final_strategy_is_blind_even_with_mount_hint(monkeypatch):
+def test_final_strategy_is_wide_blind_even_with_mount_hint(monkeypatch):
     service = PlateSolverService()
 
     monkeypatch.setattr(
@@ -129,14 +133,18 @@ def test_final_strategy_is_blind_even_with_mount_hint(monkeypatch):
     result = service.solve_robust("assistant3.fits")
 
     assert result["status"] == "solved"
-    assert result["strategy"] == "scale_broad"
+    assert result["strategy"] == "scale_wide_blind"
     assert len(calls) == 3
 
     assert calls[0]["ra_hint"] == 180.0
     assert calls[0]["radius_deg"] == 8.0
-    assert calls[1]["ra_hint"] == 180.0
-    assert calls[1]["radius_deg"] == 20.0
+    assert calls[1]["ra_hint"] is None
+    assert calls[1]["dec_hint"] is None
+    assert calls[1]["radius_deg"] is None
     assert calls[2]["ra_hint"] is None
     assert calls[2]["dec_hint"] is None
     assert calls[2]["radius_deg"] is None
+    assert calls[2]["scale_low_arcsec"] == 0.50
+    assert calls[2]["scale_high_arcsec"] == 2.50
+    assert calls[2]["timeout_s"] == 120
     assert result["attempts"][2]["position_hint_used"] is False

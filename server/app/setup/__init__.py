@@ -1,0 +1,1 @@
+"""Optical setup discovery helpers."""

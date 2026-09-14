@@ -22,7 +22,6 @@ import fr.stellarpilot.app.feature.capture.CaptureScreen
 import fr.stellarpilot.app.feature.connection.ConnectionViewModel
 import fr.stellarpilot.app.feature.galleries.GalleriesScreen
 import fr.stellarpilot.app.feature.preparation.PreparationV060HostScreen
-import fr.stellarpilot.app.feature.preparation.PreparationV060PreviewScreen
 import fr.stellarpilot.app.feature.sky.SkyScreen
 import fr.stellarpilot.app.feature.status.StatusScreen
 import fr.stellarpilot.app.ui.theme.StellarBackground
@@ -69,12 +68,6 @@ private val tabs = listOf(
         "Galeries",
         "Images et captures de vos sessions"
     ),
-    StellarTab(
-        "Test UI",
-        R.drawable.ic_nav_preparation,
-        "Test interface",
-        "Parcours V0.6 sans commande mat\u00E9rielle"
-    )
 )
 
 @Composable
@@ -169,11 +162,6 @@ fun StellarPilotApp() {
                                 .serverBaseUrl
                     )
 
-                    5 -> PreparationV060PreviewScreen(
-                        onOpenSky = {
-                            selectedTab = 2
-                        }
-                    )
                 }
             }
         }

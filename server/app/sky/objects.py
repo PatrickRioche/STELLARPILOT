@@ -3,6 +3,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
+from app.catalog.stellar_catalog import fold_text
 from app.sky.service import sky_service
 from app.sky.solar_system import solar_system_service
 
@@ -58,8 +59,14 @@ DIRECTIONS = {
 
 class SkyObjectsService:
 
+    def __init__(
+        self,
+        database: Path = DATABASE,
+    ) -> None:
+        self.database = database
+
     def _connect(self):
-        connection = sqlite3.connect(DATABASE)
+        connection = sqlite3.connect(self.database)
         connection.row_factory = sqlite3.Row
         return connection
 
@@ -212,18 +219,34 @@ class SkyObjectsService:
             parameters.extend(types)
 
         normalized_query = (
-            query.strip().lower()
+            query.strip().casefold()
             if query
             else ""
         )
+        folded_query = fold_text(query)
+        explicit_search = bool(normalized_query)
 
-        if normalized_query:
-            sql += """
-                AND search_text LIKE ?
-            """
-            parameters.append(
-                f"%{normalized_query}%"
-            )
+        if explicit_search:
+            if folded_query and folded_query != normalized_query:
+                sql += """
+                    AND (
+                        search_text LIKE ?
+                        OR search_text LIKE ?
+                    )
+                """
+                parameters.extend(
+                    [
+                        f"%{normalized_query}%",
+                        f"%{folded_query}%",
+                    ]
+                )
+            else:
+                sql += """
+                    AND search_text LIKE ?
+                """
+                parameters.append(
+                    f"%{folded_query or normalized_query}%"
+                )
 
         with self._connect() as connection:
             rows = connection.execute(
@@ -231,7 +254,7 @@ class SkyObjectsService:
                 parameters,
             ).fetchall()
 
-        visible = []
+        objects = []
 
         for row in rows:
             if normalized_constellation:
@@ -255,7 +278,17 @@ class SkyObjectsService:
                 )
             )
 
-            if altitude_deg < min_altitude:
+            meets_altitude_filter = (
+                altitude_deg >= min_altitude
+            )
+
+            # Browsing keeps the configured altitude filter. An explicit text
+            # search must never make a real catalogue object look absent just
+            # because it is currently low or below the horizon.
+            if (
+                not explicit_search
+                and not meets_altitude_filter
+            ):
                 continue
 
             azimuth_direction = (
@@ -284,7 +317,7 @@ class SkyObjectsService:
                 or row["name"]
             )
 
-            visible.append(
+            objects.append(
                 {
                     "id": row["id"],
                     "name": display_name,
@@ -325,15 +358,16 @@ class SkyObjectsService:
                     ),
                     "azimuth_direction":
                         azimuth_direction,
-                    "visible": True,
-                    "above_horizon": True,
+                    "visible": meets_altitude_filter,
+                    "above_horizon":
+                        altitude_deg > 0.0,
                     "solar_warning": False,
                 }
             )
 
         if normalized_sort == "magnitude":
             if normalized_order == "asc":
-                visible.sort(
+                objects.sort(
                     key=lambda obj: (
                         obj["magnitude"] is None,
                         (
@@ -347,7 +381,7 @@ class SkyObjectsService:
                     )
                 )
             else:
-                visible.sort(
+                objects.sort(
                     key=lambda obj: (
                         obj["magnitude"] is None,
                         -(
@@ -362,7 +396,7 @@ class SkyObjectsService:
                 )
 
         elif normalized_sort == "altitude":
-            visible.sort(
+            objects.sort(
                 key=lambda obj: (
                     (
                         -obj["altitude_deg"]
@@ -381,7 +415,7 @@ class SkyObjectsService:
             )
 
         else:
-            visible.sort(
+            objects.sort(
                 key=lambda obj:
                     obj["name"].casefold(),
                 reverse=(
@@ -389,7 +423,14 @@ class SkyObjectsService:
                 ),
             )
 
-        returned = visible[
+        matched_count = len(objects)
+        visible_count = sum(
+            1
+            for obj in objects
+            if obj["visible"]
+        )
+
+        returned = objects[
             offset:offset + limit
         ]
 
@@ -406,10 +447,12 @@ class SkyObjectsService:
             "category_label_fr":
                 CATEGORY_LABELS_FR[category],
             "query": query,
+            "explicit_search": explicit_search,
             "min_altitude_deg": min_altitude,
             "direction": normalized_direction,
             "constellation": constellation,
-            "visible_count": len(visible),
+            "matched_count": matched_count,
+            "visible_count": visible_count,
             "returned_count": len(returned),
             "limit": limit,
             "offset": offset,
@@ -418,7 +461,7 @@ class SkyObjectsService:
             "has_previous": offset > 0,
             "has_next": (
                 offset + len(returned)
-                < len(visible)
+                < matched_count
             ),
             "categories": [
                 {

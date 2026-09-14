@@ -17,15 +17,25 @@ class IndiService:
                     "-p",
                     "7624",
                     "-t",
-                    "2",
+                    "1",
                     "*.CONNECTION.*",
+                    "*.TELESCOPE_MOUNT_TYPE.*",
+                    "*.CCD_INFO.*",
+                    "*.CCD_EXPOSURE.*",
                 ],
                 capture_output=True,
                 text=True,
-                timeout=4,
+                timeout=3,
                 check=False,
             )
             return result.stdout.strip()
+
+        except subprocess.TimeoutExpired as exc:
+            output = exc.stdout or ""
+            if isinstance(output, bytes):
+                output = output.decode(errors="replace")
+            return output.strip()
+
         except (OSError, subprocess.SubprocessError):
             return ""
 
@@ -1322,89 +1332,95 @@ class IndiService:
                 "dec": dec,
             }
 
-        try:
-            properties = subprocess.run(
-                [
-                    "indi_getprop",
-                    "-h",
-                    "127.0.0.1",
-                    "-p",
-                    "7624",
-                    "-t",
-                    "3",
-                    f"{mount_name}.ON_COORD_SET.*",
-                    f"{mount_name}.EQUATORIAL_EOD_COORD.*",
-                    f"{mount_name}.EQUATORIAL_COORD.*",
-                ],
-                capture_output=True,
-                text=True,
-                timeout=5,
-                check=False,
-            )
-        except (
-            OSError,
-            subprocess.SubprocessError,
-        ) as exc:
-            return {
-                "status": "error",
-                "mode": "device",
-                "mount": mount_name,
-                "detail": str(exc),
-                "ra": ra,
-                "dec": dec,
-            }
+        def get_indi_property(property_name: str) -> str:
+            """Read one INDI property without mixing existing/missing properties."""
+            try:
+                result = subprocess.run(
+                    [
+                        "indi_getprop",
+                        "-h",
+                        "127.0.0.1",
+                        "-p",
+                        "7624",
+                        "-t",
+                        "2",
+                        property_name,
+                    ],
+                    capture_output=True,
+                    text=True,
+                    timeout=4,
+                    check=False,
+                )
+                return result.stdout or ""
 
-        output = properties.stdout
+            except subprocess.TimeoutExpired as exc:
+                output = exc.stdout or ""
+                if isinstance(output, bytes):
+                    output = output.decode(errors="replace")
+                return output
 
-        if (
-            f"{mount_name}.EQUATORIAL_EOD_COORD."
-            in output
-        ):
-            coordinate_property = (
-                "EQUATORIAL_EOD_COORD"
-            )
-        elif (
-            f"{mount_name}.EQUATORIAL_COORD."
-            in output
-        ):
-            coordinate_property = (
-                "EQUATORIAL_COORD"
-            )
+            except (OSError, subprocess.SubprocessError):
+                return ""
+
+        # Prefer JNow/EOD coordinates, then fall back to EQUATORIAL_COORD.
+        eod_ra_property = (
+            f"{mount_name}.EQUATORIAL_EOD_COORD.RA"
+        )
+        eq_ra_property = (
+            f"{mount_name}.EQUATORIAL_COORD.RA"
+        )
+
+        output = get_indi_property(eod_ra_property)
+
+        if f"{eod_ra_property}=" in output:
+            coordinate_property = "EQUATORIAL_EOD_COORD"
         else:
-            return {
-                "status": "error",
-                "mode": "device",
-                "mount": mount_name,
-                "detail": (
-                    "La monture n'expose pas de "
-                    "coordonnees equatoriales pilotables"
-                ),
-                "ra": ra,
-                "dec": dec,
-            }
+            output = get_indi_property(eq_ra_property)
 
-        if (
-            f"{mount_name}.ON_COORD_SET.TRACK="
-            in output
-        ):
+            if f"{eq_ra_property}=" in output:
+                coordinate_property = "EQUATORIAL_COORD"
+            else:
+                return {
+                    "status": "error",
+                    "mode": "device",
+                    "mount": mount_name,
+                    "detail": (
+                        "La monture n'expose pas de "
+                        "coordonnees equatoriales pilotables"
+                    ),
+                    "ra": ra,
+                    "dec": dec,
+                }
+
+        # Determine which GOTO action the mount exposes.
+        track_property = (
+            f"{mount_name}.ON_COORD_SET.TRACK"
+        )
+        slew_property = (
+            f"{mount_name}.ON_COORD_SET.SLEW"
+        )
+
+        output = get_indi_property(track_property)
+
+        if f"{track_property}=" in output:
             goto_action = "TRACK"
-        elif (
-            f"{mount_name}.ON_COORD_SET.SLEW="
-            in output
-        ):
-            goto_action = "SLEW"
         else:
-            return {
-                "status": "error",
-                "mode": "device",
-                "mount": mount_name,
-                "detail": (
-                    "La monture n'expose pas "
-                    "ON_COORD_SET TRACK/SLEW"
-                ),
-                "ra": ra,
-                "dec": dec,
-            }
+            output = get_indi_property(slew_property)
+
+            if f"{slew_property}=" in output:
+                goto_action = "SLEW"
+            else:
+                return {
+                    "status": "error",
+                    "mode": "device",
+                    "mount": mount_name,
+                    "detail": (
+                        "La monture n'expose pas "
+                        "ON_COORD_SET TRACK/SLEW"
+                    ),
+                    "ra": ra,
+                    "dec": dec,
+                }
 
         start_snapshot = self._mount_snapshot(
             mount_name,
@@ -1447,8 +1463,7 @@ class IndiService:
             set_property(
                 f"{mount_name}."
                 f"{coordinate_property}."
-                "RA;DEC="
-                f"{ra:.8f};{dec:.8f}"
+                f"RA={ra:.8f};DEC={dec:.8f}"
             )
         except (
             OSError,

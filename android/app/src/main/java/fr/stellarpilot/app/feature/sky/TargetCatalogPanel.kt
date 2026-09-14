@@ -60,7 +60,7 @@ private val targetCategories =
     listOf(
         TargetCategory(
             "all",
-            "Tous"
+            "\u00C9toiles et ciel profond"
         ),
         TargetCategory(
             "star",
@@ -255,7 +255,7 @@ fun TargetCatalogPanel(
 
                 Text(
                     text =
-                        "Catalogue local des objets visibles",
+                        "Catalogue local hors ligne \u2022 recherche par nom et designation",
                     color =
                         StellarMuted
                 )
@@ -410,6 +410,38 @@ fun TargetCatalogPanel(
                                 color =
                                     StellarMuted
                             )
+
+                            if (!target.visible) {
+                                Spacer(
+                                    Modifier.height(8.dp)
+                                )
+
+                                Text(
+                                    text =
+                                        if (!target.aboveHorizon) {
+                                            "SOUS L'HORIZON \u2022 pointage indisponible"
+                                        } else {
+                                            "ACTUELLEMENT TROP BASSE \u2022 Alt. ${
+                                                formatTargetNumber(
+                                                    target.altitudeDeg,
+                                                    1
+                                                )
+                                            }\u00B0, filtre ${
+                                                formatTargetNumber(
+                                                    state.result
+                                                        ?.minAltitudeDeg
+                                                        ?: 15.0,
+                                                    0
+                                                )
+                                            }\u00B0"
+                                        },
+                                    color =
+                                        StellarOrange,
+                                    fontWeight =
+                                        FontWeight.Bold
+                                )
+                            }
+
                             Spacer(
                                 Modifier.height(
                                     14.dp
@@ -426,7 +458,8 @@ fun TargetCatalogPanel(
                                     )
                                 },
                                 enabled =
-                                    !state.isGotoLoading,
+                                    !state.isGotoLoading &&
+                                        target.aboveHorizon,
                                 modifier =
                                     Modifier.fillMaxWidth()
                             ) {
@@ -454,12 +487,15 @@ fun TargetCatalogPanel(
 
                                 Text(
                                     text =
-                                        if (
-                                            state.isGotoLoading
-                                        ) {
-                                            "Pointage en cours..."
-                                        } else {
-                                            "Pointer la cible"
+                                        when {
+                                            !target.aboveHorizon ->
+                                                "Cible sous l'horizon"
+
+                                            state.isGotoLoading ->
+                                                "Pointage en cours..."
+
+                                            else ->
+                                                "Pointer la cible"
                                         },
                                     fontWeight =
                                         FontWeight.Bold
@@ -630,7 +666,7 @@ fun TargetCatalogPanel(
                     },
                     placeholder = {
                         Text(
-                            "M31, M42, NGC 7000, Tourbillon..."
+                            "Vega, Alpha Lyr, HIP 91262, M31, NGC 7000..."
                         )
                     }
                 )
@@ -1167,6 +1203,13 @@ fun TargetCatalogPanel(
                                 )
                             )
 
+                            val resultCount =
+                                if (result.explicitSearch) {
+                                    result.matchedCount
+                                } else {
+                                    result.visibleCount
+                                }
+
                             val firstObject =
                                 if (
                                     result.returnedCount >
@@ -1183,20 +1226,35 @@ fun TargetCatalogPanel(
 
                             Text(
                                 text =
-                                    "Objets $firstObject-$lastObject / " +
-                                        "${result.visibleCount} visibles",
+                                    if (result.explicitSearch) {
+                                        "Resultats $firstObject-$lastObject / " +
+                                            "${result.matchedCount} \u2022 ${result.visibleCount} " +
+                                            "au-dessus de ${
+                                                formatTargetNumber(
+                                                    result.minAltitudeDeg,
+                                                    0
+                                                )
+                                            }\u00B0"
+                                    } else {
+                                        "Objets $firstObject-$lastObject / " +
+                                            "${result.visibleCount} visibles"
+                                    },
                                 color =
                                     StellarMuted
                             )
 
                             Text(
                                 text =
-                                    "Objets au-dessus de ${
-                                        formatTargetNumber(
-                                            result.minAltitudeDeg,
-                                            0
-                                        )
-                                    }\u00B0",
+                                    if (result.explicitSearch) {
+                                        "Une recherche explicite affiche aussi les objets trop bas ou sous l'horizon."
+                                    } else {
+                                        "Objets au-dessus de ${
+                                            formatTargetNumber(
+                                                result.minAltitudeDeg,
+                                                0
+                                            )
+                                        }\u00B0"
+                                    },
                                 color =
                                     StellarMuted,
                                 style =
@@ -1216,7 +1274,11 @@ fun TargetCatalogPanel(
 
                                 Text(
                                     text =
-                                        "Aucun objet visible ne correspond a la recherche.",
+                                        if (result.explicitSearch) {
+                                            "Aucun objet du catalogue ne correspond a la recherche."
+                                        } else {
+                                            "Aucun objet visible ne correspond aux filtres."
+                                        },
                                     color =
                                         StellarMuted
                                 )
@@ -1251,7 +1313,7 @@ fun TargetCatalogPanel(
                                     }
 
                                 if (
-                                    result.visibleCount >
+                                    resultCount >
                                         result.limit
                                 ) {
 
@@ -1271,7 +1333,7 @@ fun TargetCatalogPanel(
                                         maxOf(
                                             1,
                                             (
-                                                result.visibleCount +
+                                                resultCount +
                                                     pageSize -
                                                     1
                                                 ) /
@@ -1373,7 +1435,7 @@ fun TargetCatalogPanel(
                                                     result.offset +
                                                         result.returnedCount
                                                     ) <
-                                                    result.visibleCount,
+                                                    resultCount,
                                             modifier =
                                                 Modifier
                                                     .weight(
@@ -1571,6 +1633,7 @@ private fun ConstellationMultiSelect(
         }
     }
 }
+
 @Composable
 private fun TargetObjectRow(
     target: SkyObject,
@@ -1727,6 +1790,25 @@ private fun TargetObjectRow(
                 color =
                     StellarMuted
             )
+
+            if (!target.visible) {
+                Spacer(
+                    Modifier.height(4.dp)
+                )
+
+                Text(
+                    text =
+                        if (target.aboveHorizon) {
+                            "Actuellement trop basse"
+                        } else {
+                            "Sous l'horizon"
+                        },
+                    color =
+                        StellarOrange,
+                    fontWeight =
+                        FontWeight.Bold
+                )
+            }
 
             if (
                 target.majorAxisArcmin != null

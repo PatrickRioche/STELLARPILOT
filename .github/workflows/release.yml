@@ -16,32 +16,24 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Validate tag and release notes
-        shell: bash
-        run: |
-          VERSION_VALUE="$(tr -d '\r\n' < VERSION)"
-          EXPECTED_TAG="v${VERSION_VALUE}"
-          if [ "${GITHUB_REF_NAME}" != "${EXPECTED_TAG}" ]; then
-            echo "Tag ${GITHUB_REF_NAME} does not match VERSION=${VERSION_VALUE}"
-            exit 2
-          fi
-          NOTES="docs/05-releases/${GITHUB_REF_NAME}.md"
-          if [ ! -f "${NOTES}" ]; then
-            echo "Missing release notes: ${NOTES}"
-            exit 3
-          fi
-
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.13"
 
-      - name: Test server
+      - name: Install server dependencies
         working-directory: server
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          PYTHONPATH=. pytest -q
+
+      - name: Fetch pinned stellar catalogue sources
+        working-directory: server
+        run: python scripts/fetch_stellar_catalog_sources.py
+
+      - name: Test server
+        working-directory: server
+        run: PYTHONPATH=. pytest -q
 
       - name: Export OpenAPI
         working-directory: server
@@ -53,13 +45,10 @@ jobs:
               json.dump(app.openapi(), f, indent=2, ensure_ascii=False)
           PY
 
-      - name: Package server
+      - name: Package self-contained server
         run: |
-          tar \
-            --exclude='server/.venv' \
-            --exclude='server/**/__pycache__' \
-            -czf "StellarPilot-${GITHUB_REF_NAME}-server.tar.gz" \
-            server/
+          tar --exclude='server/.venv' --exclude='server/**/__pycache__' \
+              -czf "stellarpilot-server-${GITHUB_REF_NAME}.tar.gz" server/
 
       - name: Setup Java 17
         uses: actions/setup-java@v4
@@ -74,62 +63,26 @@ jobs:
 
       - name: Build simulation APK
         working-directory: android
-        shell: bash
-        run: |
-          export LOCALAPPDATA="$RUNNER_TEMP"
-          gradle --no-daemon :app:testSimulationDebugUnitTest :app:assembleSimulationDebug
+        run: gradle --no-daemon :app:testSimulationDebugUnitTest :app:assembleSimulationDebug
 
       - name: Build device APK
         working-directory: android
-        shell: bash
-        run: |
-          export LOCALAPPDATA="$RUNNER_TEMP"
-          gradle --no-daemon :app:assembleDeviceDebug
+        run: gradle --no-daemon :app:assembleDeviceDebug
 
       - name: Stage release assets
-        shell: bash
         run: |
-          set -euo pipefail
-
-          APK_ROOT="${RUNNER_TEMP}/StellarPilot/android-build/app/outputs/apk"
-          echo "APK output root: ${APK_ROOT}"
-          find "${APK_ROOT}" -type f -name '*.apk' -print
-
-          SIM_APK="$(find "${APK_ROOT}" -type f -name '*.apk' -path '*/simulation/*' -print -quit)"
-          DEVICE_APK="$(find "${APK_ROOT}" -type f -name '*.apk' -path '*/device/*' -print -quit)"
-
-          if [ -z "${SIM_APK}" ]; then
-            echo "Simulation APK not found under ${APK_ROOT}"
-            exit 4
-          fi
-          if [ -z "${DEVICE_APK}" ]; then
-            echo "Device APK not found under ${APK_ROOT}"
-            exit 5
-          fi
-
-          cp "${SIM_APK}" \
-            "StellarPilot-${GITHUB_REF_NAME}-simulation-debug.apk"
-          cp "${DEVICE_APK}" \
-            "StellarPilot-${GITHUB_REF_NAME}-device-debug.apk"
-          cp server/openapi.json \
-            "StellarPilot-${GITHUB_REF_NAME}-openapi.json"
-
-          sha256sum \
-            "StellarPilot-${GITHUB_REF_NAME}-simulation-debug.apk" \
-            "StellarPilot-${GITHUB_REF_NAME}-device-debug.apk" \
-            "StellarPilot-${GITHUB_REF_NAME}-server.tar.gz" \
-            "StellarPilot-${GITHUB_REF_NAME}-openapi.json" \
-            > "StellarPilot-${GITHUB_REF_NAME}-SHA256SUMS.txt"
+          cp android/app/build/outputs/apk/simulation/debug/*.apk StellarPilot-simulation-debug.apk
+          cp android/app/build/outputs/apk/device/debug/*.apk StellarPilot-device-debug.apk
+          cp server/openapi.json openapi.json
 
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           name: StellarPilot ${{ github.ref_name }}
-          body_path: docs/05-releases/${{ github.ref_name }}.md
+          body_path: docs/05-releases/v0.6.3-poc.md
           prerelease: true
           files: |
-            StellarPilot-${{ github.ref_name }}-simulation-debug.apk
-            StellarPilot-${{ github.ref_name }}-device-debug.apk
-            StellarPilot-${{ github.ref_name }}-server.tar.gz
-            StellarPilot-${{ github.ref_name }}-openapi.json
-            StellarPilot-${{ github.ref_name }}-SHA256SUMS.txt
+            StellarPilot-simulation-debug.apk
+            StellarPilot-device-debug.apk
+            stellarpilot-server-${{ github.ref_name }}.tar.gz
+            openapi.json

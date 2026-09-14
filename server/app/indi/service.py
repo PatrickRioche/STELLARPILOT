@@ -19,7 +19,6 @@ class IndiService(_CoreIndiService):
     """Facade INDI ajoutant le suivi portable et le stockage de session."""
 
     _mount_cache_ttl_s = 5.0
-    _preferred_mount_names = ("LX200 OnStep",)
 
     @staticmethod
     def tracking_mode_element(
@@ -40,13 +39,89 @@ class IndiService(_CoreIndiService):
 
         return normalized, element
 
+    def _find_connected_mount(self) -> str | None:
+        """
+        Detecte directement LX200 OnStep sans wildcard INDI.
+        """
+        now = time.monotonic()
+
+        cached_name = getattr(self, "_cached_mount_name", None)
+        cached_at = getattr(self, "_cached_mount_at", 0.0)
+
+        if (
+            cached_name is not None
+            and now - cached_at <= self._mount_cache_ttl_s
+        ):
+            return cached_name
+
+        candidate = "LX200 OnStep"
+        property_name = f"{candidate}.CONNECTION.CONNECT"
+
+        try:
+            result = subprocess.run(
+                [
+                    "indi_getprop",
+                    "-h", "127.0.0.1",
+                    "-p", "7624",
+                    "-t", "5",
+                    property_name,
+                ],
+                capture_output=True,
+                text=True,
+                timeout=7,
+                check=False,
+            )
+            output = result.stdout or ""
+        except (OSError, subprocess.SubprocessError):
+            output = ""
+
+        if f"{property_name}=On" in output:
+            self._cached_mount_name = candidate
+            self._cached_mount_at = now
+            return candidate
+
+        return None
+
     @staticmethod
-    def _indi_get_exact(
-        *property_names: str,
-        indi_timeout_s: int = 1,
-        process_timeout_s: int = 2,
+    def _tracking_mode_output(
+        mount_name: str,
     ) -> str:
-        """Read exact INDI properties and preserve partial stdout on timeout."""
+        result = subprocess.run(
+            [
+                "indi_getprop",
+                "-h",
+                "127.0.0.1",
+                "-p",
+                "7624",
+                "-t",
+                "1",
+                f"{mount_name}.TELESCOPE_TRACK_MODE.*",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=3,
+            check=False,
+        )
+
+        output = result.stdout.strip()
+
+        # Selon la version des outils INDI, indi_getprop peut terminer
+        # avec un code non nul apres son delai tout en ayant deja renvoye
+        # la propriete demandee. Le contenu recu reste alors exploitable.
+        if not output:
+            detail = (
+                result.stderr.strip()
+                or "TELESCOPE_TRACK_MODE indisponible"
+            )
+            raise RuntimeError(detail)
+
+        return output
+
+    @staticmethod
+    def _park_output(
+        mount_name: str,
+    ) -> str:
+        """Read the standard INDI PARK/UNPARK state without changing it."""
         try:
             result = subprocess.run(
                 [
@@ -56,121 +131,107 @@ class IndiService(_CoreIndiService):
                     "-p",
                     "7624",
                     "-t",
-                    str(indi_timeout_s),
-                    *property_names,
+                    "1",
+                    f"{mount_name}.TELESCOPE_PARK.*",
                 ],
                 capture_output=True,
                 text=True,
-                timeout=process_timeout_s,
+                timeout=3,
                 check=False,
             )
-            return (result.stdout or "").strip()
-
-        except subprocess.TimeoutExpired as exc:
-            output = exc.stdout or ""
-
-            if isinstance(output, bytes):
-                output = output.decode(
-                    errors="replace"
-                )
-
-            return output.strip()
-
         except (
             OSError,
             subprocess.SubprocessError,
-        ):
-            return ""
+        ) as exc:
+            raise RuntimeError(str(exc)) from exc
 
-    def _find_connected_mount(self) -> str | None:
-        """
-        Reutilise la monture deja identifiee et valide sa connexion avec
-        une requete INDI explicite, sans wildcard.
+        return result.stdout.strip()
 
-        La decouverte globale n'est utilisee que si aucune monture connue
-        n'est disponible, afin de conserver la compatibilite avec d'autres
-        drivers tout en evitant les timeouts intermittents OnStep.
-        """
-        now = time.monotonic()
-
-        cached_name = getattr(
-            self,
-            "_cached_mount_name",
-            None,
-        )
-        cached_at = getattr(
-            self,
-            "_cached_mount_at",
-            0.0,
-        )
-
-        if cached_name is not None:
-            if (
-                now - cached_at
-                <= self._mount_cache_ttl_s
-            ):
-                return cached_name
-
-            property_name = (
-                f"{cached_name}.CONNECTION.CONNECT"
-            )
-            output = self._indi_get_exact(
-                property_name
-            )
-
-            if f"{property_name}=On" in output:
-                self._cached_mount_at = now
-                return cached_name
-
-        # StellarPilot cible actuellement OnStep. Tester le nom hardware
-        # connu sans wildcard evite de dependre d'une decouverte globale
-        # pour chaque session ou apres expiration du cache.
-        for candidate in self._preferred_mount_names:
-            property_name = (
-                f"{candidate}.CONNECTION.CONNECT"
-            )
-            output = self._indi_get_exact(
-                property_name
-            )
-
-            if f"{property_name}=On" in output:
-                self._cached_mount_name = candidate
-                self._cached_mount_at = now
-                return candidate
-
-        # Compatibilite de repli pour d'autres noms/drivers.
-        mount_name = super()._find_connected_mount()
-
-        if mount_name is not None:
-            self._cached_mount_name = mount_name
-            self._cached_mount_at = now
-
-        return mount_name
-
-    @staticmethod
-    def _tracking_mode_output(
+    def ensure_unparked(
+        self,
         mount_name: str,
-    ) -> str:
-        properties = [
-            (
-                f"{mount_name}.TELESCOPE_TRACK_MODE."
-                f"{element}"
+    ) -> dict:
+        """Unpark only as part of an explicit GOTO, then verify readback.
+
+        Connection/session preparation deliberately does not unpark the mount.
+        If a driver does not expose TELESCOPE_PARK, preserve the historical
+        behavior and let the driver decide whether the GOTO can proceed.
+        """
+        before = self._park_output(mount_name)
+        park_on = f"{mount_name}.TELESCOPE_PARK.PARK=On"
+        unpark_on = f"{mount_name}.TELESCOPE_PARK.UNPARK=On"
+
+        if unpark_on in before and park_on not in before:
+            return {
+                "status": "ready",
+                "supported": True,
+                "changed": False,
+                "parked_before": False,
+                "detail": None,
+            }
+
+        if park_on not in before:
+            return {
+                "status": "unavailable",
+                "supported": False,
+                "changed": False,
+                "parked_before": None,
+                "detail": "TELESCOPE_PARK non publie par la monture",
+            }
+
+        try:
+            result = subprocess.run(
+                [
+                    "indi_setprop",
+                    "-h",
+                    "127.0.0.1",
+                    "-p",
+                    "7624",
+                    "-t",
+                    "2",
+                    f"{mount_name}.TELESCOPE_PARK.UNPARK=On",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=4,
+                check=False,
             )
-            for element in _TRACKING_MODE_ELEMENTS.values()
-        ]
-
-        output = IndiService._indi_get_exact(
-            *properties,
-            indi_timeout_s=1,
-            process_timeout_s=2,
-        )
-
-        if not output:
+        except (
+            OSError,
+            subprocess.SubprocessError,
+        ) as exc:
             raise RuntimeError(
-                "TELESCOPE_TRACK_MODE indisponible"
-            )
+                f"Depark OnStep impossible : {exc}"
+            ) from exc
 
-        return output
+        if result.returncode != 0:
+            detail = (
+                result.stderr.strip()
+                or result.stdout.strip()
+                or "Depark OnStep refuse par INDI"
+            )
+            raise RuntimeError(detail)
+
+        last_output = ""
+        for delay_s in (0.10, 0.20, 0.40, 0.80):
+            time.sleep(delay_s)
+            last_output = self._park_output(mount_name)
+
+            if (
+                unpark_on in last_output
+                and park_on not in last_output
+            ):
+                return {
+                    "status": "ready",
+                    "supported": True,
+                    "changed": True,
+                    "parked_before": True,
+                    "detail": None,
+                }
+
+        raise RuntimeError(
+            "Depark envoye mais le readback INDI ne confirme pas UNPARK"
+        )
 
     def set_tracking_mode(
         self,
@@ -180,6 +241,9 @@ class IndiService(_CoreIndiService):
         """
         Selectionne le mode via la propriete standard INDI
         TELESCOPE_TRACK_MODE, puis confirme le readback.
+
+        indi_setprop ne possede pas d'option -s : la commande doit suivre
+        directement la syntaxe standard device.property.element=value.
         """
         normalized, element = self.tracking_mode_element(
             tracking_mode
@@ -224,6 +288,9 @@ class IndiService(_CoreIndiService):
             )
             raise RuntimeError(detail)
 
+        # Le driver peut mettre quelques dizaines de millisecondes a
+        # publier le nouvel etat. Deux lectures courtes suffisent tout en
+        # evitant de bloquer /mount/goto pendant plusieurs secondes.
         for _ in range(2):
             readback = self._tracking_mode_output(
                 mount_name
@@ -279,7 +346,13 @@ class IndiService(_CoreIndiService):
         reference_utc: str | None = None,
         reference_source: str | None = None,
     ) -> dict:
-        """Read the OnStep/LX200 clock directly from INDI."""
+        """Read the OnStep/LX200 clock directly from INDI.
+
+        The clock readback is independent from Android/GPS/Raspberry Pi.
+        When a trusted StellarPilot reference is provided, the response also
+        reports the measured clock drift.  A difference <= 10 seconds is
+        considered synchronized; larger differences are reported as drift.
+        """
         unavailable = {
             "status": "unavailable",
             "source": "indi",
@@ -304,23 +377,36 @@ class IndiService(_CoreIndiService):
             unavailable["detail"] = "Aucune monture INDI connectee"
             return unavailable
 
-        property_names = (
-            f"{mount_name}.TIME_UTC.UTC",
-            f"{mount_name}.TIME_UTC.OFFSET",
-            f"{mount_name}.TIME_UTC._STATE",
-            f"{mount_name}.TIME_UTC._PERM",
-        )
-
-        output = self._indi_get_exact(
-            *property_names,
-            indi_timeout_s=2,
-            process_timeout_s=4,
-        )
+        try:
+            result = subprocess.run(
+                [
+                    "indi_getprop",
+                    "-h",
+                    "127.0.0.1",
+                    "-p",
+                    "7624",
+                    "-t",
+                    "2",
+                    f"{mount_name}.TIME_UTC.*",
+                    f"{mount_name}.TIME_UTC._STATE",
+                    f"{mount_name}.TIME_UTC._PERM",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=4,
+                check=False,
+            )
+        except (
+            OSError,
+            subprocess.SubprocessError,
+        ) as exc:
+            unavailable["detail"] = str(exc)
+            return unavailable
 
         values: dict[str, str] = {}
         prefix = f"{mount_name}.TIME_UTC."
 
-        for line in output.splitlines():
+        for line in result.stdout.splitlines():
             if "=" not in line:
                 continue
 
@@ -334,7 +420,8 @@ class IndiService(_CoreIndiService):
 
         if not utc_raw:
             unavailable["detail"] = (
-                "Propriete INDI TIME_UTC.UTC indisponible"
+                result.stderr.strip()
+                or "Propriete INDI TIME_UTC.UTC indisponible"
             )
             return unavailable
 
@@ -431,12 +518,24 @@ class IndiService(_CoreIndiService):
         output_dir: str | Path | None = None,
         prefix: str | None = None,
     ) -> dict:
-        """Capture a FITS and persist or relocate it according to its caller."""
+        """Capture a FITS and persist or relocate it according to its caller.
+
+        ``/camera/capture`` (Preparation Assistant 3) calls this method
+        without ``output_dir``. Its completed FITS is therefore copied
+        immediately to persistent application data below
+        ``server/data/astrometry/assistant-3`` before the API returns.
+
+        Capture sessions pass ``output_dir`` and keep their existing runtime
+        workflow below ``stellarpilot-server/tmp``. ``shutil.move`` supports
+        Linux /tmp being a separate tmpfs/filesystem.
+        """
         result = super().capture(exposure_s)
 
         if result.get("status") != "captured" or not result.get("image"):
             return result
 
+        # Historical /camera/capture = Preparation / Assistant 3.
+        # Persist the scientific FITS before Android can request preview/solve.
         if output_dir is None:
             try:
                 archive = preparation_astrometry_archive.archive_capture(
@@ -490,9 +589,6 @@ class IndiService(_CoreIndiService):
         dec: float,
         tracking_mode: str = "sidereal",
     ) -> dict:
-        """Send a hardware GOTO using only exact INDI property reads."""
-        ra = ra % 24.0
-
         try:
             normalized, _ = self.tracking_mode_element(
                 tracking_mode
@@ -502,22 +598,22 @@ class IndiService(_CoreIndiService):
                 "status": "error",
                 "mode": "device",
                 "detail": str(exc),
-                "ra": ra,
+                "ra": ra % 24.0,
                 "dec": dec,
             }
 
         mount_name = self._find_connected_mount()
 
         if mount_name is None:
-            return {
-                "status": "error",
-                "mode": "device",
-                "detail": "Aucune monture INDI connectee",
-                "ra": ra,
-                "dec": dec,
-            }
+            return super().goto(
+                ra,
+                dec,
+            )
 
         try:
+            park_state = self.ensure_unparked(
+                mount_name
+            )
             confirmed_mode = self.set_tracking_mode(
                 mount_name,
                 normalized,
@@ -532,157 +628,19 @@ class IndiService(_CoreIndiService):
                 "mode": "device",
                 "mount": mount_name,
                 "detail": str(exc),
-                "ra": ra,
+                "ra": ra % 24.0,
                 "dec": dec,
                 "tracking_mode": normalized,
             }
 
-        coordinate_property = None
-
-        for candidate in (
-            "EQUATORIAL_EOD_COORD",
-            "EQUATORIAL_COORD",
-        ):
-            property_name = (
-                f"{mount_name}.{candidate}.RA"
-            )
-            output = self._indi_get_exact(
-                property_name
-            )
-
-            if f"{property_name}=" in output:
-                coordinate_property = candidate
-                break
-
-        if coordinate_property is None:
-            return {
-                "status": "error",
-                "mode": "device",
-                "mount": mount_name,
-                "detail": (
-                    "La monture n'expose pas de "
-                    "coordonnees equatoriales pilotables"
-                ),
-                "ra": ra,
-                "dec": dec,
-                "tracking_mode": confirmed_mode,
-            }
-
-        goto_action = None
-
-        for candidate in ("TRACK", "SLEW"):
-            property_name = (
-                f"{mount_name}.ON_COORD_SET."
-                f"{candidate}"
-            )
-            output = self._indi_get_exact(
-                property_name
-            )
-
-            if f"{property_name}=" in output:
-                goto_action = candidate
-                break
-
-        if goto_action is None:
-            return {
-                "status": "error",
-                "mode": "device",
-                "mount": mount_name,
-                "detail": (
-                    "La monture n'expose pas "
-                    "ON_COORD_SET TRACK/SLEW"
-                ),
-                "ra": ra,
-                "dec": dec,
-                "tracking_mode": confirmed_mode,
-            }
-
-        start_snapshot = self._mount_snapshot(
-            mount_name,
-            coordinate_property,
+        result = super().goto(
+            ra,
+            dec,
         )
 
-        def set_property(value: str) -> None:
-            result = subprocess.run(
-                [
-                    "indi_setprop",
-                    "-h",
-                    "127.0.0.1",
-                    "-p",
-                    "7624",
-                    "-t",
-                    "5",
-                    value,
-                ],
-                capture_output=True,
-                text=True,
-                timeout=7,
-                check=False,
-            )
-
-            if result.returncode != 0:
-                detail = (
-                    result.stderr.strip()
-                    or result.stdout.strip()
-                    or "Erreur INDI inconnue"
-                )
-                raise RuntimeError(detail)
-
-        try:
-            set_property(
-                f"{mount_name}."
-                f"ON_COORD_SET.{goto_action}=On"
-            )
-
-            set_property(
-                f"{mount_name}."
-                f"{coordinate_property}."
-                "RA;DEC="
-                f"{ra:.8f};{dec:.8f}"
-            )
-        except (
-            OSError,
-            subprocess.SubprocessError,
-            RuntimeError,
-        ) as exc:
-            return {
-                "status": "error",
-                "mode": "device",
-                "mount": mount_name,
-                "detail": str(exc),
-                "ra": ra,
-                "dec": dec,
-                "tracking_mode": confirmed_mode,
-            }
-
-        self._goto_mount_name = mount_name
-        self._goto_coordinate_property = coordinate_property
-        self._goto_target_ra = ra
-        self._goto_target_dec = dec
-        self._goto_start_ra = (
-            start_snapshot.get("ra")
-            if start_snapshot
-            else None
-        )
-        self._goto_start_dec = (
-            start_snapshot.get("dec")
-            if start_snapshot
-            else None
-        )
-        self._goto_tracking_mode = confirmed_mode
-
-        return {
-            "status": "slewing",
-            "mode": "device",
-            "mount": mount_name,
-            "action": goto_action.lower(),
-            "coordinate_property": coordinate_property,
-            "ra": ra,
-            "dec": dec,
-            "start_ra": self._goto_start_ra,
-            "start_dec": self._goto_start_dec,
-            "tracking_mode": confirmed_mode,
-        }
+        result["tracking_mode"] = confirmed_mode
+        result["park"] = park_state
+        return result
 
     def mount_status(self) -> dict:
         result = super().mount_status()

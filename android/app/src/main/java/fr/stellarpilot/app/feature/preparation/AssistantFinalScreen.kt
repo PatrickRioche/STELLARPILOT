@@ -1,9 +1,7 @@
 package fr.stellarpilot.app.feature.preparation
 
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -54,10 +52,6 @@ private val assistantSteps = listOf(
     "Bilan"
 )
 
-private val assistantDirections = listOf(
-    "N", "NE", "E", "SE", "S", "SO", "O", "NO"
-)
-
 
 @Composable
 fun AssistantFinalScreen(
@@ -65,11 +59,11 @@ fun AssistantFinalScreen(
     connectionViewModel: ConnectionViewModel = viewModel()
 ) {
     var step by rememberSaveable { mutableIntStateOf(0) }
-    var selectedOrientation by rememberSaveable { mutableStateOf<String?>(null) }
     var selectedStarId by rememberSaveable { mutableStateOf<String?>(null) }
     var maskInstalled by rememberSaveable { mutableStateOf(false) }
     var maskRemoved by rememberSaveable { mutableStateOf(false) }
     var telescopeCapped by rememberSaveable { mutableStateOf(false) }
+    var darkEnteredDirectly by rememberSaveable { mutableStateOf(false) }
 
     val connectionState = connectionViewModel.uiState
     val baseUrl = connectionState.serverBaseUrl
@@ -142,6 +136,28 @@ fun AssistantFinalScreen(
                 .height(5.dp),
             color = StellarOrange
         )
+
+        if (step < 3) {
+            Spacer(Modifier.height(10.dp))
+            OutlinedButton(
+                onClick = {
+                    darkEnteredDirectly = true
+                    telescopeCapped = false
+                    darkViewModel.reset()
+                    step = 3
+                },
+                enabled = !darkState.isLoading,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text("ALLER DIRECTEMENT AUX DARKS")
+            }
+            Text(
+                "Mode calibration : astrométrie et Bahtinov sont ignorés.",
+                color = StellarMuted,
+                style = androidx.compose.material3.MaterialTheme.typography.bodySmall
+            )
+        }
+
         Spacer(Modifier.height(16.dp))
 
         when (step) {
@@ -152,21 +168,12 @@ fun AssistantFinalScreen(
             )
 
             1 -> AssistantAstrometryStep(
-                selectedOrientation = selectedOrientation,
-                onOrientation = { selectedOrientation = it },
                 state = astrometryState,
                 mountState = mountState,
                 onCapture = {
                     astrometryViewModel.load(
                         serverBaseUrl = baseUrl,
                         exposureSeconds = 4.0
-                    )
-                },
-                onNudge = { direction ->
-                    nudgeDirection(
-                        viewModel = mountViewModel,
-                        serverBaseUrl = baseUrl,
-                        direction = direction
                     )
                 },
                 onPrevious = { step = 0 },
@@ -195,9 +202,6 @@ fun AssistantFinalScreen(
                         centeringViewModel.gotoAndCenter(baseUrl, it)
                     }
                 },
-                onManualNudge = {
-                    centeringViewModel.nudgeManual(baseUrl, it)
-                },
                 onVerifyCentering = {
                     centeringViewModel.verifyManualCentering(baseUrl)
                 },
@@ -211,6 +215,7 @@ fun AssistantFinalScreen(
                 onMaskRemoved = { maskRemoved = true },
                 onPrevious = { step = 1 },
                 onContinue = {
+                    darkEnteredDirectly = false
                     telescopeCapped = false
                     darkViewModel.reset()
                     step = 3
@@ -220,17 +225,25 @@ fun AssistantFinalScreen(
             3 -> AssistantDarkStep(
                 state = darkState,
                 telescopeCapped = telescopeCapped,
+                directMode = darkEnteredDirectly,
                 onCapped = { telescopeCapped = true },
                 onStart = { darkViewModel.start(baseUrl) },
-                onCapture = { darkViewModel.captureNext(baseUrl) },
-                onPrevious = { step = 2 },
-                onContinue = { step = 4 }
+                onPrevious = {
+                    step = if (darkEnteredDirectly) 0 else 2
+                },
+                onContinue = {
+                    if (darkEnteredDirectly) {
+                        darkEnteredDirectly = false
+                        step = 0
+                    } else {
+                        step = 4
+                    }
+                }
             )
 
             else -> AssistantSummaryStep(
                 connectionViewModel = connectionViewModel,
                 mountState = mountState,
-                orientation = selectedOrientation,
                 astrometryState = astrometryState,
                 selectedStar = selectedStar,
                 centeringState = centeringState,
@@ -259,9 +272,8 @@ private fun AssistantConnectionStep(
 
     val mountReady = mount?.status?.lowercase() in setOf("ready", "ok", "online")
     val cameraReady = camera?.status?.lowercase() in setOf("ready", "ok", "online")
-    val gpsReady = gps?.status?.lowercase() == "fix"
+    val gpsReady = gps?.status?.lowercase() in setOf("fix", "available")
     val timeReady = mountState.timeSyncVerified
-    val ready = server != null && mountReady && cameraReady && gpsReady && timeReady
 
     AssistantCard("Connexion et contrôle du setup") {
         StatusLine("Serveur StellarPilot", server?.status == "ok" || server?.status == "ready")
@@ -305,7 +317,7 @@ private fun AssistantConnectionStep(
         Spacer(Modifier.height(8.dp))
         Button(
             onClick = onContinue,
-            enabled = ready,
+            enabled = true,
             modifier = Modifier.fillMaxWidth(),
             colors = assistantPrimaryButtonColors()
         ) {
@@ -317,27 +329,21 @@ private fun AssistantConnectionStep(
 
 @Composable
 private fun AssistantAstrometryStep(
-    selectedOrientation: String?,
-    onOrientation: (String) -> Unit,
     state: CameraPreviewUiState,
     mountState: MountDiagnosticsUiState,
     onCapture: () -> Unit,
-    onNudge: (String) -> Unit,
     onPrevious: () -> Unit,
     onContinue: () -> Unit
 ) {
     val solved = state.solveStatus == "solved"
     val synced = state.mountSyncStatus == "synced"
-    val validated = solved && synced && selectedOrientation != null
+    val validated = solved && synced
 
-    AssistantCard("Astrométrie et orientation") {
+    AssistantCard("Astrométrie") {
         Text(
-            "Indiquez la direction approximative du tube puis faites une pose de 4 s. " +
-                "StellarPilot résout le champ et synchronise OnStep.",
+            "Positionnez librement la monture. StellarPilot lit automatiquement AD et DEC via INDI, puis résout le champ réel de l'image.",
             color = StellarText
         )
-        Spacer(Modifier.height(10.dp))
-        DirectionSelector(selectedOrientation, onOrientation)
         Spacer(Modifier.height(12.dp))
 
         StellarImagePreview(
@@ -367,15 +373,32 @@ private fun AssistantAstrometryStep(
         }
 
         Spacer(Modifier.height(14.dp))
-        Text("Joystick monture", color = StellarText, fontWeight = FontWeight.Bold)
         Text(
-            "Petits déplacements de 0,10° pour corriger manuellement le cadrage.",
+            "Position courante de la monture",
+            color = StellarText,
+            fontWeight = FontWeight.Bold
+        )
+        Text(
+            "Ces coordonnées servent uniquement d'indice au solveur ; la solution astrométrique de l'image reste la référence.",
             color = StellarMuted
         )
+
         Spacer(Modifier.height(8.dp))
-        DirectionJoystick(
-            enabled = !state.isLoading && !mountState.isLoading,
-            onDirection = onNudge
+        StatusValue(
+            "RA OnStep",
+            mountState.status?.raHours?.let {
+                String.format(Locale.FRANCE, "%.6f h", it)
+            } ?: "?"
+        )
+        StatusValue(
+            "DEC OnStep",
+            mountState.status?.decDeg?.let {
+                String.format(Locale.FRANCE, "%+.5f°", it)
+            } ?: "?"
+        )
+        StatusValue(
+            "État OnStep",
+            mountState.status?.status ?: "?"
         )
 
         state.error?.let {
@@ -412,7 +435,6 @@ private fun AssistantBahtinovStep(
     onSelectStar: (SkyStar) -> Unit,
     onRefreshStars: () -> Unit,
     onGotoAndCenter: () -> Unit,
-    onManualNudge: (String) -> Unit,
     onVerifyCentering: () -> Unit,
     onMaskInstalled: () -> Unit,
     onFocusCapture: () -> Unit,
@@ -529,16 +551,27 @@ private fun AssistantBahtinovStep(
 
         if (centeringState.manualRequired && !centeringState.centered) {
             Spacer(Modifier.height(12.dp))
-            Text("Recentrage manuel", color = StellarOrange, fontWeight = FontWeight.Bold)
-            DirectionJoystick(
-                enabled = !centeringState.isLoading,
-                onDirection = onManualNudge
+
+            Text(
+                "Recentrage manuel via MLAstro Hub",
+                color = StellarOrange,
+                fontWeight = FontWeight.Bold
             )
+
+            Spacer(Modifier.height(6.dp))
+
+            Text(
+                "Déplacez précisément la monture avec MLAstro Hub, puis revenez dans StellarPilot.",
+                color = StellarText
+            )
+
             Spacer(Modifier.height(8.dp))
+
             Button(
                 onClick = onVerifyCentering,
                 enabled = !centeringState.isLoading,
-                modifier = Modifier.fillMaxWidth()
+                modifier = Modifier.fillMaxWidth(),
+                colors = assistantPrimaryButtonColors()
             ) {
                 Text("VÉRIFIER LE CENTRAGE • pose 4 s")
             }
@@ -651,16 +684,25 @@ private fun AssistantBahtinovStep(
 private fun AssistantDarkStep(
     state: DarkCalibrationUiState,
     telescopeCapped: Boolean,
+    directMode: Boolean,
     onCapped: () -> Unit,
     onStart: () -> Unit,
-    onCapture: () -> Unit,
     onPrevious: () -> Unit,
     onContinue: () -> Unit
 ) {
     AssistantCard("Prise de darks") {
+        if (directMode) {
+            Text(
+                "Mode darks directs • aucune validation d'astrométrie ou de mise au point n'est nécessaire.",
+                color = StellarGreen,
+                fontWeight = FontWeight.Bold
+            )
+            Spacer(Modifier.height(8.dp))
+        }
+
         if (!telescopeCapped) {
             Text(
-                "Retirez le masque Bahtinov puis placez le bouchon opaque sur le télescope.",
+                "Retirez tout masque de mise au point puis placez le bouchon opaque sur le télescope.",
                 color = StellarOrange,
                 fontWeight = FontWeight.Bold
             )
@@ -674,9 +716,43 @@ private fun AssistantDarkStep(
             }
         } else {
             StatusLine("Bouchon opaque", true)
-            StatusValue("Exposition", "4,0 s")
+            StatusValue("Exposition", "${String.format(Locale.FRANCE, "%.1f", state.exposureSeconds)} s")
             StatusValue("Darks", "${state.capturedCount}/${state.requestedCount}")
             StatusValue("Darks valides", state.validCount.toString())
+
+            if (state.sessionId != null) {
+                Spacer(Modifier.height(10.dp))
+                Text("PROFIL ARCHIVÉ", color = StellarOrange, fontWeight = FontWeight.Bold)
+                StatusValue("Caméra", state.cameraName ?: "Non disponible")
+                StatusValue(
+                    "Gain / offset",
+                    "${state.gain?.let { numberText(it) } ?: "?"} / ${state.offset?.let { numberText(it) } ?: "?"}"
+                )
+                StatusValue(
+                    "Binning",
+                    if (state.binX != null && state.binY != null) "${state.binX}×${state.binY}" else "Non disponible"
+                )
+                StatusValue(
+                    "Température",
+                    state.temperatureC?.let { String.format(Locale.FRANCE, "%.1f °C", it) } ?: "Non disponible"
+                )
+                StatusValue("Bayer", state.bayerPattern ?: "À lire dans le premier FITS")
+                StatusValue("Train KStars", state.opticalTrainName ?: "Non disponible")
+                StatusValue("Tube", state.telescopeName ?: "Non disponible")
+                StatusValue("Type", state.telescopeType ?: "Non disponible")
+                StatusValue(
+                    "Diamètre",
+                    state.apertureMm?.let { String.format(Locale.FRANCE, "%.1f mm", it) } ?: "Non disponible"
+                )
+                StatusValue(
+                    "Focale",
+                    state.focalLengthMm?.let { String.format(Locale.FRANCE, "%.1f mm", it) } ?: "Non disponible"
+                )
+                StatusValue(
+                    "F/D",
+                    state.focalRatio?.let { String.format(Locale.FRANCE, "f/%.2f", it) } ?: "Non disponible"
+                )
+            }
 
             Spacer(Modifier.height(10.dp))
             if (state.sessionId == null) {
@@ -686,23 +762,47 @@ private fun AssistantDarkStep(
                     modifier = Modifier.fillMaxWidth(),
                     colors = assistantPrimaryButtonColors()
                 ) {
-                    Text("DÉMARRER 10 DARKS")
+                    Text("DÉMARRER 20 DARKS")
                 }
             } else if (!state.complete) {
-                Button(
-                    onClick = onCapture,
-                    enabled = !state.isLoading,
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = assistantPrimaryButtonColors()
-                ) {
-                    Text(
-                        if (state.isLoading) {
-                            "POSE 4 s…"
-                        } else {
-                            "DARK ${state.capturedCount + 1}/${state.requestedCount} • 4 s"
-                        }
-                    )
-                }
+                val progress =
+                    if (state.requestedCount > 0) {
+                        state.capturedCount.toFloat() /
+                            state.requestedCount.toFloat()
+                    } else {
+                        0f
+                    }
+
+                LinearProgressIndicator(
+                    progress = progress,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(8.dp),
+                    color = StellarOrange
+                )
+
+                Spacer(Modifier.height(8.dp))
+
+                Text(
+                    "Acquisition automatique • ${state.capturedCount}/${state.requestedCount}",
+                    color = StellarOrange,
+                    fontWeight = FontWeight.Bold
+                )
+
+                Spacer(Modifier.height(3.dp))
+
+                Text(
+                    state.message ?: "Acquisition en cours…",
+                    color = StellarMuted
+                )
+            }
+
+            if (state.complete && state.masterDarkPath != null) {
+                Spacer(Modifier.height(12.dp))
+                Text("CALIBRATION CRÉÉE ✓", color = StellarGreen, fontWeight = FontWeight.Bold)
+                StatusValue("Master Dark", state.masterMethod ?: "Créé")
+                StatusValue("Pixels chauds", (state.hotPixelCount ?: 0).toString())
+                StatusValue("Carte pixels chauds", if (state.hotPixelMapPath != null) "Créée" else "Non disponible")
             }
 
             state.message?.let {
@@ -719,8 +819,8 @@ private fun AssistantDarkStep(
         NavigationButtons(
             onPrevious = onPrevious,
             onContinue = onContinue,
-            continueEnabled = state.complete && state.validCount == state.requestedCount,
-            continueText = "Voir le bilan"
+            continueEnabled = state.complete && state.masterDarkPath != null,
+            continueText = if (directMode) "TERMINER LES DARKS" else "Voir le bilan"
         )
     }
 }
@@ -730,7 +830,6 @@ private fun AssistantDarkStep(
 private fun AssistantSummaryStep(
     connectionViewModel: ConnectionViewModel,
     mountState: MountDiagnosticsUiState,
-    orientation: String?,
     astrometryState: CameraPreviewUiState,
     selectedStar: SkyStar?,
     centeringState: AssistantCenteringUiState,
@@ -746,16 +845,15 @@ private fun AssistantSummaryStep(
     val gpsOk = server?.devices?.gps?.status?.lowercase() == "fix"
     val astrometryOk = astrometryState.solveStatus == "solved" &&
         astrometryState.mountSyncStatus == "synced"
+    val darkOk = darkState.complete && darkState.masterDarkPath != null
     val ready = connectionOk && gpsOk && mountState.timeSyncVerified &&
-        astrometryOk && centeringState.centered && bahtinovState.focusValidated &&
-        darkState.complete && darkState.validCount == darkState.requestedCount
+        astrometryOk && centeringState.centered && bahtinovState.focusValidated && darkOk
 
     AssistantCard("Bilan de préparation") {
         StatusLine("Connexion matériel", connectionOk)
         StatusLine("GPS", gpsOk)
         StatusLine("Heure OnStep", mountState.timeSyncVerified)
         StatusLine("Astrométrie + SYNC", astrometryOk)
-        StatusLine("Orientation", orientation != null, orientation ?: "—")
         StatusLine(
             "Étoile de focus",
             selectedStar != null && centeringState.centered,
@@ -767,9 +865,9 @@ private fun AssistantSummaryStep(
             bahtinovState.focusScore?.let { "$it/100" } ?: "—"
         )
         StatusLine(
-            "Darks",
-            darkState.complete && darkState.validCount == darkState.requestedCount,
-            "${darkState.validCount}/${darkState.requestedCount}"
+            "Master Dark",
+            darkOk,
+            if (darkOk) "${darkState.validCount} darks • ${darkState.hotPixelCount ?: 0} pixels chauds" else "non créé"
         )
 
         Spacer(Modifier.height(14.dp))
@@ -797,30 +895,8 @@ private fun AssistantSummaryStep(
 }
 
 
-private fun nudgeDirection(
-    viewModel: MountDiagnosticsViewModel,
-    serverBaseUrl: String,
-    direction: String
-) {
-    val normalized = direction.uppercase()
-    val raDelta = when {
-        "E" in normalized -> 0.10 / 15.0
-        "O" in normalized -> -0.10 / 15.0
-        else -> 0.0
-    }
-    val decDelta = when {
-        "N" in normalized -> 0.10
-        "S" in normalized -> -0.10
-        else -> 0.0
-    }
-
-    viewModel.nudge(
-        serverBaseUrl = serverBaseUrl,
-        deltaRaHours = raDelta,
-        deltaDecDeg = decDelta,
-        label = "Joystick $direction"
-    )
-}
+private fun numberText(value: Double): String =
+    if (value % 1.0 == 0.0) value.toInt().toString() else String.format(Locale.FRANCE, "%.2f", value)
 
 
 private fun frenchDirection(value: String): String = when (value.uppercase()) {
@@ -828,68 +904,6 @@ private fun frenchDirection(value: String): String = when (value.uppercase()) {
     "W" -> "O"
     "NW" -> "NO"
     else -> value.uppercase()
-}
-
-
-@Composable
-private fun DirectionSelector(
-    selected: String?,
-    onSelect: (String) -> Unit
-) {
-    listOf(
-        listOf("NO", "N", "NE"),
-        listOf("O", "E"),
-        listOf("SO", "S", "SE")
-    ).forEach { row ->
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(6.dp)
-        ) {
-            row.forEach { direction ->
-                if (selected == direction) {
-                    Button(
-                        onClick = { onSelect(direction) },
-                        colors = assistantPrimaryButtonColors()
-                    ) {
-                        Text("✓ $direction")
-                    }
-                } else {
-                    OutlinedButton(onClick = { onSelect(direction) }) {
-                        Text(direction)
-                    }
-                }
-            }
-        }
-        Spacer(Modifier.height(5.dp))
-    }
-}
-
-
-@Composable
-private fun DirectionJoystick(
-    enabled: Boolean,
-    onDirection: (String) -> Unit
-) {
-    listOf(
-        listOf("NO", "N", "NE"),
-        listOf("O", "E"),
-        listOf("SO", "S", "SE")
-    ).forEach { row ->
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceEvenly
-        ) {
-            row.forEach { direction ->
-                OutlinedButton(
-                    onClick = { onDirection(direction) },
-                    enabled = enabled
-                ) {
-                    Text(direction, fontWeight = FontWeight.Bold)
-                }
-            }
-        }
-        Spacer(Modifier.height(4.dp))
-    }
 }
 
 

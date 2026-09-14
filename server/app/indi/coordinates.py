@@ -70,65 +70,50 @@ def epoch_of_date_to_j2000(
     )
 
 
-def _get_exact_property(
-    property_name: str,
-) -> str:
-    """Read one exact INDI property without wildcard monitoring semantics."""
-    try:
-        result = subprocess.run(
-            [
-                "indi_getprop",
-                "-h",
-                "127.0.0.1",
-                "-p",
-                "7624",
-                "-t",
-                "1",
-                property_name,
-            ],
-            capture_output=True,
-            text=True,
-            timeout=2,
-            check=False,
-        )
-        return (result.stdout or "").strip()
-
-    except subprocess.TimeoutExpired as exc:
-        output = exc.stdout or ""
-
-        if isinstance(output, bytes):
-            output = output.decode(
-                errors="replace"
-            )
-
-        return output.strip()
-
-    except (
-        OSError,
-        subprocess.SubprocessError,
-    ) as exc:
-        raise RuntimeError(str(exc)) from exc
-
-
 def mount_equatorial_property(
     indi_service: Any,
 ) -> tuple[str, str]:
-    """Return connected mount and coordinate property used by core GOTO."""
+    """Return the connected mount and the coordinate property core GOTO uses."""
     mount_name = indi_service._find_connected_mount()
-
     if mount_name is None:
         raise RuntimeError("Aucune monture INDI connectée")
 
-    for coordinate_property in (
+    candidates = (
         "EQUATORIAL_EOD_COORD",
         "EQUATORIAL_COORD",
-    ):
+    )
+
+    for coordinate_property in candidates:
         property_name = (
             f"{mount_name}.{coordinate_property}.RA"
         )
-        output = _get_exact_property(
-            property_name
-        )
+
+        try:
+            result = subprocess.run(
+                [
+                    "indi_getprop",
+                    "-h",
+                    "127.0.0.1",
+                    "-p",
+                    "7624",
+                    "-t",
+                    "2",
+                    property_name,
+                ],
+                capture_output=True,
+                text=True,
+                timeout=4,
+                check=False,
+            )
+            output = result.stdout or ""
+
+        except subprocess.TimeoutExpired as exc:
+            output = exc.stdout or ""
+            if isinstance(output, bytes):
+                output = output.decode(errors="replace")
+
+        except (OSError, subprocess.SubprocessError):
+            output = ""
 
         if f"{property_name}=" in output:
             return mount_name, coordinate_property
@@ -181,7 +166,6 @@ def mount_position_to_j2000(
 ) -> tuple[float, float]:
     if coordinate_property == "EQUATORIAL_EOD_COORD":
         return epoch_of_date_to_j2000(ra_hours, dec_deg)
-
     return ra_hours % 24.0, dec_deg
 
 
@@ -200,15 +184,28 @@ def sync_mount_j2000(
 
     mount_name = prepared["mount"]
     coordinate_property = prepared["coordinate_property"]
-    sync_property = (
-        f"{mount_name}.ON_COORD_SET.SYNC"
-    )
 
-    properties = _get_exact_property(
-        sync_property
-    )
+    try:
+        properties = subprocess.run(
+            [
+                "indi_getprop",
+                "-h",
+                "127.0.0.1",
+                "-p",
+                "7624",
+                "-t",
+                "3",
+                f"{mount_name}.ON_COORD_SET.*",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise RuntimeError(str(exc)) from exc
 
-    if f"{sync_property}=" not in properties:
+    if f"{mount_name}.ON_COORD_SET.SYNC=" not in properties.stdout:
         raise RuntimeError(
             "La monture INDI n'expose pas ON_COORD_SET.SYNC"
         )
@@ -230,7 +227,6 @@ def sync_mount_j2000(
             timeout=7,
             check=False,
         )
-
         if result.returncode != 0:
             detail = (
                 result.stderr.strip()
@@ -263,6 +259,8 @@ def sync_mount_j2000(
 
 
 # `app.main` imports this module after `_main_core.app` exists. Importing the
-# field-test routes here registers the diagnostic-only mount-frame endpoint
+# route modules here registers the diagnostic and session mount endpoints
 # without changing the public J2000 `/mount/goto` contract.
+from app.indi import firmware_routes as _firmware_routes  # noqa: E402,F401
 from app.indi import field_test_routes as _field_test_routes  # noqa: E402,F401
+from app.indi import session_setup_routes as _session_setup_routes  # noqa: E402,F401

@@ -64,6 +64,7 @@ def capture_centering_frame(
         "solver": None,
         "solver_detail": None,
         "pixel_scale_arcsec": None,
+        "verified_at": None,
     }
     metadata["state"] = "framing"
 
@@ -116,6 +117,7 @@ def solve_centering_frame(
         "solver": solution.get("solver"),
         "solver_detail": solution.get("detail"),
         "pixel_scale_arcsec": solution.get("pixel_scale_arcsec"),
+        "verified_at": None,
     }
 
     if (
@@ -132,6 +134,8 @@ def solve_centering_frame(
                 metadata["setup"]["centering_tolerance_arcsec"],
             )
         )
+        if centering["status"] == "centered":
+            centering["verified_at"] = service._utc_now()
 
     metadata["centering"] = centering
     metadata["state"] = (
@@ -156,3 +160,4 @@ def solve_centering_frame(
 from app.imaging import assistant_reference_routes as _assistant_reference_routes  # noqa: E402,F401
 from app.imaging import bahtinov_routes as _bahtinov_routes  # noqa: E402,F401
 from app.imaging import dark_routes as _dark_routes  # noqa: E402,F401
+from app.setup import routes as _setup_routes  # noqa: E402,F401

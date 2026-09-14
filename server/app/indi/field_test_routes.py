@@ -8,8 +8,9 @@ from pydantic import BaseModel, Field
 from app import _main_core as _core
 
 
-# Expose the effective StellarPilot server API version.
-_core.app.version = "0.7.1-beta"
+# The core app is shared with the previous POC generation. The V0.6 extension
+# is loaded by app.main, so expose the effective API version here as well.
+_core.app.version = "0.6.0-poc"
 
 _MAX_DIAGNOSTIC_AXIS_DELTA_DEG = 0.75
 _MAX_OTHER_AXIS_DRIFT_DEG = 0.08
