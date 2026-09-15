@@ -273,3 +273,4 @@ def sync_mount_j2000(
 from app.indi import firmware_routes as _firmware_routes  # noqa: E402,F401
 from app.indi import field_test_routes as _field_test_routes  # noqa: E402,F401
 from app.indi import session_setup_routes as _session_setup_routes  # noqa: E402,F401
+from app.indi import calibration_routes as _calibration_routes  # noqa: E402,F401
