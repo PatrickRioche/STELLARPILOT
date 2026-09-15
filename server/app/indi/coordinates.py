@@ -10,6 +10,7 @@ from astropy.time import Time
 
 
 J2000 = Time("J2000")
+MAX_SAFE_SYNC_DECLINATION_DEG = 80.0
 
 
 def _epoch_of_date_time() -> Time:
@@ -175,6 +176,14 @@ def sync_mount_j2000(
     dec_deg: float,
 ) -> dict[str, Any]:
     """Synchronize the mount to an astrometric J2000 field center."""
+    if abs(dec_deg) > MAX_SAFE_SYNC_DECLINATION_DEG:
+        raise RuntimeError(
+            "SYNC OnStep refusé près du pôle céleste : "
+            f"DEC={dec_deg:+.3f}°, limite "
+            f"±{MAX_SAFE_SYNC_DECLINATION_DEG:.0f}°. "
+            "Utilisez la calibration zénithale StellarPilot."
+        )
+
     ra_hours = (ra_deg / 15.0) % 24.0
     prepared = prepare_j2000_for_mount(
         indi_service,
