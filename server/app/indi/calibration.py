@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from math import asin, atan2, cos, degrees, radians, sin, tan
 
 import astropy.units as u
-from astropy.coordinates import AltAz, EarthLocation, FK5, SkyCoord
+from astropy.coordinates import FK5, SkyCoord
 from astropy.time import Time
 
 
@@ -24,6 +25,54 @@ def _parse_utc(value: str) -> datetime:
     return dt.astimezone(timezone.utc)
 
 
+def _julian_date(dt: datetime) -> float:
+    return dt.timestamp() / 86400.0 + 2440587.5
+
+
+def _local_sidereal_degrees(
+    dt: datetime,
+    longitude_deg: float,
+) -> float:
+    jd = _julian_date(dt)
+    t = (jd - 2451545.0) / 36525.0
+    gmst = (
+        280.46061837
+        + 360.98564736629 * (jd - 2451545.0)
+        + 0.000387933 * t * t
+        - (t * t * t) / 38710000.0
+    )
+    return (gmst + longitude_deg) % 360.0
+
+
+def _horizontal_from_hour_angle(
+    *,
+    latitude_deg: float,
+    dec_deg: float,
+    hour_angle_hours: float,
+) -> tuple[float, float]:
+    ha = radians(hour_angle_hours * 15.0)
+    dec = radians(dec_deg)
+    lat = radians(latitude_deg)
+
+    sin_alt = (
+        sin(dec) * sin(lat)
+        + cos(dec) * cos(lat) * cos(ha)
+    )
+    sin_alt = max(-1.0, min(1.0, sin_alt))
+    altitude = asin(sin_alt)
+
+    azimuth = atan2(
+        -sin(ha),
+        tan(dec) * cos(lat)
+        - sin(lat) * cos(ha),
+    )
+
+    return (
+        degrees(altitude),
+        (degrees(azimuth) + 360.0) % 360.0,
+    )
+
+
 def build_near_zenith_calibration_target(
     *,
     latitude_deg: float,
@@ -36,8 +85,9 @@ def build_near_zenith_calibration_target(
     The target is intentionally not the mathematical zenith. It is placed at
     hour angle -1.5 h (22.5 degrees east of the meridian), with a declination
     close to the observer latitude but clamped away from the celestial poles.
-    This keeps the field high in the sky while avoiding a meridian-flip
-    boundary and ill-conditioned RA synchronization near DEC +/-90 degrees.
+    Sidereal time and horizontal geometry use deterministic local formulae so
+    the Raspberry Pi remains fully offline. Astropy is used only for FK5
+    precession from epoch-of-date coordinates to J2000.
     """
     if not -90.0 <= latitude_deg <= 90.0:
         raise ValueError("latitude must be between -90 and 90")
@@ -46,42 +96,25 @@ def build_near_zenith_calibration_target(
 
     dt = _parse_utc(timestamp_utc)
     obstime = Time(dt)
-    location = EarthLocation.from_geodetic(
-        lon=longitude_deg * u.deg,
-        lat=latitude_deg * u.deg,
-        height=(altitude_m or 0.0) * u.m,
-    )
-
-    local_sidereal = obstime.sidereal_time(
-        "apparent",
-        longitude=location.lon,
-    )
 
     target_dec_deg = max(
         -TARGET_DECLINATION_LIMIT_DEG,
         min(TARGET_DECLINATION_LIMIT_DEG, latitude_deg),
     )
 
+    lst_deg = _local_sidereal_degrees(dt, longitude_deg)
+    lst_hours = lst_deg / 15.0
+
     # Hour angle H = LST - RA. H = -1.5 h means east of the meridian.
     target_ra_eod_hours = (
-        float(local_sidereal.hour) - SAFE_HOUR_ANGLE_HOURS
+        lst_hours - SAFE_HOUR_ANGLE_HOURS
     ) % 24.0
 
-    target_eod = SkyCoord(
-        ra=target_ra_eod_hours * u.hourangle,
-        dec=target_dec_deg * u.deg,
-        frame=FK5(equinox=obstime),
+    altitude_deg, azimuth_deg = _horizontal_from_hour_angle(
+        latitude_deg=latitude_deg,
+        dec_deg=target_dec_deg,
+        hour_angle_hours=SAFE_HOUR_ANGLE_HOURS,
     )
-    target_j2000 = target_eod.transform_to(FK5(equinox=J2000))
-    target_altaz = target_eod.transform_to(
-        AltAz(
-            obstime=obstime,
-            location=location,
-        )
-    )
-
-    altitude_deg = float(target_altaz.alt.deg)
-    azimuth_deg = float(target_altaz.az.deg) % 360.0
 
     if altitude_deg < MIN_TARGET_ALTITUDE_DEG:
         raise RuntimeError(
@@ -89,6 +122,13 @@ def build_near_zenith_calibration_target(
             f"altitude cible {altitude_deg:.1f}° < "
             f"{MIN_TARGET_ALTITUDE_DEG:.1f}°"
         )
+
+    target_eod = SkyCoord(
+        ra=target_ra_eod_hours * u.hourangle,
+        dec=target_dec_deg * u.deg,
+        frame=FK5(equinox=obstime),
+    )
+    target_j2000 = target_eod.transform_to(FK5(equinox=J2000))
 
     return {
         "strategy": "near_zenith_east",
@@ -100,4 +140,5 @@ def build_near_zenith_calibration_target(
         "altitude_deg": altitude_deg,
         "azimuth_deg": azimuth_deg,
         "timestamp_utc": dt.isoformat().replace("+00:00", "Z"),
+        "observer_altitude_m": altitude_m,
     }
