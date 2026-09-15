@@ -536,22 +536,24 @@ private fun AstrometryV060Step(
 ) {
     val solved = state.solveStatus == "solved"
     val synced = state.mountSyncStatus == "synced"
+    val pendingZenith = state.mountSyncStatus == "pending_zenith"
     val appreciated = assessment == "Correcte"
     val validated = solved && synced && appreciated
 
     V060Card(
-        title = "Première astrométrie",
-        subtitle = "Référentiel réel : pose initiale 4 s"
+        title = "Calibration astrométrique",
+        subtitle = "1. Solve au pôle sans SYNC • 2. zone zénithale sûre + SYNC"
     ) {
         Text(
-            "Pour le setup Uranus-C validé le 02/09/2026, StellarPilot démarre à 4 s. " +
-                "L'échelle mesurée de référence est ≈ 1,2183″/pixel.",
+            "Le premier solve mesure le champ sans synchroniser OnStep près du pôle. " +
+                "Une fois résolu, le bouton devient « Aller au zénith et calibrer » pour effectuer le GOTO, " +
+                "un second solve puis le SYNC dans une zone sûre.",
             color = StellarText
         )
         Spacer(Modifier.height(14.dp))
         Button(
             onClick = onCapture,
-            enabled = !state.isLoading,
+            enabled = !state.isLoading && !synced,
             modifier = Modifier.fillMaxWidth(),
             colors = ButtonDefaults.buttonColors(
                 containerColor = StellarOrange,
@@ -559,10 +561,17 @@ private fun AstrometryV060Step(
             )
         ) {
             Text(
-                if (state.isLoading) {
-                    "Capture / résolution / SYNC…"
-                } else {
-                    "Capturer à ${formatExposure(exposureSeconds)}, résoudre et synchroniser"
+                when {
+                    state.isLoading && state.calibrationStatus != null ->
+                        "Calibration zénithale en cours…"
+                    state.isLoading ->
+                        "Capture / résolution en cours…"
+                    pendingZenith ->
+                        "Aller au zénith et calibrer"
+                    synced ->
+                        "Calibration zénithale terminée"
+                    else ->
+                        "Capturer à ${formatExposure(exposureSeconds)} et résoudre"
                 },
                 fontWeight = FontWeight.Bold
             )
@@ -633,7 +642,14 @@ private fun AstrometryV060Step(
         V060Info("Qualité", state.qualityLabel ?: "—")
         V060Info("Étoiles", state.qualityStarCount?.toString() ?: "—")
         V060Info("Solve", state.solveStatus ?: "—")
-        V060Info("SYNC OnStep", state.mountSyncStatus ?: "—")
+        V060Info(
+            "SYNC OnStep",
+            when (state.mountSyncStatus) {
+                "pending_zenith" -> "En attente de calibration zénithale"
+                "synced" -> "✓ synchronisé"
+                else -> state.mountSyncStatus ?: "—"
+            }
+        )
         V060Info(
             "Échelle",
             state.pixelScaleArcsec?.let {
@@ -652,11 +668,21 @@ private fun AstrometryV060Step(
                 color = StellarGreen,
                 fontWeight = FontWeight.Bold
             )
+        } else if (solved && pendingZenith) {
+            Text(
+                "✓ Premier solve réussi sans SYNC. Appuyez maintenant sur « Aller au zénith et calibrer ».",
+                color = StellarOrange,
+                fontWeight = FontWeight.Bold
+            )
         } else if (solved && !synced) {
             Text(
                 "Astrométrie résolue, mais SYNC OnStep non validé : progression bloquée.",
                 color = StellarOrange
             )
+        }
+        state.calibrationDetail?.let {
+            Spacer(Modifier.height(6.dp))
+            Text(it, color = if (synced) StellarGreen else StellarOrange)
         }
         state.mountSyncDetail?.let {
             Spacer(Modifier.height(6.dp))
