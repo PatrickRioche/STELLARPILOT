@@ -180,6 +180,19 @@ class CameraPreviewViewModel(
         exposureSeconds: Double,
         minimumStars: Int = 80
     ) {
+        if (
+            !uiState.isLoading &&
+            uiState.solveStatus == "solved" &&
+            uiState.mountSyncStatus == "pending_zenith"
+        ) {
+            calibrateNearZenith(
+                serverBaseUrl = serverBaseUrl,
+                exposureSeconds = exposureSeconds,
+                minimumStars = minimumStars
+            )
+            return
+        }
+
         if (uiState.isLoading) return
 
         demoM103State = demoM103State.copy(isDisplayed = false)
