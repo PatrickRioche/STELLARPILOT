@@ -18,7 +18,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.painterResource
 import androidx.lifecycle.viewmodel.compose.viewModel
-import fr.stellarpilot.app.feature.capture.CaptureV067Screen
+import fr.stellarpilot.app.feature.capture.CaptureScreen
 import fr.stellarpilot.app.feature.connection.ConnectionViewModel
 import fr.stellarpilot.app.feature.galleries.GalleriesScreen
 import fr.stellarpilot.app.feature.preparation.PreparationV060HostScreen
@@ -148,7 +148,7 @@ fun StellarPilotApp() {
                                 .serverBaseUrl
                     )
 
-                    3 -> CaptureV067Screen(
+                    3 -> CaptureScreen(
                         serverBaseUrl =
                             connectionViewModel
                                 .uiState
