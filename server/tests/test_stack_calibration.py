@@ -30,7 +30,7 @@ def _snapshot(temperature_c: float = 10.5):
     }
 
 
-def _write_light(path: Path, value: int = 100):
+def _write_light(path: Path, value: int = 100, temperature_c: float | None = None):
     data = np.full((8, 8), value, dtype=np.uint16)
     data[2, 2] = 1000
     header = fits.Header()
@@ -38,7 +38,45 @@ def _write_light(path: Path, value: int = 100):
     header["EXPTIME"] = 4.0
     header["GAIN"] = 305.0
     header["OFFSET"] = 0.0
+    if temperature_c is not None:
+        header["CCD-TEMP"] = temperature_c
     fits.PrimaryHDU(data=data, header=header).writeto(path, overwrite=True)
+
+
+def _master_item(
+    master_path: Path,
+    *,
+    master_id: str,
+    temperature_c: float,
+    created_at: str,
+    hot_path: Path | None = None,
+):
+    return {
+        "id": master_id,
+        "created_at": created_at,
+        "compatibility": {
+            "camera": "PlayerOne CCD Uranus-C",
+            "exposure_s": 4.0,
+            "gain": 305.0,
+            "offset": 0.0,
+            "bin_x": 1,
+            "bin_y": 1,
+            "frame_width": 8,
+            "frame_height": 8,
+            "bits_per_pixel": 16,
+            "bayer_pattern": "RGGB",
+            "temperature_c": temperature_c,
+            # Historical masters can still carry the old 2 °C value. Runtime
+            # compatibility now follows StellarPilot's current 5 °C policy.
+            "temperature_tolerance_c": 2.0,
+        },
+        "master_dark": {"path": str(master_path)},
+        "hot_pixels": (
+            {"count": 1, "mask_fits": str(hot_path)}
+            if hot_path is not None
+            else {}
+        ),
+    }
 
 
 def test_select_and_apply_compatible_master_dark(tmp_path, monkeypatch):
@@ -60,29 +98,13 @@ def test_select_and_apply_compatible_master_dark(tmp_path, monkeypatch):
         "status": "ready",
         "count": 1,
         "masters": [
-            {
-                "id": "dark-001",
-                "created_at": "2026-09-07T18:00:00+00:00",
-                "compatibility": {
-                    "camera": "PlayerOne CCD Uranus-C",
-                    "exposure_s": 4.0,
-                    "gain": 305.0,
-                    "offset": 0.0,
-                    "bin_x": 1,
-                    "bin_y": 1,
-                    "frame_width": 8,
-                    "frame_height": 8,
-                    "bits_per_pixel": 16,
-                    "bayer_pattern": "RGGB",
-                    "temperature_c": 10.0,
-                    "temperature_tolerance_c": 2.0,
-                },
-                "master_dark": {"path": str(master)},
-                "hot_pixels": {
-                    "count": 1,
-                    "mask_fits": str(hot),
-                },
-            }
+            _master_item(
+                master,
+                master_id="dark-001",
+                temperature_c=10.0,
+                created_at="2026-09-07T18:00:00+00:00",
+                hot_path=hot,
+            )
         ],
     }
     monkeypatch.setattr(stack_calibration.darks, "dark_library", lambda: library)
@@ -96,6 +118,7 @@ def test_select_and_apply_compatible_master_dark(tmp_path, monkeypatch):
     assert selection["status"] == "ready"
     assert selection["master"]["id"] == "dark-001"
     assert selection["temperature_delta_c"] == 0.5
+    assert selection["temperature_tolerance_c"] == 5.0
 
     result = stack_calibration.calibrate_light(
         light,
@@ -116,7 +139,7 @@ def test_select_and_apply_compatible_master_dark(tmp_path, monkeypatch):
     assert header["SPDARKID"] == "dark-001"
 
 
-def test_preferred_master_is_rejected_when_temperature_drifts(tmp_path, monkeypatch):
+def test_temperature_tolerance_is_five_degrees(tmp_path, monkeypatch):
     light = tmp_path / "light.fits"
     master = tmp_path / "master_dark.fits"
     _write_light(light)
@@ -129,26 +152,101 @@ def test_preferred_master_is_rejected_when_temperature_drifts(tmp_path, monkeypa
         "status": "ready",
         "count": 1,
         "masters": [
-            {
-                "id": "dark-001",
-                "created_at": "2026-09-07T18:00:00+00:00",
-                "compatibility": {
-                    "camera": "PlayerOne CCD Uranus-C",
-                    "exposure_s": 4.0,
-                    "gain": 305.0,
-                    "offset": 0.0,
-                    "bin_x": 1,
-                    "bin_y": 1,
-                    "frame_width": 8,
-                    "frame_height": 8,
-                    "bits_per_pixel": 16,
-                    "bayer_pattern": "RGGB",
-                    "temperature_c": 10.0,
-                    "temperature_tolerance_c": 2.0,
-                },
-                "master_dark": {"path": str(master)},
-                "hot_pixels": {},
-            }
+            _master_item(
+                master,
+                master_id="dark-001",
+                temperature_c=10.0,
+                created_at="2026-09-07T18:00:00+00:00",
+            )
+        ],
+    }
+    monkeypatch.setattr(stack_calibration.darks, "dark_library", lambda: library)
+
+    accepted = stack_calibration.select_compatible_master(
+        light,
+        exposure_s=4.0,
+        snapshot=_snapshot(temperature_c=15.0),
+    )
+    assert accepted["status"] == "ready"
+    assert accepted["temperature_delta_c"] == 5.0
+
+    rejected = stack_calibration.select_compatible_master(
+        light,
+        exposure_s=4.0,
+        snapshot=_snapshot(temperature_c=15.1),
+    )
+    assert rejected["status"] == "unavailable"
+    assert "15.1 °C" in rejected["detail"]
+    assert "10.0 °C" in rejected["detail"]
+    assert "5.1 °C" in rejected["detail"]
+    assert "±5.0 °C" in rejected["detail"]
+    assert "Refaites les darks" in rejected["detail"]
+
+
+def test_fits_temperature_has_priority_over_live_camera_temperature(tmp_path, monkeypatch):
+    light = tmp_path / "light.fits"
+    master = tmp_path / "master_dark.fits"
+    _write_light(light, temperature_c=20.0)
+    fits.PrimaryHDU(data=np.full((8, 8), 10.0, dtype=np.float32)).writeto(
+        master,
+        overwrite=True,
+    )
+
+    library = {
+        "status": "ready",
+        "count": 1,
+        "masters": [
+            _master_item(
+                master,
+                master_id="dark-020",
+                temperature_c=20.0,
+                created_at="2026-09-15T20:00:00+00:00",
+            )
+        ],
+    }
+    monkeypatch.setattr(stack_calibration.darks, "dark_library", lambda: library)
+
+    selection = stack_calibration.select_compatible_master(
+        light,
+        exposure_s=4.0,
+        snapshot=_snapshot(temperature_c=30.0),
+    )
+
+    assert selection["status"] == "ready"
+    assert selection["profile"]["temperature_c"] == 20.0
+    assert selection["temperature_delta_c"] == 0.0
+
+
+def test_incompatible_preferred_master_switches_to_another_compatible_master(
+    tmp_path,
+    monkeypatch,
+):
+    light = tmp_path / "light.fits"
+    old_master = tmp_path / "old_master.fits"
+    better_master = tmp_path / "better_master.fits"
+    _write_light(light)
+    for path in (old_master, better_master):
+        fits.PrimaryHDU(data=np.full((8, 8), 10.0, dtype=np.float32)).writeto(
+            path,
+            overwrite=True,
+        )
+
+    library = {
+        "status": "ready",
+        "count": 2,
+        "masters": [
+            _master_item(
+                old_master,
+                master_id="dark-old",
+                temperature_c=25.0,
+                created_at="2026-09-15T18:00:00+00:00",
+            ),
+            _master_item(
+                better_master,
+                master_id="dark-new",
+                temperature_c=14.0,
+                created_at="2026-09-15T21:00:00+00:00",
+            ),
         ],
     }
     monkeypatch.setattr(stack_calibration.darks, "dark_library", lambda: library)
@@ -157,11 +255,14 @@ def test_preferred_master_is_rejected_when_temperature_drifts(tmp_path, monkeypa
         light,
         exposure_s=4.0,
         snapshot=_snapshot(temperature_c=13.0),
-        preferred_master_id="dark-001",
+        preferred_master_id="dark-old",
     )
 
-    assert selection["status"] == "unavailable"
-    assert "plus compatible" in selection["detail"]
+    assert selection["status"] == "ready"
+    assert selection["master"]["id"] == "dark-new"
+    assert selection["switched_master"] is True
+    assert selection["previous_master_id"] == "dark-old"
+    assert selection["temperature_delta_c"] == 1.0
 
 
 def test_final_stack_sigma_clips_one_outlier(tmp_path):
