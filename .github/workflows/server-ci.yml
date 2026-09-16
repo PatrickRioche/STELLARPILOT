@@ -4,10 +4,12 @@ on:
   push:
     paths:
       - "server/**"
+      - "VERSION"
       - ".github/workflows/server-ci.yml"
   pull_request:
     paths:
       - "server/**"
+      - "VERSION"
       - ".github/workflows/server-ci.yml"
   workflow_dispatch:
 
@@ -62,3 +64,42 @@ jobs:
         with:
           name: stellarpilot-openapi
           path: server/build/openapi.json
+
+      - name: Stage Raspberry Pi server bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf dist
+          mkdir -p dist/stage/server
+          rsync -a \
+            --exclude '.venv/' \
+            --exclude 'data/' \
+            --exclude 'build/' \
+            --exclude '.pytest_cache/' \
+            --exclude '__pycache__/' \
+            server/ dist/stage/server/
+
+          VERSION_VALUE="$(tr -d '\r\n' < VERSION)"
+          BUILD_TIMESTAMP="$(date -u +%Y%m%d-%H%M%S)"
+          cat > dist/stage/server/BUILD_INFO.json <<EOF
+          {
+            "service": "stellarpilot-server",
+            "version": "${VERSION_VALUE}",
+            "build_timestamp": "${BUILD_TIMESTAMP}",
+            "git_sha": "${GITHUB_SHA}",
+            "branch": "${GITHUB_HEAD_REF:-${GITHUB_REF_NAME}}",
+            "dirty": false
+          }
+          EOF
+
+          tar -czf "dist/StellarPilot-server-${VERSION_VALUE}.tar.gz" -C dist/stage server
+          sha256sum "dist/StellarPilot-server-${VERSION_VALUE}.tar.gz" > "dist/StellarPilot-server-${VERSION_VALUE}.sha256"
+
+      - name: Upload Raspberry Pi server bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: StellarPilot-server-v0.6.9
+          path: |
+            dist/StellarPilot-server-*.tar.gz
+            dist/StellarPilot-server-*.sha256
+          if-no-files-found: error
