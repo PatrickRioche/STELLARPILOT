@@ -16,6 +16,7 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -38,10 +39,18 @@ import java.util.Locale
 @Composable
 fun CaptureV069RestoredScreen(
     serverBaseUrl: String,
-    bahtinovViewModel: BahtinovViewModel = viewModel()
+    bahtinovViewModel: BahtinovViewModel = viewModel(),
+    captureViewModel: CaptureViewModel = viewModel()
 ) {
     var bahtinovExpanded by rememberSaveable { mutableStateOf(false) }
     val bahtinov = bahtinovViewModel.uiState
+
+    // CaptureViewModel is activity-scoped and survives tab changes. Re-read the
+    // target persisted by Ciel every time this Capture composition is entered
+    // so CIBLE ACTIVE always reflects the observer's latest selection.
+    LaunchedEffect(serverBaseUrl) {
+        captureViewModel.loadSelectedTarget()
+    }
 
     Column(modifier = Modifier.fillMaxSize()) {
         Card(
@@ -147,7 +156,10 @@ fun CaptureV069RestoredScreen(
         }
 
         Box(modifier = Modifier.weight(1f)) {
-            CaptureScreen(serverBaseUrl = serverBaseUrl)
+            CaptureScreen(
+                serverBaseUrl = serverBaseUrl,
+                viewModel = captureViewModel
+            )
         }
     }
 }
