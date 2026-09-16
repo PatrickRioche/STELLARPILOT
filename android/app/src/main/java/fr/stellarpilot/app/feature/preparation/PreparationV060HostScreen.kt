@@ -8,7 +8,7 @@ fun PreparationV060HostScreen(
     onOpenSky: () -> Unit,
     connectionViewModel: ConnectionViewModel
 ) {
-    AssistantFinalScreen(
+    AssistantV069Screen(
         onOpenSky = onOpenSky,
         connectionViewModel = connectionViewModel
     )
