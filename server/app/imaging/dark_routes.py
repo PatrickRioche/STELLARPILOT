@@ -2,12 +2,19 @@ from fastapi import HTTPException
 from pydantic import BaseModel, Field
 
 from app import _main_core as _core
+from app.imaging import darks as dark_module
 from app.imaging.darks import (
     capture_dark,
     dark_library,
     dark_status,
     start_dark_session,
 )
+
+
+# V0.6.9 policy: persist the same ±5 °C tolerance that the stacking selector
+# actually applies at runtime. This also keeps newly created Master metadata
+# consistent with the diagnostics shown to the observer.
+dark_module.TEMPERATURE_TOLERANCE_C = 5.0
 
 
 class DarkStartPayload(BaseModel):
