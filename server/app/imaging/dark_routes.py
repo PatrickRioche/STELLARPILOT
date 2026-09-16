@@ -12,7 +12,7 @@ from app.imaging.darks import (
 
 class DarkStartPayload(BaseModel):
     exposure_s: float = Field(default=4.0, gt=0, le=3600)
-    requested_count: int = Field(default=20, ge=3, le=100)
+    requested_count: int = Field(default=10, ge=3, le=100)
 
 
 app = _core.app
