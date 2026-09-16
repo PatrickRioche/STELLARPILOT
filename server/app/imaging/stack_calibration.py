@@ -12,6 +12,21 @@ from app.indi.service import indi_service
 
 
 NUMERIC_TOLERANCE = 1e-3
+TEMPERATURE_TOLERANCE_C = 5.0
+
+MISMATCH_LABELS = {
+    "camera": "caméra",
+    "exposure_s": "temps de pose",
+    "gain": "gain",
+    "offset": "offset",
+    "bin_x": "binning X",
+    "bin_y": "binning Y",
+    "frame_width": "largeur",
+    "frame_height": "hauteur",
+    "bits_per_pixel": "profondeur",
+    "bayer_pattern": "matrice Bayer",
+    "temperature_c": "température",
+}
 
 
 def _number(value: Any) -> float | None:
@@ -70,10 +85,12 @@ def light_profile(
         "frame_height": int(data.shape[0]),
         "bits_per_pixel": sensor.get("bits_per_pixel") or abs(int(header.get("BITPIX", 0))),
         "bayer_pattern": pattern,
+        # The FITS value describes the temperature of this exact exposure.
+        # Fall back to the live INDI value only when the image has no temperature metadata.
         "temperature_c": (
-            camera.get("temperature_c")
-            if camera.get("temperature_c") is not None
-            else fits_temperature
+            fits_temperature
+            if fits_temperature is not None
+            else camera.get("temperature_c")
         ),
     }
 
@@ -108,16 +125,99 @@ def compatibility_mismatches(
 
     light_temperature = _number(light.get("temperature_c"))
     master_temperature = _number(master.get("temperature_c"))
-    tolerance = _number(master.get("temperature_tolerance_c"))
-    if tolerance is None:
-        tolerance = darks.TEMPERATURE_TOLERANCE_C
 
     if light_temperature is None or master_temperature is None:
         mismatches.append("temperature_c")
-    elif abs(light_temperature - master_temperature) > tolerance:
+    elif abs(light_temperature - master_temperature) > TEMPERATURE_TOLERANCE_C:
         mismatches.append("temperature_c")
 
     return mismatches
+
+
+def _format_profile_value(key: str, value: Any) -> str:
+    if value is None:
+        return "—"
+    number = _number(value)
+    if key == "temperature_c" and number is not None:
+        return f"{number:.1f} °C"
+    if key == "exposure_s" and number is not None:
+        return f"{number:g} s"
+    if key in {"gain", "offset"} and number is not None:
+        return f"{number:g}"
+    return str(value)
+
+
+def _diagnostic_detail(
+    profile: dict[str, Any],
+    diagnostics: list[dict[str, Any]],
+) -> str:
+    if not diagnostics:
+        return (
+            "Aucun Master Dark n'est disponible dans la bibliothèque. "
+            "Refaites les darks avant de reprendre le stacking."
+        )
+
+    def diagnostic_rank(item: dict[str, Any]) -> tuple[int, float, str]:
+        master_profile = item.get("master_profile") or {}
+        light_temperature = _number(profile.get("temperature_c"))
+        master_temperature = _number(master_profile.get("temperature_c"))
+        if light_temperature is not None and master_temperature is not None:
+            temperature_delta = abs(light_temperature - master_temperature)
+        else:
+            temperature_delta = float("inf")
+        return (
+            len(item.get("mismatches") or []),
+            temperature_delta,
+            str(item.get("created_at") or ""),
+        )
+
+    candidate = min(diagnostics, key=diagnostic_rank)
+    mismatches = list(candidate.get("mismatches") or [])
+    master_profile = candidate.get("master_profile") or {}
+    candidate_id = candidate.get("id") or "inconnu"
+
+    reasons: list[str] = []
+    for key in mismatches:
+        label = MISMATCH_LABELS.get(key, key)
+        if key == "temperature_c":
+            light_temperature = _number(profile.get("temperature_c"))
+            master_temperature = _number(master_profile.get("temperature_c"))
+            if light_temperature is not None and master_temperature is not None:
+                delta = abs(light_temperature - master_temperature)
+                reasons.append(
+                    f"{label} LIGHT {light_temperature:.1f} °C / DARK "
+                    f"{master_temperature:.1f} °C (écart {delta:.1f} °C > "
+                    f"tolérance ±{TEMPERATURE_TOLERANCE_C:.1f} °C)"
+                )
+            else:
+                reasons.append(
+                    f"{label} indisponible (LIGHT "
+                    f"{_format_profile_value(key, profile.get(key))} / DARK "
+                    f"{_format_profile_value(key, master_profile.get(key))})"
+                )
+        else:
+            reasons.append(
+                f"{label} LIGHT {_format_profile_value(key, profile.get(key))} / "
+                f"DARK {_format_profile_value(key, master_profile.get(key))}"
+            )
+
+    if not reasons:
+        reasons.append("profil incompatible")
+
+    return (
+        f"Master Dark {candidate_id} refusé : "
+        + "; ".join(reasons)
+        + ". Refaites les darks avec les paramètres actuels, puis relancez le stacking."
+    )
+
+
+def _select_best_compatible(
+    compatible: list[tuple[float, str, dict[str, Any]]],
+) -> tuple[float, str, dict[str, Any]]:
+    # Prefer the closest sensor temperature, then the most recent master.
+    best_delta = min(entry[0] for entry in compatible)
+    closest = [entry for entry in compatible if abs(entry[0] - best_delta) <= 1e-9]
+    return max(closest, key=lambda entry: entry[1])
 
 
 def select_compatible_master(
@@ -141,18 +241,31 @@ def select_compatible_master(
     for item in library.get("masters", []):
         master_profile = item.get("compatibility") or {}
         mismatches = compatibility_mismatches(profile, master_profile)
+        light_temperature = _number(profile.get("temperature_c"))
+        master_temperature = _number(master_profile.get("temperature_c"))
+        temperature_delta = (
+            abs(light_temperature - master_temperature)
+            if light_temperature is not None and master_temperature is not None
+            else None
+        )
         diagnostics.append(
             {
                 "id": item.get("id"),
+                "created_at": item.get("created_at"),
                 "mismatches": mismatches,
+                "master_profile": master_profile,
+                "temperature_delta_c": (
+                    round(temperature_delta, 3)
+                    if temperature_delta is not None
+                    else None
+                ),
+                "temperature_tolerance_c": TEMPERATURE_TOLERANCE_C,
             }
         )
         if mismatches:
             continue
 
-        light_temperature = float(profile["temperature_c"])
-        master_temperature = float(master_profile["temperature_c"])
-        delta = abs(light_temperature - master_temperature)
+        delta = float(temperature_delta or 0.0)
 
         if preferred_master_id and item.get("id") == preferred_master_id:
             preferred_item = item
@@ -166,49 +279,44 @@ def select_compatible_master(
             )
         )
 
-    if preferred_master_id:
-        if preferred_item is None:
-            return {
-                "status": "unavailable",
-                "profile": profile,
-                "master": None,
-                "temperature_delta_c": None,
-                "diagnostics": diagnostics,
-                "detail": "Le Master Dark de la session n'est plus compatible",
-            }
+    if preferred_item is not None:
         return {
             "status": "ready",
             "profile": profile,
             "master": preferred_item,
-            "temperature_delta_c": round(float(preferred_delta), 3),
+            "temperature_delta_c": round(float(preferred_delta or 0.0), 3),
+            "temperature_tolerance_c": TEMPERATURE_TOLERANCE_C,
             "diagnostics": diagnostics,
             "detail": None,
+            "switched_master": False,
         }
 
-    if not compatible:
+    if compatible:
+        best = _select_best_compatible(compatible)
+        item = best[2]
+        switched = bool(preferred_master_id and item.get("id") != preferred_master_id)
         return {
-            "status": "unavailable",
+            "status": "ready",
             "profile": profile,
-            "master": None,
-            "temperature_delta_c": None,
+            "master": item,
+            "temperature_delta_c": round(best[0], 3),
+            "temperature_tolerance_c": TEMPERATURE_TOLERANCE_C,
             "diagnostics": diagnostics,
-            "detail": "Aucun Master Dark compatible",
+            "detail": None,
+            "switched_master": switched,
+            "previous_master_id": preferred_master_id if switched else None,
         }
-
-    # Prefer the closest sensor temperature, then the most recent master.
-    compatible.sort(key=lambda entry: (entry[0], entry[1]), reverse=False)
-    best_delta = compatible[0][0]
-    closest = [entry for entry in compatible if abs(entry[0] - best_delta) <= 1e-9]
-    best = max(closest, key=lambda entry: entry[1])
-    item = best[2]
 
     return {
-        "status": "ready",
+        "status": "unavailable",
         "profile": profile,
-        "master": item,
-        "temperature_delta_c": round(best[0], 3),
+        "master": None,
+        "temperature_delta_c": None,
+        "temperature_tolerance_c": TEMPERATURE_TOLERANCE_C,
         "diagnostics": diagnostics,
-        "detail": None,
+        "detail": _diagnostic_detail(profile, diagnostics),
+        "recreate_darks_recommended": True,
+        "previous_master_id": preferred_master_id,
     }
 
 
