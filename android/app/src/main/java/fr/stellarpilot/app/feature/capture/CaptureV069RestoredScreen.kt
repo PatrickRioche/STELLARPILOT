@@ -1,6 +1,7 @@
 package fr.stellarpilot.app.feature.capture
 
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -146,9 +147,8 @@ fun CaptureV069RestoredScreen(
             }
         }
 
-        CaptureScreen(
-            serverBaseUrl = serverBaseUrl,
-            modifier = Modifier.weight(1f)
-        )
+        Box(modifier = Modifier.weight(1f)) {
+            CaptureScreen(serverBaseUrl = serverBaseUrl)
+        }
     }
 }
