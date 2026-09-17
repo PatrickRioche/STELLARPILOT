@@ -171,6 +171,11 @@ class CaptureSessionApiClient(
             centerAction("capture/sessions/$sessionId/center/solve")
         }
 
+    suspend fun cancelCenterFrame(sessionId: String): CaptureSessionStatus =
+        withContext(Dispatchers.IO) {
+            centerAction("capture/sessions/$sessionId/center/cancel")
+        }
+
     private fun centerAction(path: String): CaptureSessionStatus {
         val root = executeJson(path, "POST")
         if (root.optString("status") == "error") {
