@@ -207,10 +207,15 @@ class CaptureViewModel(
             "$purpose • pose de contrôle"
         )
 
-        if (session.centering.status == "centered") {
-            return session
-        }
-        if (session.centering.status == "unsolved") {
+        if (
+            session.centering.status in setOf(
+                "centered",
+                "unsolved",
+                "cancelled",
+                "cancelling",
+                "busy"
+            )
+        ) {
             return session
         }
         if (target.objectType.equals("sun", ignoreCase = true)) {
@@ -280,6 +285,10 @@ class CaptureViewModel(
                         "Cible centrée ✓ — vous pouvez démarrer le stacking"
                     "unsolved" ->
                         "Astrométrie non résolue — aucune correction envoyée"
+                    "cancelled", "cancelling" ->
+                        "Astrométrie arrêtée"
+                    "busy" ->
+                        "Une autre astrométrie StellarPilot est déjà en cours"
                     else ->
                         "Correction automatique 1/1 effectuée mais centrage non validé — ajustement manuel requis"
                 }
@@ -288,13 +297,15 @@ class CaptureViewModel(
                     isBusy = false,
                     session = session,
                     statusMessage = message,
-                    error =
-                        if (session.centering.status == "centered") {
-                            null
-                        } else {
+                    error = when (session.centering.status) {
+                        "centered", "cancelled", "cancelling" -> null
+                        "busy" ->
+                            session.centering.solverDetail
+                                ?: "Une autre astrométrie est déjà en cours"
+                        else ->
                             session.centering.solverDetail
                                 ?: "Centrage non validé"
-                        }
+                    }
                 )
             } catch (error: Exception) {
                 stopOperationTimer()
@@ -302,6 +313,44 @@ class CaptureViewModel(
                     isBusy = false,
                     error = error.message ?: "Erreur de capture / centrage",
                     statusMessage = null
+                )
+            }
+        }
+    }
+
+    fun cancelAstrometry(serverBaseUrl: String) {
+        val session = uiState.session ?: return
+        if (!uiState.isBusy || uiState.operationPhase != "astrometry") return
+
+        if (DemoModeState.active) {
+            stopOperationTimer()
+            uiState = uiState.copy(
+                isBusy = false,
+                statusMessage = "Astrométrie démo arrêtée",
+                error = null
+            )
+            return
+        }
+
+        viewModelScope.launch {
+            uiState = uiState.copy(
+                statusMessage = "Arrêt de l'astrométrie…",
+                error = null
+            )
+            try {
+                val cancelled = CaptureSessionApiClient(serverBaseUrl)
+                    .cancelCenterFrame(session.id)
+                stopOperationTimer()
+                uiState = uiState.copy(
+                    isBusy = false,
+                    session = cancelled,
+                    statusMessage = "Astrométrie arrêtée",
+                    error = null
+                )
+            } catch (error: Exception) {
+                uiState = uiState.copy(
+                    error = error.message
+                        ?: "Impossible d'arrêter l'astrométrie"
                 )
             }
         }
