@@ -344,7 +344,7 @@ class CaptureSessionApiClient(
                 .get()
                 .build()
 
-        client.newCall(request.build())
+        client.newCall(request)
             .execute()
             .use { response ->
                 check(response.isSuccessful) {
