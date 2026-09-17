@@ -321,7 +321,7 @@ class PlateSolverService:
 
         strategies = [
             {
-                "name": "scale_narrow_position",
+                "name": "scale_narrow",
                 "scale_low": expected_scale_arcsec * 0.70,
                 "scale_high": expected_scale_arcsec * 1.40,
                 "radius": 8.0,
