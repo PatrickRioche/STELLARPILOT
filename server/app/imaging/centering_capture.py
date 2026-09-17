@@ -5,6 +5,7 @@ from typing import Any
 
 from app.imaging.quality import analyze_fits
 from app.imaging.sessions import CaptureSessionService, capture_session_service
+from app.imaging.solve_control import request_cancel, solve_robust_cancellable
 
 
 def capture_centering_frame(
@@ -97,14 +98,25 @@ def solve_centering_frame(
         }
 
     target = metadata["target"]
-    solution = service.solver.solve_robust(
-        image,
+    solution = solve_robust_cancellable(
+        session_id=session_id,
+        solver=service.solver,
+        image=image,
         ra_hint=target["ra_hours"] * 15.0,
         dec_hint=target["dec_deg"],
     )
 
+    solver_status = solution.get("status")
+    centering_status = (
+        "cancelled"
+        if solver_status == "cancelled"
+        else "busy"
+        if solver_status == "busy"
+        else "unsolved"
+    )
+
     centering = {
-        "status": "unsolved",
+        "status": centering_status,
         "attempts": int(current.get("attempts", 0)),
         "error_arcsec": None,
         "solve_ra_deg": solution.get("ra"),
@@ -112,14 +124,14 @@ def solve_centering_frame(
         "correction_ra_hours": None,
         "correction_dec_deg": None,
         "image": image,
-        "solver_status": solution.get("status"),
+        "solver_status": solver_status,
         "solver": solution.get("solver"),
         "solver_detail": solution.get("detail"),
         "pixel_scale_arcsec": solution.get("pixel_scale_arcsec"),
     }
 
     if (
-        solution.get("status") == "solved"
+        solver_status == "solved"
         and solution.get("ra") is not None
         and solution.get("dec") is not None
     ):
@@ -150,9 +162,46 @@ def solve_centering_frame(
     }
 
 
+def cancel_centering_solve(
+    session_id: str,
+    service: CaptureSessionService | None = None,
+) -> dict[str, Any]:
+    """Request immediate cancellation of this session's active solve."""
+    service = service or capture_session_service
+
+    with service._lock:
+        metadata = service._read(session_id)
+
+    requested = request_cancel(session_id)
+    current = dict(metadata.get("centering") or {})
+
+    if requested:
+        current["status"] = "cancelling"
+        current["solver_status"] = "cancelling"
+        current["solver_detail"] = "Arrêt de l'astrométrie demandé"
+        metadata["centering"] = current
+        metadata["state"] = "framing"
+
+        with service._lock:
+            service._write(metadata)
+
+        return {
+            "status": "cancelling",
+            "detail": "Arrêt de l'astrométrie demandé",
+            "session": metadata,
+        }
+
+    return {
+        "status": "idle",
+        "detail": "Aucune astrométrie active pour cette session",
+        "session": metadata,
+    }
+
+
 # app.main imports this module only after app._main_core has finished creating
 # the FastAPI instance. Register Assistant extension routes at this late point
 # to avoid circular imports during INDI/imaging package initialization.
 from app.imaging import assistant_reference_routes as _assistant_reference_routes  # noqa: E402,F401
 from app.imaging import bahtinov_routes as _bahtinov_routes  # noqa: E402,F401
+from app.imaging import cancel_routes as _cancel_routes  # noqa: E402,F401
 from app.imaging import dark_routes as _dark_routes  # noqa: E402,F401
