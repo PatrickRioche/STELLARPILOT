@@ -110,9 +110,17 @@ def solve_centering_frame(
         dec_hint=target["dec_deg"],
     )
 
-    cancelled = solution.get("status") == "cancelled"
+    solver_status = solution.get("status")
+    cancelled = solver_status == "cancelled"
+    busy = solver_status == "busy"
     centering = {
-        "status": "cancelled" if cancelled else "unsolved",
+        "status": (
+            "cancelled"
+            if cancelled
+            else "busy"
+            if busy
+            else "unsolved"
+        ),
         "attempts": int(current.get("attempts", 0)),
         "error_arcsec": None,
         "solve_ra_deg": solution.get("ra"),
@@ -120,7 +128,7 @@ def solve_centering_frame(
         "correction_ra_hours": None,
         "correction_dec_deg": None,
         "image": image,
-        "solver_status": solution.get("status"),
+        "solver_status": solver_status,
         "solver": solution.get("solver"),
         "solver_detail": solution.get("detail"),
         "pixel_scale_arcsec": solution.get("pixel_scale_arcsec"),
@@ -129,7 +137,8 @@ def solve_centering_frame(
 
     if (
         not cancelled
-        and solution.get("status") == "solved"
+        and not busy
+        and solver_status == "solved"
         and solution.get("ra") is not None
         and solution.get("dec") is not None
     ):
