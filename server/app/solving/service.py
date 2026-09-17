@@ -308,6 +308,9 @@ class PlateSolverService:
         The INDI coordinates are advisory only. A wrong or stale mount hint can
         therefore slow the first attempt but can never block the blind solve.
         The default scale is based on the measured mean of about 1.2172"/px.
+
+        Field validation on 2026-09-17 with the Player One Uranus-C RAW16
+        showed that downsample=2 is required for reliable source extraction.
         """
         attempts = []
         position_hint = None
@@ -383,6 +386,7 @@ class PlateSolverService:
                     if use_position
                     else None
                 ),
+                downsample=2,
                 scale_low_arcsec=strategy["scale_low"],
                 scale_high_arcsec=strategy["scale_high"],
                 timeout_s=strategy["timeout"],
