@@ -259,6 +259,26 @@ class CaptureViewModel(
                             return@launch
                         }
 
+                        "cancelled", "cancelling" -> {
+                            uiState = uiState.copy(
+                                isBusy = false,
+                                session = session,
+                                error = null,
+                                statusMessage = "Astrométrie arrêtée"
+                            )
+                            return@launch
+                        }
+
+                        "busy" -> {
+                            uiState = uiState.copy(
+                                isBusy = false,
+                                session = session,
+                                error = "Une autre astrométrie est déjà en cours",
+                                statusMessage = null
+                            )
+                            return@launch
+                        }
+
                         "unsolved" -> {
                             val detail =
                                 session.centering.solverDetail
@@ -346,6 +366,46 @@ class CaptureViewModel(
                         error.message
                             ?: "Erreur de capture / centrage",
                     statusMessage = null
+                )
+            }
+        }
+    }
+
+    fun cancelAstrometry(serverBaseUrl: String) {
+        val session = uiState.session ?: return
+        if (!uiState.isBusy || uiState.operationPhase != "astrometry") return
+
+        if (DemoModeState.active) {
+            stopOperationTimer()
+            uiState = uiState.copy(
+                isBusy = false,
+                statusMessage = "Astrométrie démo arrêtée",
+                error = null
+            )
+            return
+        }
+
+        viewModelScope.launch {
+            uiState = uiState.copy(
+                statusMessage = "Arrêt de l'astrométrie…",
+                error = null
+            )
+            try {
+                val cancelled =
+                    CaptureSessionApiClient(serverBaseUrl)
+                        .cancelCenterFrame(session.id)
+                stopOperationTimer()
+                uiState = uiState.copy(
+                    isBusy = false,
+                    session = cancelled,
+                    statusMessage = "Arrêt de l'astrométrie demandé",
+                    error = null
+                )
+            } catch (error: Exception) {
+                uiState = uiState.copy(
+                    error =
+                        error.message
+                            ?: "Impossible d'arrêter l'astrométrie"
                 )
             }
         }
