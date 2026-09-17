@@ -153,6 +153,14 @@ class CaptureSessionApiClient(
         )
     }
 
+    suspend fun cancelCenterFrame(
+        sessionId: String
+    ): CaptureSessionStatus = withContext(Dispatchers.IO) {
+        centerAction(
+            "capture/sessions/$sessionId/center/cancel"
+        )
+    }
+
     private fun centerAction(path: String): CaptureSessionStatus {
         val root = executeJson(
             path = path,
@@ -336,7 +344,7 @@ class CaptureSessionApiClient(
                 .get()
                 .build()
 
-        client.newCall(request)
+        client.newCall(request.build())
             .execute()
             .use { response ->
                 check(response.isSuccessful) {
