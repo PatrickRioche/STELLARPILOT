@@ -297,6 +297,11 @@ class PlateSolverService:
         coordinates are used automatically for the two fast constrained
         attempts. The final ``scale_broad`` strategy deliberately ignores the
         position hint, so an inaccurate mount cannot prevent a blind solve.
+
+        Field validation on 2026-09-17 with the Player One Uranus-C RAW16
+        (3856 x 2180) showed that downsample=2 is required for reliable source
+        extraction: the same FITS went from repeated timeouts to a successful
+        solve in about 2.7 seconds at ~1.217 arcsec/pixel.
         """
         attempts = []
         position_hint = None
@@ -316,7 +321,7 @@ class PlateSolverService:
 
         strategies = [
             {
-                "name": "scale_narrow",
+                "name": "scale_narrow_position",
                 "scale_low": expected_scale_arcsec * 0.70,
                 "scale_high": expected_scale_arcsec * 1.40,
                 "radius": 8.0,
@@ -361,6 +366,7 @@ class PlateSolverService:
                     if use_position
                     else None
                 ),
+                downsample=2,
                 scale_low_arcsec=strategy["scale_low"],
                 scale_high_arcsec=strategy["scale_high"],
                 timeout_s=strategy["timeout"],
