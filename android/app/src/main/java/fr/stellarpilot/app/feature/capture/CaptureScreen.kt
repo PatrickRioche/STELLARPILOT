@@ -227,6 +227,23 @@ fun CaptureScreen(
                         color = StellarOrange,
                         trackColor = StellarSurfaceRaised
                     )
+
+                    if (state.operationPhase == "astrometry" && state.isBusy) {
+                        Spacer(Modifier.height(10.dp))
+                        Button(
+                            onClick = { viewModel.cancelAstrometry(serverBaseUrl) },
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = StellarRed,
+                                contentColor = StellarText
+                            )
+                        ) {
+                            Text(
+                                text = "ARRÊTER L’ASTROMÉTRIE",
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
                 }
             }
 
@@ -246,12 +263,15 @@ fun CaptureScreen(
                         "centered" -> "CENTRÉ ✓"
                         "correction_required" -> "CORRECTION NÉCESSAIRE"
                         "unsolved" -> "ASTROMÉTRIE NON RÉSOLUE"
+                        "cancelled", "cancelling" -> "ASTROMÉTRIE ARRÊTÉE"
+                        "busy" -> "ASTROMÉTRIE DÉJÀ EN COURS"
                         else -> "À CONTRÔLER"
                     },
                     color = when (centering?.status) {
                         "centered" -> StellarGreen
                         "unsolved" -> StellarRed
                         "correction_required" -> StellarOrange
+                        "cancelled", "cancelling", "busy" -> StellarOrange
                         else -> StellarMuted
                     },
                     fontWeight = FontWeight.Bold
