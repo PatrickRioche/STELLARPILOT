@@ -11,6 +11,7 @@ import fr.stellarpilot.app.R
 import fr.stellarpilot.app.data.remote.CaptureCenteringStatus
 import fr.stellarpilot.app.data.remote.CaptureSessionApiClient
 import fr.stellarpilot.app.data.remote.CaptureSessionStatus
+import fr.stellarpilot.app.data.remote.CaptureStackTestApiClient
 import fr.stellarpilot.app.data.remote.CaptureStackingStatus
 import fr.stellarpilot.app.data.remote.MountGotoCommandClient
 import fr.stellarpilot.app.data.remote.StellarPilotApiClient
@@ -406,17 +407,24 @@ class CaptureViewModel(
 
             try {
                 val session = ensureSession(serverBaseUrl)
-                check(session.centering.status == "centered") {
-                    "Centrez d'abord la cible avant de démarrer le stacking"
-                }
+                val centered = session.centering.status == "centered"
 
-                val started = CaptureSessionApiClient(serverBaseUrl)
-                    .startStack(session.id)
+                val started = if (centered) {
+                    CaptureSessionApiClient(serverBaseUrl)
+                        .startStack(session.id)
+                } else {
+                    CaptureStackTestApiClient(serverBaseUrl)
+                        .start(session.id)
+                }
 
                 uiState = uiState.copy(
                     isBusy = false,
                     session = started,
-                    statusMessage = "Stacking continu en cours"
+                    statusMessage = if (centered) {
+                        "Stacking continu en cours"
+                    } else {
+                        "Stacking TEST en cours • centrage non validé • recentrage automatique désactivé"
+                    }
                 )
                 startMonitor(serverBaseUrl, session.id)
             } catch (error: Exception) {
