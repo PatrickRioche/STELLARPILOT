@@ -36,6 +36,27 @@ class MountCalibrationApiClient {
         serverBaseUrl: String
     ): MountCalibrationTarget =
         withContext(Dispatchers.IO) {
+            // The calibration flow used to request its high-altitude target
+            // and immediately issue a J2000 GOTO. /mount/goto can legitimately
+            // refuse that command when the OnStep clock has not yet been
+            // verified, which produced the field symptom "mount error / no
+            // movement" after a successful polar plate solve.
+            //
+            // Keep the normal Sky/Capture GOTO path untouched: only this
+            // calibration flow performs the explicit preflight.
+            val diagnostics = MountDiagnosticsApiClient()
+            val before = runCatching {
+                diagnostics.timeVerification(serverBaseUrl)
+            }.getOrNull()
+
+            if (before?.verified != true || !before.controlReady) {
+                val after = diagnostics.syncTime(serverBaseUrl)
+                check(after.verified && after.controlReady) {
+                    after.detail
+                        ?: "Synchronisation horaire OnStep requise avant le GOTO de calibration"
+                }
+            }
+
             val url =
                 serverBaseUrl.trimEnd('/') +
                     "/mount/calibration-target"
