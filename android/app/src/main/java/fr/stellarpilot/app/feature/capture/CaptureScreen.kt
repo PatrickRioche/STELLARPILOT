@@ -513,8 +513,16 @@ fun CaptureScreen(
                             "paused_calibration"
                         ) &&
                         !state.savedToGallery -> {
+                        val resumeTestMode =
+                            session.centering.status != "centered"
                         Button(
-                            onClick = { viewModel.resumeStacking(serverBaseUrl) },
+                            onClick = {
+                                if (resumeTestMode) {
+                                    viewModel.startStacking(serverBaseUrl)
+                                } else {
+                                    viewModel.resumeStacking(serverBaseUrl)
+                                }
+                            },
                             enabled = !state.isBusy,
                             modifier = Modifier.fillMaxWidth(),
                             colors = ButtonDefaults.buttonColors(
@@ -523,7 +531,12 @@ fun CaptureScreen(
                             )
                         ) {
                             Text(
-                                text = "REPRENDRE LE STACKING",
+                                text =
+                                    if (resumeTestMode) {
+                                        "REPRENDRE LE STACKING • MODE TEST"
+                                    } else {
+                                        "REPRENDRE LE STACKING"
+                                    },
                                 fontWeight = FontWeight.Bold
                             )
                         }
