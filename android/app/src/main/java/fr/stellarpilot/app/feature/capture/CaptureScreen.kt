@@ -530,12 +530,26 @@ fun CaptureScreen(
                     }
 
                     !state.savedToGallery -> {
+                        val testMode =
+                            session != null &&
+                                session.centering.status != "centered"
+
+                        if (testMode) {
+                            Text(
+                                text =
+                                    "Mode test : le cadrage actuel est conservé. Le stacking, les Darks, le contrôle qualité et la registration restent actifs ; aucun recentrage automatique ne sera envoyé à la monture.",
+                                color = StellarMuted,
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                            Spacer(Modifier.height(8.dp))
+                        }
+
                         Button(
                             onClick = { viewModel.startStacking(serverBaseUrl) },
                             enabled =
                                 target != null &&
-                                    !state.isBusy &&
-                                    session?.centering?.status == "centered",
+                                    session != null &&
+                                    !state.isBusy,
                             modifier = Modifier.fillMaxWidth(),
                             colors = ButtonDefaults.buttonColors(
                                 containerColor = StellarOrange,
@@ -543,7 +557,12 @@ fun CaptureScreen(
                             )
                         ) {
                             Text(
-                                text = "DÉMARRER LE STACKING",
+                                text =
+                                    if (testMode) {
+                                        "DÉMARRER LE STACKING • MODE TEST"
+                                    } else {
+                                        "DÉMARRER LE STACKING"
+                                    },
                                 fontWeight = FontWeight.Bold
                             )
                         }
