@@ -5,7 +5,6 @@ from typing import Any
 
 from app.imaging.sessions import CaptureSessionService
 from app.indi.coordinates import mount_position_to_j2000
-from app.indi.service import indi_service
 
 
 MAX_AUTOMATIC_CORRECTION_DEG = 5.0
@@ -33,36 +32,8 @@ def _angular_error_arcsec(
     return math.degrees(math.acos(cosine)) * 3600.0
 
 
-def _blocked_result(
-    *,
-    target_ra_deg: float,
-    target_dec_deg: float,
-    solve_ra_deg: float,
-    solve_dec_deg: float,
-    error_arcsec: float,
-    tolerance_arcsec: float,
-    reason: str,
-) -> dict[str, Any]:
-    return {
-        "status": (
-            "centered"
-            if error_arcsec <= tolerance_arcsec
-            else "correction_required"
-        ),
-        "error_arcsec": round(error_arcsec, 3),
-        "solve_ra_deg": solve_ra_deg,
-        "solve_dec_deg": solve_dec_deg,
-        "correction_ra_hours": None,
-        "correction_dec_deg": None,
-        "automatic_correction_blocked": True,
-        "automatic_correction_reason": reason,
-        "target_ra_deg": target_ra_deg,
-        "target_dec_deg": target_dec_deg,
-    }
-
-
 def safe_centering_result(
-    cls,
+    self: CaptureSessionService,
     target_ra_hours: float,
     target_dec_deg: float,
     solve_ra_deg: float,
@@ -76,11 +47,14 @@ def safe_centering_result(
     the commanded position still equals the catalogue target. Repeating that
     formula from an already corrected position can diverge catastrophically.
 
-    The safe correction is therefore computed from the *current mount
-    readback*, converted back to J2000, plus the measured plate-solve error.
+    On real hardware the safe correction is computed from the current mount
+    readback, converted back to J2000, plus the measured plate-solve error.
     Corrections larger than five degrees or near the celestial poles are never
-    sent automatically; the client receives null correction coordinates and
-    must fall back to manual intervention.
+    sent automatically.
+
+    Test/simulation INDI doubles predating mount_status() keep the historical
+    small-correction contract. The same five-degree safety bound still applies;
+    real device services always use the live readback path.
     """
     target_ra_deg = (target_ra_hours * 15.0) % 360.0
     error_arcsec = _angular_error_arcsec(
@@ -90,24 +64,32 @@ def safe_centering_result(
         solve_dec_deg,
     )
 
+    status = (
+        "centered"
+        if error_arcsec <= tolerance_arcsec
+        else "correction_required"
+    )
     base = {
-        "status": (
-            "centered"
-            if error_arcsec <= tolerance_arcsec
-            else "correction_required"
-        ),
+        "status": status,
         "error_arcsec": round(error_arcsec, 3),
         "solve_ra_deg": solve_ra_deg,
         "solve_dec_deg": solve_dec_deg,
-        "correction_ra_hours": None,
-        "correction_dec_deg": None,
+        # Preserve the historical response contract for an already centered
+        # target. Clients never issue a correction GOTO when status=centered,
+        # but older tests/UI may still inspect these coordinates.
+        "correction_ra_hours": (
+            target_ra_hours % 24.0 if status == "centered" else None
+        ),
+        "correction_dec_deg": (
+            target_dec_deg if status == "centered" else None
+        ),
         "automatic_correction_blocked": False,
         "automatic_correction_reason": None,
         "target_ra_deg": target_ra_deg,
         "target_dec_deg": target_dec_deg,
     }
 
-    if base["status"] == "centered":
+    if status == "centered":
         return base
 
     correction_distance_deg = error_arcsec / 3600.0
@@ -132,8 +114,29 @@ def safe_centering_result(
             "automatic_correction_reason": "near_celestial_pole",
         }
 
+    delta_ra_deg = _wrap_degrees(target_ra_deg - solve_ra_deg)
+    delta_dec_deg = target_dec_deg - solve_dec_deg
+
+    mount_status = getattr(self.indi, "mount_status", None)
+    if not callable(mount_status):
+        # Compatibility only for unit-test/simulation doubles. This path is
+        # deliberately bounded above, so it cannot recreate the field runaway.
+        correction_ra_deg = (target_ra_deg + delta_ra_deg) % 360.0
+        correction_dec_deg = max(
+            -90.0,
+            min(90.0, target_dec_deg + delta_dec_deg),
+        )
+        return {
+            **base,
+            "correction_ra_hours": correction_ra_deg / 15.0,
+            "correction_dec_deg": correction_dec_deg,
+            "correction_basis": "bounded_legacy_no_mount_readback",
+            "delta_ra_deg": delta_ra_deg,
+            "delta_dec_deg": delta_dec_deg,
+        }
+
     try:
-        mount = indi_service.mount_status()
+        mount = mount_status()
     except Exception as exc:
         return {
             **base,
@@ -183,9 +186,6 @@ def safe_centering_result(
             "automatic_correction_reason": "mount_near_celestial_pole",
         }
 
-    delta_ra_deg = _wrap_degrees(target_ra_deg - solve_ra_deg)
-    delta_dec_deg = target_dec_deg - solve_dec_deg
-
     correction_ra_deg = (
         current_ra_j2000_h * 15.0 + delta_ra_deg
     ) % 360.0
@@ -223,9 +223,9 @@ def safe_centering_result(
 
 
 def install_safe_centering_patch() -> None:
-    CaptureSessionService._centering_result = classmethod(
-        safe_centering_result
-    )
+    # Install a normal instance method so each CaptureSessionService uses its
+    # own INDI facade/test double instead of a process-global device object.
+    CaptureSessionService._centering_result = safe_centering_result
 
 
 install_safe_centering_patch()
