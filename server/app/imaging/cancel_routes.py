@@ -5,13 +5,19 @@ from fastapi.responses import Response
 from app import _main_core as _core
 from app.imaging.centering_capture import cancel_centering_solve
 from app.imaging.sessions import CaptureSessionService, capture_session_service
+from app.imaging import field_safety as _field_safety  # noqa: F401
 
 
 def start_stack_test(
     session_id: str,
     service: CaptureSessionService | None = None,
 ):
-    """Start stacking for V0.6.7 field tests without requiring centering."""
+    """Start a safe field-test stack without requiring validated centering.
+
+    When the target is not centered, calibration, quality filtering,
+    registration and stacking remain active, but periodic astrometry is
+    disabled so a test session can never trigger an automatic mount GOTO.
+    """
     active_service = service or capture_session_service
     with active_service._lock:
         metadata = active_service._read(session_id)
@@ -29,9 +35,12 @@ def start_stack_test(
         centering_status = (
             metadata.get("centering", {}).get("status") or "not_checked"
         )
+        test_mode = centering_status != "centered"
         stacking = metadata["stacking"]
         stacking["start_centering_status"] = centering_status
-        stacking["test_mode"] = centering_status != "centered"
+        stacking["test_mode"] = test_mode
+        stacking["automatic_recenter_enabled"] = not test_mode
+        stacking["astrometry_required"] = not test_mode
         stacking["recenter_required"] = False
         stacking["recenter_reason"] = None
 
