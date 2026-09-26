@@ -64,7 +64,7 @@ fun CaptureV069RestoredScreen(
     ).joinToString("|")
 
     val activeCaptureViewModel = captureViewModel
-        ?: viewModel< CaptureViewModel >(
+        ?: viewModel<CaptureViewModel>(
             key = "capture-$targetSignature"
         )
 
