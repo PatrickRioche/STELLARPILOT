@@ -3,6 +3,7 @@ from pydantic import BaseModel, Field
 
 from app import _main_core as _core
 from app.imaging.calibration_r6 import install as install_r6_calibration
+from app.imaging.target_guard_r6 import install as install_target_guard
 from app.imaging.flats import (
     capture_flat,
     flat_library,
@@ -18,6 +19,7 @@ class FlatStartPayload(BaseModel):
 
 app = _core.app
 install_r6_calibration()
+install_target_guard()
 
 
 @app.post("/calibration/flats")
