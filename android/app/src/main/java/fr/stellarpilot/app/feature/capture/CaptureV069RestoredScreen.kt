@@ -22,6 +22,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -40,16 +41,35 @@ import java.util.Locale
 fun CaptureV069RestoredScreen(
     serverBaseUrl: String,
     bahtinovViewModel: BahtinovViewModel = viewModel(),
-    captureViewModel: CaptureViewModel = viewModel()
+    captureViewModel: CaptureViewModel? = null
 ) {
     var bahtinovExpanded by rememberSaveable { mutableStateOf(false) }
     val bahtinov = bahtinovViewModel.uiState
 
-    // CaptureViewModel is activity-scoped and survives tab changes. Re-read the
-    // target persisted by Ciel every time this Capture composition is entered
-    // so CIBLE ACTIVE always reflects the observer's latest selection.
-    LaunchedEffect(serverBaseUrl) {
-        captureViewModel.loadSelectedTarget()
+    // r6 safety rule: a CaptureSession belongs to exactly one selected target.
+    // CaptureViewModel used to survive tab changes and could therefore keep the
+    // previous Vega session after the observer selected Polaris in Ciel.
+    // Keying the ViewModel with the persisted target creates a fresh local
+    // session whenever name/RA/DEC changes, while keeping it across ordinary
+    // recompositions for the same target.
+    val context = LocalContext.current
+    val targetPreferences = context.getSharedPreferences(
+        "stellarpilot_target",
+        0
+    )
+    val targetSignature = listOf(
+        targetPreferences.getString("name", "none") ?: "none",
+        targetPreferences.getString("ra_hours", "none") ?: "none",
+        targetPreferences.getString("dec_deg", "none") ?: "none"
+    ).joinToString("|")
+
+    val activeCaptureViewModel = captureViewModel
+        ?: viewModel< CaptureViewModel >(
+            key = "capture-$targetSignature"
+        )
+
+    LaunchedEffect(serverBaseUrl, targetSignature) {
+        activeCaptureViewModel.loadSelectedTarget()
     }
 
     Column(modifier = Modifier.fillMaxSize()) {
@@ -158,7 +178,7 @@ fun CaptureV069RestoredScreen(
         Box(modifier = Modifier.weight(1f)) {
             CaptureScreen(
                 serverBaseUrl = serverBaseUrl,
-                viewModel = captureViewModel
+                viewModel = activeCaptureViewModel
             )
         }
     }
