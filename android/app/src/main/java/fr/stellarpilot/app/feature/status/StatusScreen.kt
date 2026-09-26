@@ -194,6 +194,15 @@ fun StatusScreen(
                         BuildConfig.GIT_SHA,
                         serverBuild?.gitSha
                     )
+                    val sameVersion = deliveryVersionsMatch(
+                        BuildConfig.VERSION_NAME,
+                        serverBuild?.version
+                    )
+                    val pairColor = when {
+                        serverBuild == null -> StellarOrange
+                        sameDelivery || sameVersion -> StellarGreen
+                        else -> StellarRed
+                    }
 
                     SectionTitle("VERSIONS")
                     InfoLine("Application", BuildConfig.VERSION_NAME)
@@ -217,12 +226,22 @@ fun StatusScreen(
                         text = when {
                             serverBuild == null -> "Paire App / Serveur : non vérifiée"
                             sameDelivery -> "✓ Paire App / Serveur : MÊME LIVRAISON"
-                            else -> "⚠ Paire App / Serveur : VERSIONS DIFFÉRENTES"
+                            sameVersion -> "✓ Paire App / Serveur : COMPATIBLE"
+                            else -> "⚠ Paire App / Serveur : INCOMPATIBLE"
                         },
-                        color = if (sameDelivery) StellarGreen else StellarOrange,
+                        color = pairColor,
                         style = MaterialTheme.typography.bodyMedium,
                         fontWeight = FontWeight.SemiBold
                     )
+
+                    if (sameVersion && !sameDelivery) {
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            text = "Même version fonctionnelle ; commits/builds différents (hotfix compatible).",
+                            color = StellarMuted,
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
 
                     serverBuildError?.let { error ->
                         Spacer(Modifier.height(4.dp))
@@ -820,6 +839,25 @@ private fun gitRevisionsMatch(
         app.startsWith(server) ||
         server.startsWith(app)
 }
+
+
+private fun deliveryVersionsMatch(
+    appVersion: String?,
+    serverVersion: String?
+): Boolean {
+    val app = normalizedDeliveryVersion(appVersion)
+    val server = normalizedDeliveryVersion(serverVersion)
+    return app.isNotBlank() && server.isNotBlank() && app == server
+}
+
+
+private fun normalizedDeliveryVersion(value: String?): String =
+    value
+        ?.trim()
+        ?.lowercase(Locale.ROOT)
+        ?.substringBefore("-device")
+        ?.substringBefore("-simulation")
+        .orEmpty()
 
 
 private fun statusColor(value: String): Color =
