@@ -19,6 +19,18 @@ MASTER_METHOD = "sigma-clipped-mean-normalized-v1"
 MASTER_SIGMA = 3.0
 MIN_VALID_FLATS = 5
 
+# Flat exposure policy. A dust/vignetting flat should live well away from both
+# the black point and saturation. The first capture request can therefore act
+# as an exposure probe and is not counted until it falls inside this window.
+FLAT_TARGET_PERCENT = 40.0
+FLAT_MIN_PERCENT = 25.0
+FLAT_MAX_PERCENT = 60.0
+FLAT_MAX_SATURATED_PERCENT = 0.10
+FLAT_MAX_P99_PERCENT = 90.0
+FLAT_MIN_EXPOSURE_S = 0.001
+FLAT_MAX_EXPOSURE_S = 5.0
+FLAT_AUTO_MAX_ATTEMPTS = 7
+
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
@@ -87,8 +99,10 @@ def start_flat_session(
     exposure_s: float = 0.2,
     requested_count: int = 20,
 ) -> dict[str, Any]:
-    if not 0.0001 <= exposure_s <= 30.0:
-        raise ValueError("exposure_s hors limites")
+    if not FLAT_MIN_EXPOSURE_S <= exposure_s <= FLAT_MAX_EXPOSURE_S:
+        raise ValueError(
+            f"exposure_s doit être compris entre {FLAT_MIN_EXPOSURE_S} et {FLAT_MAX_EXPOSURE_S} s"
+        )
     if not MIN_VALID_FLATS <= requested_count <= 100:
         raise ValueError(f"requested_count doit être compris entre {MIN_VALID_FLATS} et 100")
 
@@ -108,11 +122,20 @@ def start_flat_session(
         "captured_count": 0,
         "valid_count": 0,
         "frames": [],
+        "exposure_probe_history": [],
         "storage": str(root),
         "setup_profile": darks._snapshot_setup(float(exposure_s)),
         "fits_profile": None,
         "compatibility": None,
         "master_flat": None,
+        "flat_exposure_policy": {
+            "automatic": True,
+            "target_percent_full_scale": FLAT_TARGET_PERCENT,
+            "accepted_min_percent": FLAT_MIN_PERCENT,
+            "accepted_max_percent": FLAT_MAX_PERCENT,
+            "max_saturated_percent": FLAT_MAX_SATURATED_PERCENT,
+            "max_p99_percent": FLAT_MAX_P99_PERCENT,
+        },
         "calibration_policy": {
             "bias_frames_required": False,
             "dark_flat_required": False,
@@ -121,6 +144,152 @@ def start_flat_session(
         },
     }
     return _write(metadata)
+
+
+def _flat_quality(quality: dict[str, Any]) -> tuple[bool, list[str], dict[str, float | None]]:
+    median_percent = _number(quality.get("median_percent_full_scale"))
+    saturated = _number(quality.get("saturated_percent"))
+    p99 = _number(quality.get("p99"))
+    full_scale = _number(quality.get("full_scale"))
+    p99_percent = (
+        p99 / full_scale * 100.0
+        if p99 is not None and full_scale is not None and full_scale > 0
+        else None
+    )
+
+    reasons: list[str] = []
+    if quality.get("status") != "ok":
+        reasons.append(str(quality.get("detail") or "analyse FITS impossible"))
+    if median_percent is None:
+        reasons.append("niveau médian inconnu")
+    elif median_percent < FLAT_MIN_PERCENT:
+        reasons.append(
+            f"flat trop sombre ({median_percent:.1f}% < {FLAT_MIN_PERCENT:.0f}%)"
+        )
+    elif median_percent > FLAT_MAX_PERCENT:
+        reasons.append(
+            f"flat trop clair ({median_percent:.1f}% > {FLAT_MAX_PERCENT:.0f}%)"
+        )
+
+    if saturated is None:
+        reasons.append("saturation inconnue")
+    elif saturated > FLAT_MAX_SATURATED_PERCENT:
+        reasons.append(
+            f"pixels saturés ({saturated:.3f}% > {FLAT_MAX_SATURATED_PERCENT:.2f}%)"
+        )
+
+    if p99_percent is not None and p99_percent > FLAT_MAX_P99_PERCENT:
+        reasons.append(
+            f"P99 trop élevé ({p99_percent:.1f}% > {FLAT_MAX_P99_PERCENT:.0f}%)"
+        )
+
+    return (
+        not reasons,
+        reasons,
+        {
+            "median_percent_full_scale": median_percent,
+            "p99_percent_full_scale": p99_percent,
+            "saturated_percent": saturated,
+        },
+    )
+
+
+def _next_flat_exposure(current_s: float, metrics: dict[str, float | None]) -> float:
+    median_percent = metrics.get("median_percent_full_scale")
+    saturated = metrics.get("saturated_percent")
+    p99_percent = metrics.get("p99_percent_full_scale")
+
+    if (
+        (saturated is not None and saturated > FLAT_MAX_SATURATED_PERCENT)
+        or (p99_percent is not None and p99_percent > FLAT_MAX_P99_PERCENT)
+    ):
+        factor = 0.5
+    elif median_percent is None or median_percent <= 0.05:
+        factor = 4.0
+    else:
+        factor = FLAT_TARGET_PERCENT / median_percent
+        factor = min(4.0, max(0.25, factor))
+
+    candidate = current_s * factor
+    return round(
+        min(FLAT_MAX_EXPOSURE_S, max(FLAT_MIN_EXPOSURE_S, candidate)),
+        6,
+    )
+
+
+def _capture_until_exposed(
+    metadata: dict[str, Any],
+    *,
+    frame_index: int,
+) -> tuple[dict[str, Any], Path, dict[str, Any], dict[str, Any], list[str]]:
+    exposure = float(metadata["exposure_s"])
+    last_result: dict[str, Any] = {}
+    last_path: Path | None = None
+    last_quality: dict[str, Any] = {}
+    last_fits: dict[str, Any] = {}
+    last_reasons: list[str] = []
+
+    # Once a valid exposure has been established we keep it fixed for the
+    # series; only the first accepted frame is allowed to auto-tune it.
+    auto_tune = int(metadata.get("captured_count", 0)) == 0
+    attempts = FLAT_AUTO_MAX_ATTEMPTS if auto_tune else 1
+
+    for attempt in range(1, attempts + 1):
+        result = capture_flat_frame(
+            exposure,
+            output_dir=_session_path(metadata["id"]) / "raw",
+            prefix=f"flat_{frame_index:03d}_try{attempt:02d}",
+        )
+        if result.get("status") != "captured" or not result.get("image"):
+            raise RuntimeError(result.get("detail", "Capture flat impossible"))
+
+        path = Path(result["image"])
+        quality = analyze_fits(str(path))
+        try:
+            fits_profile = darks._fits_profile(path)
+        except Exception as exc:
+            fits_profile = {"error": str(exc)}
+
+        quality_valid, reasons, metrics = _flat_quality(quality)
+        if "error" in fits_profile:
+            quality_valid = False
+            reasons.append(f"métadonnées FITS invalides: {fits_profile['error']}")
+
+        metadata.setdefault("exposure_probe_history", []).append(
+            {
+                "frame_index": frame_index,
+                "attempt": attempt,
+                "exposure_s": exposure,
+                **metrics,
+                "valid": quality_valid,
+                "reasons": reasons,
+                "image": str(path),
+            }
+        )
+
+        last_result = result
+        last_path = path
+        last_quality = quality
+        last_fits = fits_profile
+        last_reasons = reasons
+
+        if quality_valid:
+            metadata["exposure_s"] = exposure
+            metadata["flat_exposure_percent"] = metrics.get("median_percent_full_scale")
+            metadata["flat_exposure_locked"] = True
+            return result, path, quality, fits_profile, []
+
+        if not auto_tune:
+            break
+
+        next_exposure = _next_flat_exposure(exposure, metrics)
+        if abs(next_exposure - exposure) < 1e-9:
+            break
+        exposure = next_exposure
+        metadata["exposure_s"] = exposure
+
+    assert last_path is not None
+    return last_result, last_path, last_quality, last_fits, last_reasons
 
 
 def capture_flat(session_id: str) -> dict[str, Any]:
@@ -135,22 +304,15 @@ def capture_flat(session_id: str) -> dict[str, Any]:
         return _write(metadata)
 
     index = captured + 1
-    result = capture_flat_frame(
-        float(metadata["exposure_s"]),
-        output_dir=_session_path(session_id) / "raw",
-        prefix=f"flat_{index:03d}",
-    )
-    if result.get("status") != "captured" or not result.get("image"):
-        metadata["status"] = "error"
-        metadata["detail"] = result.get("detail", "Capture flat impossible")
-        return _write(metadata)
-
-    path = Path(result["image"])
-    quality = analyze_fits(str(path))
     try:
-        fits_profile = darks._fits_profile(path)
+        result, path, quality, fits_profile, rejection_reasons = _capture_until_exposed(
+            metadata,
+            frame_index=index,
+        )
     except Exception as exc:
-        fits_profile = {"error": str(exc)}
+        metadata["status"] = "error"
+        metadata["detail"] = f"Capture flat impossible: {exc}"
+        return _write(metadata)
 
     if metadata.get("fits_profile") is None and "error" not in fits_profile:
         metadata["fits_profile"] = fits_profile
@@ -164,20 +326,10 @@ def capture_flat(session_id: str) -> dict[str, Any]:
             and fits_profile.get("bayer_pattern") == reference.get("bayer_pattern")
         )
     )
+    if not same_geometry:
+        rejection_reasons = list(rejection_reasons) + ["géométrie/Bayer différent de la série"]
 
-    median = _number(quality.get("median"))
-    saturated = _number(quality.get("saturated_percent"))
-    valid = (
-        path.exists()
-        and path.stat().st_size > 0
-        and quality.get("status") == "ok"
-        and median is not None
-        and median > 0.0
-        and saturated is not None
-        and saturated < 5.0
-        and "error" not in fits_profile
-        and same_geometry
-    )
+    valid = not rejection_reasons and "error" not in fits_profile and same_geometry
 
     metadata["captured_count"] = index
     if valid:
@@ -189,14 +341,28 @@ def capture_flat(session_id: str) -> dict[str, Any]:
             "image": str(path),
             "size_bytes": path.stat().st_size if path.exists() else None,
             "valid": valid,
+            "rejection_reasons": rejection_reasons,
             "frame_type": result.get("frame_type", "flat"),
+            "exposure_s": metadata.get("exposure_s"),
             "median": quality.get("median"),
+            "median_percent_full_scale": quality.get("median_percent_full_scale"),
             "background_sigma": quality.get("background_sigma"),
+            "p99": quality.get("p99"),
+            "full_scale": quality.get("full_scale"),
             "saturated_percent": quality.get("saturated_percent"),
             "maximum": quality.get("maximum"),
             "fits": fits_profile,
         }
     )
+
+    if not valid:
+        metadata["status"] = "error"
+        metadata["detail"] = (
+            "Flat invalide après réglage automatique: "
+            + ("; ".join(rejection_reasons) if rejection_reasons else "raison inconnue")
+            + f". Dernière exposition: {metadata.get('exposure_s')} s."
+        )
+        return _write(metadata)
 
     if index >= requested:
         metadata["status"] = "processing"
@@ -210,7 +376,10 @@ def capture_flat(session_id: str) -> dict[str, Any]:
             metadata["detail"] = f"Création Master Flat impossible: {exc}"
     else:
         metadata["status"] = "capturing"
-        metadata.pop("detail", None)
+        metadata["detail"] = (
+            f"Flat {index}/{requested} valide • exposition {float(metadata['exposure_s']):.4f} s "
+            f"• médiane {float(metadata.get('flat_exposure_percent') or 0.0):.1f}%"
+        )
 
     return _write(metadata)
 
@@ -314,7 +483,17 @@ def _finalize_flat_products(metadata: dict[str, Any]) -> None:
         if frame.get("valid") and frame.get("image")
     ]
     if len(valid_paths) < MIN_VALID_FLATS:
-        raise ValueError("Pas assez de flats valides pour créer le Master Flat")
+        rejected = [
+            reason
+            for frame in metadata.get("frames", [])
+            if not frame.get("valid")
+            for reason in frame.get("rejection_reasons", [])
+        ]
+        reason_text = "; ".join(dict.fromkeys(rejected)) if rejected else "qualité insuffisante"
+        raise ValueError(
+            f"Pas assez de flats valides ({len(valid_paths)}/{metadata.get('requested_count')}). "
+            f"Causes: {reason_text}"
+        )
 
     products = _session_path(metadata["id"]) / "products"
     products.mkdir(parents=True, exist_ok=True)
@@ -336,6 +515,8 @@ def _finalize_flat_products(metadata: dict[str, Any]) -> None:
         "master_method": MASTER_METHOD,
         "master_sigma": MASTER_SIGMA,
         "master_flat": str(master_path),
+        "flat_exposure_s": metadata.get("exposure_s"),
+        "flat_median_percent": metadata.get("flat_exposure_percent"),
         "calibration_policy": metadata.get("calibration_policy"),
     }
     profile_path.write_text(
@@ -352,6 +533,8 @@ def _finalize_flat_products(metadata: dict[str, Any]) -> None:
         "valid_frames": len(valid_paths),
         "rejected_frames": int(metadata.get("requested_count") or 0) - len(valid_paths),
         "normalized": True,
+        "exposure_s": metadata.get("exposure_s"),
+        "median_percent_full_scale": metadata.get("flat_exposure_percent"),
     }
 
 
