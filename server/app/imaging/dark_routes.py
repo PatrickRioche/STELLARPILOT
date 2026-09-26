@@ -59,3 +59,8 @@ def capture_dark_frame_route(session_id: str):
             detail=result.get("detail", "Capture dark impossible"),
         )
     return result
+
+
+# r6 extension: registering this module also installs the non-destructive r5
+# dark metadata repair and connects compatible Master Flats to live stacking.
+from app.imaging import flat_routes as _flat_routes  # noqa: E402,F401
